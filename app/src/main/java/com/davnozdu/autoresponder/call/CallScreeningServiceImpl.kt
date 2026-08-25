@@ -9,6 +9,7 @@ import com.davnozdu.autoresponder.respond.Responder
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SkipPolicy
+import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
 
 /**
@@ -25,6 +26,17 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val number = callDetails.handle?.schemeSpecificPart // tel:+420... -> +420...
         if (number != null) HistoryLogger.record(this, number, "call", "in", "входящий звонок")
         val s = Settings(this)
+        // Чёрный список: онCalls=да -> пропускаем; нет -> отклоняем + SMS.
+        val bl = HistoryDb.get(this).blacklistMatch(number, null)
+        if (bl != null) {
+            if (bl.onCalls) { respondAllow(callDetails); return }
+            val resp = CallResponse.Builder().setDisallowCall(true).setRejectCall(true).build()
+            respondToCall(callDetails, resp)
+            EventLog(this).add("CALL ${number ?: "?"} — ЧС отклонён, SMS")
+            Responder.handle(this, number, null, Kind.CALL)
+            return
+        }
+
         val closedReason = ClosedState.reason(this, s)
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
         val skip = SkipPolicy.reason(this, number, s, isCall = true) != null

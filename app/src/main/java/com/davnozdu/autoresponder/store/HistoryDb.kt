@@ -7,7 +7,9 @@ import android.database.sqlite.SQLiteOpenHelper
 
 data class BlackEntry(
     val id: Long, val identity: String, val name: String?,
-    val viaLlm: Boolean, val prompt: String?
+    val viaLlm: Boolean, val prompt: String?,
+    val onSms: Boolean = true, val onMsgr: Boolean = true,
+    val onCalls: Boolean = true, val callPrompt: String? = null
 )
 
 data class HistItem(
@@ -17,7 +19,7 @@ data class HistItem(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 3) {
+    SQLiteOpenHelper(context.applicationContext, "history.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -47,13 +49,23 @@ class HistoryDb private constructor(context: Context) :
                 "identity TEXT NOT NULL," +   // номер или имя
                 "name TEXT," +
                 "via_llm INTEGER NOT NULL DEFAULT 0," +
-                "prompt TEXT)"
+                "prompt TEXT," +
+                "on_sms INTEGER NOT NULL DEFAULT 1," +
+                "on_msgr INTEGER NOT NULL DEFAULT 1," +
+                "on_calls INTEGER NOT NULL DEFAULT 1," +
+                "call_prompt TEXT)"
         )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
         if (oldV < 2) createBlacklist(db)
         if (oldV < 3) createQa(db)
+        if (oldV < 4) {
+            db.execSQL("ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE blacklist ADD COLUMN on_msgr INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE blacklist ADD COLUMN on_calls INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE blacklist ADD COLUMN call_prompt TEXT")
+        }
     }
 
     fun insert(number: String, name: String?, channel: String, direction: String, body: String, ts: Long = System.currentTimeMillis()) {
@@ -137,10 +149,12 @@ class HistoryDb private constructor(context: Context) :
     // --- Чёрный список ---
     fun blacklistAll(): List<BlackEntry> {
         val res = ArrayList<BlackEntry>()
-        readableDatabase.rawQuery("SELECT _id,identity,name,via_llm,prompt FROM blacklist ORDER BY _id DESC", null).use { c ->
+        readableDatabase.rawQuery("SELECT _id,identity,name,via_llm,prompt,on_sms,on_msgr,on_calls,call_prompt FROM blacklist ORDER BY _id DESC", null).use { c ->
             while (c.moveToNext()) res.add(BlackEntry(
                 c.getLong(0), c.getString(1), if (c.isNull(2)) null else c.getString(2),
-                c.getInt(3) == 1, if (c.isNull(4)) null else c.getString(4)))
+                c.getInt(3) == 1, if (c.isNull(4)) null else c.getString(4),
+                c.getInt(5) == 1, c.getInt(6) == 1, c.getInt(7) == 1,
+                if (c.isNull(8)) null else c.getString(8)))
         }
         return res
     }
@@ -148,6 +162,8 @@ class HistoryDb private constructor(context: Context) :
         val cv = ContentValues().apply {
             put("identity", e.identity); put("name", e.name)
             put("via_llm", if (e.viaLlm) 1 else 0); put("prompt", e.prompt)
+            put("on_sms", if (e.onSms) 1 else 0); put("on_msgr", if (e.onMsgr) 1 else 0)
+            put("on_calls", if (e.onCalls) 1 else 0); put("call_prompt", e.callPrompt)
         }
         if (e.id > 0) writableDatabase.update("blacklist", cv, "_id=?", arrayOf(e.id.toString()))
         else writableDatabase.insert("blacklist", null, cv)

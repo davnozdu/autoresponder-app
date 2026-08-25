@@ -26,10 +26,12 @@ enum class Kind { CALL, SMS }
 object Responder {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private const val DEFAULT_CALL_DROP =
+        "Сейчас мы не можем ответить на звонок. Напишите нам сообщение, и мы свяжемся с вами в ближайшее время."
 
-    fun handle(context: Context, number: String?, incomingText: String?, kind: Kind) {
+    fun handle(context: Context, number: String?, incomingText: String?, kind: Kind, incomingSubId: Int = -1) {
         val app = context.applicationContext
-        EventQueue.submit { process(app, number, incomingText, kind) }
+        EventQueue.submit { process(app, number, incomingText, kind, incomingSubId) }
     }
 
     /** DEBUG: выполнить запрос моделей и записать результат/ошибку в журнал. */
@@ -83,7 +85,7 @@ object Responder {
         }
     }
 
-    private suspend fun process(context: Context, number: String?, incomingText: String?, kind: Kind) {
+    private suspend fun process(context: Context, number: String?, incomingText: String?, kind: Kind, incomingSubId: Int = -1) {
         val s = Settings(context)
         val log = EventLog(context)
         val tag = if (kind == Kind.CALL) "CALL" else "SMS"
@@ -109,13 +111,22 @@ object Responder {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
-        // Чёрный список отвечает ВСЕГДА (через LLM), обычные — только когда «закрыто».
+        // Чёрный список: каналы, звонки, персональный промпт.
         val bl = HistoryDb.get(context).blacklistMatch(norm, null)
         val closedReason = ClosedState.reason(context, s)
-        if (bl != null && !bl.viaLlm) { log.add("$tag $norm — чёрный список, без ответа"); return }
-        val forceReply = bl != null && bl.viaLlm
+        var override: String? = null
+        var forceReply = false
+        if (bl != null) {
+            if (kind == Kind.CALL) {
+                if (bl.onCalls) { log.add("CALL $norm — ЧС: пропускаем звонок"); return }
+                override = bl.callPrompt?.ifBlank { null } ?: DEFAULT_CALL_DROP
+                forceReply = true
+            } else {
+                if (!bl.viaLlm || !bl.onSms) { log.add("$tag $norm — ЧС: без ответа на SMS"); return }
+                override = bl.prompt; forceReply = true
+            }
+        }
         if (!forceReply && closedReason == null) { log.add("$tag $from — открыто, пропуск"); return }
-        val override = if (forceReply) bl.prompt else null
 
         if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {
             log.add("$tag $norm — дубль (уже обработано уведомлением), пропуск"); return
@@ -128,7 +139,7 @@ object Responder {
         val prefixed = applyPrefix(s.aiPrefix, reply)
         val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
 
-        val subId = SimUtil.resolveSubId(context, s.smsSlot)
+        val subId = if (s.smsSlot >= 0) SimUtil.resolveSubId(context, s.smsSlot) else incomingSubId
         val segs = SmsSender.send(context, norm, clamped, subId)
         if (segs >= 0) {
             store.markReplied(norm, s.timeoutHours)
@@ -195,7 +206,7 @@ object Responder {
             """.trimIndent()
         } else {
             """
-            ${s.promptCall}
+            ${promptOverride ?: s.promptCall}
 
             Reply in $defName.
             Hard limit: at most $budget characters. No signature, no emojis, plain text only. Do NOT add any prefix yourself.

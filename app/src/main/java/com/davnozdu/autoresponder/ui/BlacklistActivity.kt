@@ -26,6 +26,9 @@ class BlacklistActivity : ComponentActivity() {
     }
 }
 
+private const val DEFAULT_CALL_PROMPT =
+    "Сейчас мы не можем ответить на звонок. Напишите нам сообщение, и мы свяжемся с вами в ближайшее время."
+
 private const val DEFAULT_BL_PROMPT =
     "Это нежелательный контакт. Учитывай текущий режим: если сейчас нерабочее время (Не беспокоить включён) — " +
     "коротко и вежливо сообщи, что сейчас нерабочее время. В рабочее время отвечай сухо, коротко и спокойно, " +
@@ -42,6 +45,7 @@ fun BlacklistScreen() {
     var items by remember { mutableStateOf(listOf<BlackEntry>()) }
     var newId by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<BlackEntry?>(null) }
+    var editingCall by remember { mutableStateOf<BlackEntry?>(null) }
 
     fun reload() { items = db.blacklistAll() }
     LaunchedEffect(Unit) { reload() }
@@ -88,12 +92,27 @@ fun BlacklistScreen() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = e.viaLlm, onCheckedChange = { on ->
                                 db.blacklistUpsert(e.copy(viaLlm = on,
-                                    prompt = e.prompt ?: if (on) DEFAULT_BL_PROMPT else null))
-                                reload()
+                                    prompt = e.prompt ?: if (on) DEFAULT_BL_PROMPT else null)); reload()
                             })
                             Text("Отвечать через LLM")
                             Spacer(Modifier.weight(1f))
                             if (e.viaLlm) TextButton(onClick = { editing = e }) { Text("Промпт") }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = e.onSms, onCheckedChange = { db.blacklistUpsert(e.copy(onSms = it)); reload() })
+                            Text("SMS")
+                            Spacer(Modifier.width(12.dp))
+                            Checkbox(checked = e.onMsgr, onCheckedChange = { db.blacklistUpsert(e.copy(onMsgr = it)); reload() })
+                            Text("Мессенджеры")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = e.onCalls, onCheckedChange = { db.blacklistUpsert(e.copy(onCalls = it)); reload() })
+                            Text(if (e.onCalls) "Звонки: пропускать" else "Звонки: отклонять + SMS")
+                            Spacer(Modifier.weight(1f))
+                            if (!e.onCalls) TextButton(onClick = { editingCall = e }) { Text("Промпт звонка") }
+                        }
+                        Row {
+                            Spacer(Modifier.weight(1f))
                             TextButton(onClick = { db.blacklistDelete(e.id); reload() }) { Text("Удалить") }
                         }
                         HorizontalDivider()
@@ -113,6 +132,19 @@ fun BlacklistScreen() {
                 db.blacklistUpsert(e.copy(prompt = text)); editing = null; reload()
             }) { Text("Сохранить") } },
             dismissButton = { TextButton(onClick = { editing = null }) { Text("Отмена") } }
+        )
+    }
+
+    editingCall?.let { e ->
+        var text by remember(e.id) { mutableStateOf(e.callPrompt ?: DEFAULT_CALL_PROMPT) }
+        AlertDialog(
+            onDismissRequest = { editingCall = null },
+            title = { Text("Промпт звонка: ${e.name ?: e.identity}") },
+            text = { OutlinedTextField(text, { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 3) },
+            confirmButton = { TextButton(onClick = {
+                db.blacklistUpsert(e.copy(callPrompt = text)); editingCall = null; reload()
+            }) { Text("Сохранить") } },
+            dismissButton = { TextButton(onClick = { editingCall = null }) { Text("Отмена") } }
         )
     }
 }

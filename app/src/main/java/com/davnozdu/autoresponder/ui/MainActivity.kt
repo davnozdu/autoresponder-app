@@ -223,11 +223,13 @@ fun AppScreen() {
                 FilterChip(selected = smsSlot == 0, onClick = { smsSlot = 0; s.smsSlot = 0 },
                     label = { Text("SIM 1") })
                 FilterChip(selected = smsSlot < 0, onClick = { smsSlot = -1; s.smsSlot = -1 },
-                    label = { Text("Системная") })
+                    label = { Text("Системное") })
             }
             if (sims.isEmpty()) Text("SIM не определены (нужно READ_PHONE_STATE)",
                 style = MaterialTheme.typography.bodySmall)
             else sims.forEach { Text(it.label, style = MaterialTheme.typography.bodySmall) }
+            Text("«Системное» — ответ уходит с той SIM, на которую пришло SMS (для звонков — системная по умолчанию).",
+                style = MaterialTheme.typography.labelSmall)
             OutlinedTextField(defLang, { defLang = it.trim(); s.defaultLang = it.trim() },
                 label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
 

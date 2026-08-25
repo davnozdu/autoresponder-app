@@ -72,8 +72,11 @@ object NotifResponder {
         val bl = HistoryDb.get(context).blacklistMatch(
             if (channel == Channel.MESSAGES) number else null, sender)
         val closedReason = ClosedState.reason(context, s)
-        if (bl != null && !bl.viaLlm) { log.add("NOTIF[$tag] $key — чёрный список, без ответа"); return }
-        val forceReply = bl != null && bl.viaLlm
+        if (bl != null) {
+            val chOk = if (channel == Channel.MESSAGES) bl.onSms else bl.onMsgr
+            if (!bl.viaLlm || !chOk) { log.add("NOTIF[$tag] $key — ЧС: без ответа"); return }
+        }
+        val forceReply = bl != null
         if (!forceReply && closedReason == null) return  // открыто — молчим
         val override = if (forceReply) bl.prompt else null
 

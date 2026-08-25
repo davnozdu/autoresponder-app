@@ -21,7 +21,9 @@ class SmsReceiver : BroadcastReceiver() {
         val sender = messages[0].displayOriginatingAddress
         val body = messages.joinToString("") { it.displayMessageBody ?: "" }
 
+        val subId = intent.getIntExtra("subscription",
+            intent.getIntExtra("android.telephony.extra.SUBSCRIPTION_INDEX", -1))
         HistoryLogger.record(context, sender, "sms", "in", body)
-        Responder.handle(context, sender, body, Kind.SMS)
+        Responder.handle(context, sender, body, Kind.SMS, subId)
     }
 }
