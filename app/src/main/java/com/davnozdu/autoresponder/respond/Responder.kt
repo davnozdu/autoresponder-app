@@ -10,6 +10,7 @@ import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.LangDetect
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SkipPolicy
+import com.davnozdu.autoresponder.rules.SimUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -73,7 +74,7 @@ object Responder {
             val returning = store.count(norm) > 0
             val reply = buildReply(app, s, incomingText, kind, returning)
             val clamped = SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
-            val segs = if (send) SmsSender.send(app, norm, clamped) else SmsSender.segmentCount(app, clamped)
+            val segs = if (send) SmsSender.send(app, norm, clamped, SimUtil.resolveSubId(app, s.smsSlot)) else SmsSender.segmentCount(app, clamped)
             store.markReplied(norm, s.timeoutHours)
             val mode = if (send) "SENT" else "dry"
             log.add("TEST[$kind] $norm $mode #${store.count(norm)}/${s.maxReplies} seg=$segs len=${clamped.length}")
@@ -119,7 +120,8 @@ object Responder {
         val prefixed = applyPrefix(s.aiPrefix, reply)
         val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
 
-        val segs = SmsSender.send(context, norm, clamped, subId = -1)
+        val subId = SimUtil.resolveSubId(context, s.smsSlot)
+        val segs = SmsSender.send(context, norm, clamped, subId)
         if (segs >= 0) {
             store.markReplied(norm, s.timeoutHours)
             log.add("$tag $norm — отправлено (закрыто: $closedReason) [$segs сег., #${store.count(norm)}/${s.maxReplies}]: ${clamped.take(40)}…")

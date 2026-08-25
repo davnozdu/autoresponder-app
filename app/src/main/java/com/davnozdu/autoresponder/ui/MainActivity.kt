@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.davnozdu.autoresponder.data.EventLog
 import com.davnozdu.autoresponder.data.Settings
+import com.davnozdu.autoresponder.rules.SimUtil
 import com.davnozdu.autoresponder.llm.LlmConfig
 import com.davnozdu.autoresponder.llm.LlmFactory
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,8 @@ fun AppScreen() {
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
     var replyDelay by remember { mutableStateOf(s.replyDelayMs.toString()) }
+    var smsSlot by remember { mutableStateOf(s.smsSlot) }
+    val sims = remember { SimUtil.activeSims(ctx) }
     var defLang by remember { mutableStateOf(s.defaultLang) }
 
     var tplRu by remember { mutableStateOf(s.template("ru")) }
@@ -205,6 +208,19 @@ fun AppScreen() {
                 label = { Text("Задержка перед авто-ответом, мс") }, modifier = Modifier.fillMaxWidth(),
                 supportingText = { Text("Пауза перед отправкой SMS (звонок и SMS). По умолчанию 1500") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+
+            Text("SIM для отправки", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = smsSlot == 1, onClick = { smsSlot = 1; s.smsSlot = 1 },
+                    label = { Text("SIM 2") })
+                FilterChip(selected = smsSlot == 0, onClick = { smsSlot = 0; s.smsSlot = 0 },
+                    label = { Text("SIM 1") })
+                FilterChip(selected = smsSlot < 0, onClick = { smsSlot = -1; s.smsSlot = -1 },
+                    label = { Text("Системная") })
+            }
+            if (sims.isEmpty()) Text("SIM не определены (нужно READ_PHONE_STATE)",
+                style = MaterialTheme.typography.bodySmall)
+            else sims.forEach { Text(it.label, style = MaterialTheme.typography.bodySmall) }
             OutlinedTextField(defLang, { defLang = it.trim(); s.defaultLang = it.trim() },
                 label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
 

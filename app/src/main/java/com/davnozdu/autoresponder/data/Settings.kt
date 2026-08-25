@@ -93,6 +93,11 @@ class Settings(context: Context) {
         get() = sp.getInt(K_TIMEOUT, 3)
         set(v) = sp.edit().putInt(K_TIMEOUT, v).apply()
 
+    // --- выбор SIM для отправки: -1 системная, 0=SIM1, 1=SIM2 (по умолчанию SIM2) ---
+    var smsSlot: Int
+        get() = sp.getInt(K_SMS_SLOT, 1)
+        set(v) = sp.edit().putInt(K_SMS_SLOT, v).apply()
+
     // --- задержка перед авто-ответом (мс), для звонков и SMS ---
     var replyDelayMs: Long
         get() = sp.getLong(K_REPLY_DELAY, 1500L)
@@ -219,6 +224,7 @@ class Settings(context: Context) {
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
         private const val K_REPLY_DELAY = "reply_delay_ms"
+        private const val K_SMS_SLOT = "sms_slot"
         private const val K_TPL_PREFIX = "tpl_"
         private const val K_DEF_LANG = "def_lang"
         private const val K_LLM_ON = "llm_on"
