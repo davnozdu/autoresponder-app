@@ -30,7 +30,7 @@ class NotifListenerService : NotificationListenerService() {
             EventLog(this).add(
                 "NOTIF[${channel.name.lowercase()}] from='${sender.take(20)}' group=$isGroup reply=$hasReply text='${text.take(36)}'"
             )
-            NotifResponder.handle(this, sbn, sender, text, channel, isGroup)
+            NotifResponder.handle(this, sbn, sender, text, channel, isGroup, hasReply)
         } catch (e: Exception) {
             EventLog(this).add("NOTIF error: ${e.message}")
         }

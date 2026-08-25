@@ -31,18 +31,20 @@ object NotifResponder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String,
-               channel: Channel, isGroup: Boolean) {
+               channel: Channel, isGroup: Boolean, hasReply: Boolean) {
         val app = context.applicationContext
-        scope.launch { process(app, sbn, sender, text, channel, isGroup) }
+        scope.launch { process(app, sbn, sender, text, channel, isGroup, hasReply) }
     }
 
     private fun process(context: Context, sbn: StatusBarNotification, sender: String,
-                        text: String, channel: Channel, isGroup: Boolean) {
+                        text: String, channel: Channel, isGroup: Boolean, hasReply: Boolean) {
         val s = Settings(context)
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
         if (text.isBlank()) return
         if (isGroup) { log.add("NOTIF ${sender.take(16)} — группа, пропуск"); return }
+        // WhatsApp/Telegram без кнопки ответа = канал/рассылка/не-сообщение → пропуск.
+        if (channel != Channel.MESSAGES && !hasReply) return
         if (ClosedState.reason(context, s) == null) return  // открыто — молчим
 
         val tag = channel.name.lowercase()
