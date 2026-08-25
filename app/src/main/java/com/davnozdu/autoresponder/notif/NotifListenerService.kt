@@ -1,45 +1,38 @@
 package com.davnozdu.autoresponder.notif
 
 import android.app.Notification
-import android.app.RemoteInput
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.davnozdu.autoresponder.data.EventLog
 
 /**
- * v2-диагностика: логирует входящие уведомления мессенджеров (Google Messages/RCS,
- * WhatsApp, Telegram) — отправитель, текст, наличие кнопки «Ответить» с RemoteInput.
- * Пока НЕ отвечает — сначала подтверждаем доступ и структуру на живых данных.
+ * Ловит входящие сообщения мессенджеров через уведомления.
+ * Google Messages (SMS+RCS) — обрабатываем и отвечаем. WhatsApp/Telegram — пока только лог.
  */
 class NotifListenerService : NotificationListenerService() {
 
-    private val watched = setOf(
-        "com.google.android.apps.messaging",   // SMS + RCS
-        "com.whatsapp", "com.whatsapp.w4b",     // WhatsApp / Business
-        "org.telegram.messenger"                // Telegram
-    )
+    private val messages = "com.google.android.apps.messaging"
+    private val logged = setOf("com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         try {
             val pkg = sbn.packageName ?: return
-            if (pkg !in watched) return
+            if (pkg != messages && pkg !in logged) return
             val n = sbn.notification ?: return
-            // пропускаем сводки групп и «идущие» (ongoing) уведомления
             if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
             if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return
 
-            val ex = n.extras
-            val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "?"
-            val text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-                ?: ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
+            val pair = NotifResponder.extract(n) ?: return
+            val (sender, text) = pair
+            if (text.isBlank()) return
 
-            // ищем reply-экшен с RemoteInput
-            var replyable = false
-            n.actions?.forEach { a ->
-                a.remoteInputs?.forEach { _ -> replyable = true }
-            }
+            val hasReply = n.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true
             val short = pkg.substringAfterLast('.')
-            EventLog(this).add("NOTIF[$short] from='${title.take(24)}' reply=$replyable text='${text.take(40)}'")
+            EventLog(this).add("NOTIF[$short] from='${sender.take(24)}' reply=$hasReply text='${text.take(40)}'")
+
+            if (pkg == messages) {
+                NotifResponder.handle(this, sbn, sender, text)
+            }
         } catch (e: Exception) {
             EventLog(this).add("NOTIF error: ${e.message}")
         }

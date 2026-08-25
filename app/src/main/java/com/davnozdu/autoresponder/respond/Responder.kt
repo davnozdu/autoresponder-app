@@ -111,6 +111,10 @@ object Responder {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
+        if (kind == Kind.SMS && !Dedup.claim(incomingText)) {
+            log.add("$tag $norm — дубль (уже обработано уведомлением), пропуск"); return
+        }
+
         // Пауза перед отправкой — стабильность: даём телефонии/радиомодулю
         // устояться после сброса звонка или приёма SMS.
         if (s.replyDelayMs > 0) delay(s.replyDelayMs)
@@ -128,6 +132,12 @@ object Responder {
         } else {
             log.add("$tag $norm — ОШИБКА отправки SMS")
         }
+    }
+
+    /** Публичная сборка финального ответа (LLM/шаблон + префикс + обрезка сегментов). */
+    fun composeReply(context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean): String {
+        val reply = buildReply(context, s, incomingText, kind, returning)
+        return SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
     }
 
     private fun buildReply(
