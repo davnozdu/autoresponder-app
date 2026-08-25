@@ -28,6 +28,18 @@ object Responder {
         scope.launch { process(app, number, incomingText, kind) }
     }
 
+    /** DEBUG: вывести в лог текущее состояние (DND/расписание/закрыто). */
+    fun debugStatus(context: Context) {
+        val app = context.applicationContext
+        val s = Settings(app)
+        val filter = ClosedState.dndFilter(app)
+        val fname = when (filter) {
+            1 -> "ALL(DND выкл)"; 2 -> "PRIORITY(DND вкл)"; 3 -> "NONE(тишина)"; 4 -> "ALARMS"; else -> "?($filter)"
+        }
+        val reason = ClosedState.reason(app, s) ?: "открыто"
+        EventLog(app).add("STATUS: фильтр=$fname, closed=$reason, triggerDnd=${s.triggerOnDnd}, triggerSched=${s.triggerOnSchedule}")
+    }
+
     /** DEBUG: прогнать конвейер С гейтингом лимита. send=false — без реальной отправки. */
     fun debugCompose(context: Context, number: String?, incomingText: String?, kind: Kind, send: Boolean) {
         val app = context.applicationContext
@@ -67,7 +79,8 @@ object Responder {
             if (pause > 0) delay(pause.toLong())
         }
 
-        if (!ClosedState.isClosed(context, s)) {
+        val closedReason = ClosedState.reason(context, s)
+        if (closedReason == null) {
             log.add("$tag $from — открыто, пропуск"); return
         }
         if (PhoneMask.isAlphanumericSender(number)) {
@@ -94,7 +107,7 @@ object Responder {
         val segs = SmsSender.send(context, norm, clamped, subId = -1)
         if (segs >= 0) {
             store.markReplied(norm, s.timeoutHours)
-            log.add("$tag $norm — отправлено [$segs сег., #${store.count(norm)}/${s.maxReplies}]: ${clamped.take(40)}…")
+            log.add("$tag $norm — отправлено (закрыто: $closedReason) [$segs сег., #${store.count(norm)}/${s.maxReplies}]: ${clamped.take(40)}…")
         } else {
             log.add("$tag $norm — ОШИБКА отправки SMS")
         }

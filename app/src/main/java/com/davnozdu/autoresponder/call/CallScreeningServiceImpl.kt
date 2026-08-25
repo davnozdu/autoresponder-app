@@ -23,11 +23,11 @@ class CallScreeningServiceImpl : CallScreeningService() {
 
         val number = callDetails.handle?.schemeSpecificPart // tel:+420... -> +420...
         val s = Settings(this)
-        val closed = ClosedState.isClosed(this, s)
+        val closedReason = ClosedState.reason(this, s)
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
         val skip = SkipPolicy.reason(this, number, s, isCall = true) != null
 
-        if (s.enabled && s.respondCalls && closed && matches && !skip) {
+        if (s.enabled && s.respondCalls && closedReason != null && matches && !skip) {
             // Отклоняем звонок без записи в журнал пропущенных/уведомления.
             val response = CallResponse.Builder()
                 .setDisallowCall(true)
