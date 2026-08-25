@@ -4,36 +4,41 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.davnozdu.autoresponder.data.EventLog
+import com.davnozdu.autoresponder.data.Settings
 
-/** Ловит входящие сообщения Google Messages(RCS)/WhatsApp/Telegram через уведомления. */
+/** Ловит входящие сообщения выбранных мессенджеров через уведомления. */
 class NotifListenerService : NotificationListenerService() {
 
-    private fun channelFor(pkg: String): Channel? = when (pkg) {
-        "com.google.android.apps.messaging" -> Channel.MESSAGES
-        "com.whatsapp", "com.whatsapp.w4b" -> Channel.WHATSAPP
-        "org.telegram.messenger" -> Channel.TELEGRAM
-        else -> null
+    private val messagesPkg = "com.google.android.apps.messaging"
+
+    private fun tagFor(pkg: String): String = when (pkg) {
+        messagesPkg -> "rcs"
+        "com.whatsapp", "com.whatsapp.w4b" -> "whatsapp"
+        "org.telegram.messenger" -> "telegram"
+        else -> try {
+            packageManager.getApplicationLabel(
+                packageManager.getApplicationInfo(pkg, 0)).toString().lowercase()
+        } catch (e: Exception) { pkg.substringAfterLast('.') }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         try {
             val pkg = sbn.packageName ?: return
-            val channel = channelFor(pkg) ?: return
+            if (pkg !in Settings(this).monitoredApps) return
             val n = sbn.notification ?: return
             if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
             if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return
-            // Уже отвечали в этом уведомлении (нами или вручную) — не зацикливаемся.
             val history = n.extras.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY)
             if (history != null && history.isNotEmpty()) return
 
             val (sender, text, isGroup) = NotifResponder.extract(n) ?: return
             if (text.isBlank()) return
 
+            val channel = if (pkg == messagesPkg) Channel.MESSAGES else Channel.MESSENGER
+            val tag = tagFor(pkg)
             val hasReply = n.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true
-            EventLog(this).add(
-                "NOTIF[${channel.name.lowercase()}] from='${sender.take(20)}' group=$isGroup reply=$hasReply text='${text.take(36)}'"
-            )
-            NotifResponder.handle(this, sbn, sender, text, channel, isGroup, hasReply)
+            EventLog(this).add("NOTIF[$tag] from='${sender.take(20)}' group=$isGroup reply=$hasReply text='${text.take(36)}'")
+            NotifResponder.handle(this, sbn, sender, text, channel, tag, isGroup, hasReply)
         } catch (e: Exception) {
             EventLog(this).add("NOTIF error: ${e.message}")
         }

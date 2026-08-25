@@ -27,7 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-enum class Channel { MESSAGES, WHATSAPP, TELEGRAM }
+enum class Channel { MESSAGES, MESSENGER }
 
 /** Обработка входящих сообщений мессенджеров (RCS/WhatsApp/Telegram) через уведомления. */
 object NotifResponder {
@@ -35,13 +35,13 @@ object NotifResponder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String,
-               channel: Channel, isGroup: Boolean, hasReply: Boolean) {
+               channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean) {
         val app = context.applicationContext
-        EventQueue.submit { process(app, sbn, sender, text, channel, isGroup, hasReply) }
+        EventQueue.submit { process(app, sbn, sender, text, channel, tag, isGroup, hasReply) }
     }
 
     private suspend fun process(context: Context, sbn: StatusBarNotification, sender: String,
-                        text: String, channel: Channel, isGroup: Boolean, hasReply: Boolean) {
+                        text: String, channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean) {
         val s = Settings(context)
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
@@ -50,8 +50,6 @@ object NotifResponder {
         // WhatsApp/Telegram без кнопки ответа = канал/рассылка/не-сообщение → пропуск.
         if (channel != Channel.MESSAGES && !hasReply) return
         if (ClosedState.reason(context, s) == null) return  // открыто — молчим
-
-        val tag = channel.name.lowercase()
 
         // Ключ для лимита/анти-петли и правила по номеру (только для Messages).
         val key: String

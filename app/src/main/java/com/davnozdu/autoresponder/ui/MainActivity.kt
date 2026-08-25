@@ -306,12 +306,23 @@ fun AppScreen() {
             Button(onClick = {
                 ctx.startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }) { Text("Доступ к уведомлениям") }
+            Button(onClick = {
+                try {
+                    ctx.startActivity(Intent(
+                        AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:" + ctx.packageName)))
+                } catch (e: Exception) {
+                    ctx.startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+            }) { Text("Отключить оптимизацию батареи") }
 
             HorizontalDivider()
             Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth()) { Text("📜 История сообщений") }
             Button(onClick = { ctx.startActivity(Intent(ctx, BlacklistActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth()) { Text("🚫 Чёрный список") }
+            Button(onClick = { ctx.startActivity(Intent(ctx, AppPickerActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth()) { Text("📱 Приложения для автоответа") }
 
             HorizontalDivider()
             Text("Импорт / экспорт настроек", style = MaterialTheme.typography.titleMedium)

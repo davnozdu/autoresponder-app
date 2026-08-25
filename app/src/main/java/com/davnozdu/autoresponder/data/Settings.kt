@@ -93,6 +93,11 @@ class Settings(context: Context) {
         get() = sp.getInt(K_TIMEOUT, 3)
         set(v) = sp.edit().putInt(K_TIMEOUT, v).apply()
 
+    // --- приложения-мессенджеры для мониторинга (пакеты) ---
+    var monitoredApps: Set<String>
+        get() = sp.getStringSet(K_MON_APPS, DEFAULT_APPS)!!.toSet()
+        set(v) = sp.edit().putStringSet(K_MON_APPS, v).apply()
+
     // --- выбор SIM для отправки: -1 системная, 0=SIM1, 1=SIM2 (по умолчанию SIM2) ---
     var smsSlot: Int
         get() = sp.getInt(K_SMS_SLOT, 1)
@@ -225,6 +230,9 @@ class Settings(context: Context) {
         private const val K_MAX_SEG = "max_seg"
         private const val K_REPLY_DELAY = "reply_delay_ms"
         private const val K_SMS_SLOT = "sms_slot"
+        private const val K_MON_APPS = "monitored_apps"
+        val DEFAULT_APPS = setOf(
+            "com.google.android.apps.messaging", "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
         private const val K_TPL_PREFIX = "tpl_"
         private const val K_DEF_LANG = "def_lang"
         private const val K_LLM_ON = "llm_on"
