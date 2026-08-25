@@ -86,6 +86,12 @@ fun AppScreen() {
     var model by remember { mutableStateOf(s.llmModel) }
     var models by remember { mutableStateOf(listOf<String>()) }
     var status by remember { mutableStateOf("") }
+    var update by remember { mutableStateOf<com.davnozdu.autoresponder.update.UpdateInfo?>(null) }
+    var updBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val u = withContext(Dispatchers.IO) { try { com.davnozdu.autoresponder.update.Updater.check() } catch (e: Exception) { null } }
+        update = u
+    }
     var llm2On by remember { mutableStateOf(s.llm2Enabled) }
     var provider2 by remember { mutableStateOf(s.llm2Provider) }
     var baseUrl2 by remember { mutableStateOf(s.llm2BaseUrl) }
@@ -146,6 +152,25 @@ fun AppScreen() {
             Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            update?.let { u ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("Доступно обновление: ${u.version}", style = MaterialTheme.typography.titleMedium)
+                        if (u.notes.isNotBlank()) Text(u.notes, style = MaterialTheme.typography.bodySmall)
+                        Button(enabled = !updBusy, onClick = {
+                            updBusy = true
+                            scope.launch {
+                                val ok = withContext(Dispatchers.IO) {
+                                    val f = com.davnozdu.autoresponder.update.Updater.download(ctx, u.apkUrl)
+                                    f != null && com.davnozdu.autoresponder.update.Updater.install(ctx, f)
+                                }
+                                updBusy = false
+                                Toast.makeText(ctx, if (ok) "Устанавливаю…" else "Ошибка обновления", Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text(if (updBusy) "Загрузка…" else "Обновить") }
+                    }
+                }
+            }
             SwitchRow("Включён", enabled) { enabled = it; s.enabled = it }
             SwitchRow("Отвечать на звонки", respCalls) { respCalls = it; s.respondCalls = it }
             SwitchRow("Отвечать на SMS", respSms) { respSms = it; s.respondSms = it }
