@@ -92,6 +92,8 @@ object Responder {
         val from = number ?: "?"
 
         if (!s.enabled) return
+        // Звонок сюда попадает только после отклонения скринингом — делаем его видимым как MISSED.
+        if (kind == Kind.CALL) com.davnozdu.autoresponder.call.CallLogWriter.writeMissed(context, number)
         if (kind == Kind.CALL && !s.respondCalls) return
         if (kind == Kind.SMS && !s.respondSms) return
 
