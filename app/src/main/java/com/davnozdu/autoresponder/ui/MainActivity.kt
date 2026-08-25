@@ -310,6 +310,8 @@ fun AppScreen() {
             HorizontalDivider()
             Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth()) { Text("📜 История сообщений") }
+            Button(onClick = { ctx.startActivity(Intent(ctx, BlacklistActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth()) { Text("🚫 Чёрный список") }
 
             HorizontalDivider()
             Text("Импорт / экспорт настроек", style = MaterialTheme.typography.titleMedium)

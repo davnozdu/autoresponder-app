@@ -15,6 +15,7 @@ import com.davnozdu.autoresponder.respond.Kind
 import com.davnozdu.autoresponder.respond.Responder
 import com.davnozdu.autoresponder.respond.EventQueue
 import com.davnozdu.autoresponder.respond.SmsSender
+import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
@@ -80,8 +81,13 @@ object NotifResponder {
         val inId = if (channel == Channel.MESSAGES) number else sender
         HistoryLogger.record(context, inId, inCh, "in", text)
 
+        val bl = HistoryDb.get(context).blacklistMatch(
+            if (channel == Channel.MESSAGES) number else null, sender)
+        if (bl != null && !bl.viaLlm) { log.add("NOTIF[$tag] $key — чёрный список, без ответа"); return }
+        val override = if (bl != null && bl.viaLlm) bl.prompt else null
+
         val returning = store.count(key) > 0
-        val reply = Responder.composeReply(context, s, text, Kind.SMS, returning)
+        val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override)
 
         // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
         if (tryRemoteInputReply(context, sbn, reply)) {

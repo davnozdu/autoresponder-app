@@ -22,6 +22,7 @@
         android:theme="@style/Theme.AutoResponder">
 
         <activity android:name=".ui.HistoryActivity" android:exported="false" />
+        <activity android:name=".ui.BlacklistActivity" android:exported="false" />
 
         <activity
             android:name=".ui.MainActivity"
