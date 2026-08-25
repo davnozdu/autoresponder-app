@@ -42,6 +42,22 @@ class Settings(context: Context) {
             .split(",").map { it.trim() }.filter { it.isNotEmpty() }
         set(v) = sp.edit().putString(K_PREFIXES, v.joinToString(",")).apply()
 
+    // --- Избранные: номера-исключения (автоответ НЕ применять) ---
+    var excludedNumbers: List<String>
+        get() = sp.getString(K_EXCLUDED, "")!!
+            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        set(v) = sp.edit().putString(K_EXCLUDED, v.joinToString(",")).apply()
+
+    fun addExcluded(number: String) {
+        val n = number.trim()
+        if (n.isEmpty()) return
+        val cur = excludedNumbers.toMutableList()
+        if (cur.none { it.equals(n, true) }) { cur.add(n); excludedNumbers = cur }
+    }
+    fun removeExcluded(number: String) {
+        excludedNumbers = excludedNumbers.filterNot { it.equals(number.trim(), true) }
+    }
+
     // --- отвечать на звонки / SMS ---
     var respondCalls: Boolean
         get() = sp.getBoolean(K_RESP_CALLS, true)
@@ -111,6 +127,7 @@ class Settings(context: Context) {
         private const val K_SCHED_START = "sched_start"
         private const val K_SCHED_END = "sched_end"
         private const val K_PREFIXES = "prefixes"
+        private const val K_EXCLUDED = "excluded"
         private const val K_RESP_CALLS = "resp_calls"
         private const val K_RESP_SMS = "resp_sms"
         private const val K_MAX_REPLIES = "max_replies"

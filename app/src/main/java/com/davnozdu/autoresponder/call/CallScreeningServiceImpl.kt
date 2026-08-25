@@ -24,8 +24,9 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val s = Settings(this)
         val closed = ClosedState.isClosed(this, s)
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
+        val excluded = PhoneMask.isExcluded(number, s.excludedNumbers)
 
-        if (s.enabled && s.respondCalls && closed && matches) {
+        if (s.enabled && s.respondCalls && closed && matches && !excluded) {
             // Отклоняем звонок без записи в журнал пропущенных/уведомления.
             val response = CallResponse.Builder()
                 .setDisallowCall(true)

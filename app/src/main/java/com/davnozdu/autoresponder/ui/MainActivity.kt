@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.ContactsContract
 import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -49,8 +50,10 @@ fun AppScreen() {
     var trigDnd by remember { mutableStateOf(s.triggerOnDnd) }
     var trigSched by remember { mutableStateOf(s.triggerOnSchedule) }
     var prefixes by remember { mutableStateOf(s.allowedPrefixes.joinToString(",")) }
-    var startMin by remember { mutableStateOf(s.scheduleStartMin.toString()) }
-    var endMin by remember { mutableStateOf(s.scheduleEndMin.toString()) }
+    var startMin by remember { mutableStateOf(s.scheduleStartMin) }
+    var endMin by remember { mutableStateOf(s.scheduleEndMin) }
+    var excluded by remember { mutableStateOf(s.excludedNumbers) }
+    var newExcl by remember { mutableStateOf("") }
     var maxReplies by remember { mutableStateOf(s.maxReplies.toString()) }
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
@@ -74,6 +77,19 @@ fun AppScreen() {
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {}
+    val contactLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { res ->
+        val uri = res.data?.data
+        if (uri != null) {
+            ctx.contentResolver.query(uri,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER), null, null, null)?.use {
+                if (it.moveToFirst()) {
+                    s.addExcluded(it.getString(0)); excluded = s.excludedNumbers
+                }
+            }
+        }
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text("AutoResponder") }) }) { pad ->
         Column(
@@ -87,20 +103,50 @@ fun AppScreen() {
             HorizontalDivider()
             Text("Когда «закрыто»", style = MaterialTheme.typography.titleMedium)
             SwitchRow("По системному режиму «Не беспокоить»", trigDnd) { trigDnd = it; s.triggerOnDnd = it }
-            SwitchRow("По расписанию (минуты от полуночи)", trigSched) { trigSched = it; s.triggerOnSchedule = it }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(startMin, { startMin = it; it.toIntOrNull()?.let { v -> s.scheduleStartMin = v } },
-                    label = { Text("Начало") }, modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                OutlinedTextField(endMin, { endMin = it; it.toIntOrNull()?.let { v -> s.scheduleEndMin = v } },
-                    label = { Text("Конец") }, modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            SwitchRow("По расписанию", trigSched) { trigSched = it; s.triggerOnSchedule = it }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Закрыто с")
+                OutlinedButton(onClick = {
+                    pickTime(ctx, startMin) { startMin = it; s.scheduleStartMin = it }
+                }) { Text(fmtMin(startMin)) }
+                Text("до")
+                OutlinedButton(onClick = {
+                    pickTime(ctx, endMin) { endMin = it; s.scheduleEndMin = it }
+                }) { Text(fmtMin(endMin)) }
             }
+            Text(
+                if (startMin > endMin) "Активно ${fmtMin(startMin)} → ${fmtMin(endMin)} (через полночь)"
+                else "Активно ${fmtMin(startMin)} → ${fmtMin(endMin)}",
+                style = MaterialTheme.typography.bodySmall
+            )
 
             HorizontalDivider()
             Text("Маска стран (префиксы через запятую)", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(prefixes, { prefixes = it; s.allowedPrefixes = it.split(",").map { p -> p.trim() } },
                 label = { Text("напр. +420,+7") }, modifier = Modifier.fillMaxWidth())
+
+            HorizontalDivider()
+            Text("Избранные (не отвечать)", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(newExcl, { newExcl = it }, label = { Text("Номер") },
+                    modifier = Modifier.weight(1f))
+                Button(onClick = {
+                    if (newExcl.isNotBlank()) { s.addExcluded(newExcl); excluded = s.excludedNumbers; newExcl = "" }
+                }) { Text("+") }
+            }
+            OutlinedButton(onClick = {
+                contactLauncher.launch(
+                    Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
+            }) { Text("Добавить из контактов") }
+            excluded.forEach { num ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(num)
+                    TextButton(onClick = { s.removeExcluded(num); excluded = s.excludedNumbers }) { Text("Удалить") }
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(maxReplies, { maxReplies = it; it.toIntOrNull()?.let { v -> s.maxReplies = v } },
@@ -192,6 +238,13 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         Text(label)
         Switch(checked = checked, onCheckedChange = onChange)
     }
+}
+
+private fun fmtMin(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)
+
+private fun pickTime(ctx: Context, minutes: Int, onSet: (Int) -> Unit) {
+    val h = minutes / 60; val m = minutes % 60
+    android.app.TimePickerDialog(ctx, { _, hh, mm -> onSet(hh * 60 + mm) }, h, m, true).show()
 }
 
 private fun requestCallScreeningRole(ctx: Context, launch: (Intent) -> Unit) {

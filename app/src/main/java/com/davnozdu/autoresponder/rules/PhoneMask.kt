@@ -28,6 +28,19 @@ object PhoneMask {
         }
     }
 
+    /** Номер в списке исключений (Избранные) — сравнение по последним 9 цифрам. */
+    fun isExcluded(raw: String?, excluded: List<String>): Boolean {
+        if (excluded.isEmpty()) return false
+        val a = digitsTail(raw) ?: return false
+        return excluded.any { e -> digitsTail(e)?.let { it == a } == true }
+    }
+
+    private fun digitsTail(raw: String?): String? {
+        val d = raw?.filter { it.isDigit() } ?: return null
+        if (d.isEmpty()) return null
+        return if (d.length <= 9) d else d.takeLast(9)  // хвост номера, без учёта кода/формата
+    }
+
     /** Буквенный отправитель (Sberbank, Google...) — отвечать нельзя. */
     fun isAlphanumericSender(raw: String?): Boolean {
         if (raw.isNullOrBlank()) return true

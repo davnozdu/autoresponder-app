@@ -66,6 +66,9 @@ object Responder {
         if (!PhoneMask.matches(number, s.allowedPrefixes)) {
             log.add("$tag $from — не подходит под маску стран, пропуск"); return
         }
+        if (PhoneMask.isExcluded(number, s.excludedNumbers)) {
+            log.add("$tag $from — в Избранных (исключение), пропуск"); return
+        }
         val norm = PhoneMask.normalize(number)!!
 
         val store = ReplyStore(context)
