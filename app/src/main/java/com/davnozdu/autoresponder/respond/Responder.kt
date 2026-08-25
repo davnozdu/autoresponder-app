@@ -38,14 +38,12 @@ object Responder {
                 log.add("TEST[$kind] $norm — ЛИМИТ ${s.maxReplies}/таймаут ${s.timeoutHours}ч, пропуск")
                 return@launch
             }
-            val lang = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
-                LangDetect.detect(incomingText, s.defaultLang) else s.defaultLang
-            val reply = buildReply(app, s, lang, incomingText, kind)
-            val clamped = SegmentBudget.clampToBudget(reply, lang, s.maxSegments)
+            val reply = buildReply(app, s, incomingText, kind)
+            val clamped = SegmentBudget.clampToBudget(reply, s.maxSegments)
             val segs = if (send) SmsSender.send(app, norm, clamped) else SmsSender.segmentCount(app, clamped)
             store.markReplied(norm, s.timeoutHours)
             val mode = if (send) "SENT" else "dry"
-            log.add("TEST[$kind] $norm $mode #${store.count(norm)}/${s.maxReplies} lang=$lang seg=$segs len=${clamped.length}")
+            log.add("TEST[$kind] $norm $mode #${store.count(norm)}/${s.maxReplies} seg=$segs len=${clamped.length}")
         }
     }
 
@@ -75,28 +73,26 @@ object Responder {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
-        val lang = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
-            LangDetect.detect(incomingText, s.defaultLang) else s.defaultLang
-
-        val reply = buildReply(context, s, lang, incomingText, kind)
-        val clamped = SegmentBudget.clampToBudget(reply, lang, s.maxSegments)
+        val reply = buildReply(context, s, incomingText, kind)
+        val clamped = SegmentBudget.clampToBudget(reply, s.maxSegments)
 
         val segs = SmsSender.send(context, norm, clamped, subId = -1)
         if (segs >= 0) {
             store.markReplied(norm, s.timeoutHours)
-            log.add("$tag $norm — отправлено [$lang, $segs сег., #${store.count(norm)}/${s.maxReplies}]: ${clamped.take(40)}…")
+            log.add("$tag $norm — отправлено [$segs сег., #${store.count(norm)}/${s.maxReplies}]: ${clamped.take(40)}…")
         } else {
             log.add("$tag $norm — ОШИБКА отправки SMS")
         }
     }
 
     private fun buildReply(
-        context: Context, s: Settings, lang: String, incomingText: String?, kind: Kind
+        context: Context, s: Settings, incomingText: String?, kind: Kind
     ): String {
         if (s.llmEnabled && NetworkUtil.isOnline(context) && s.llmModel.isNotBlank()) {
             try {
-                val budget = SegmentBudget.charBudget(lang, s.maxSegments)
-                val prompt = buildPrompt(lang, incomingText, kind, budget)
+                // Консервативный бюджет (UCS-2), т.к. язык ответа заранее неизвестен.
+                val budget = SegmentBudget.charBudget("ru", s.maxSegments)
+                val prompt = buildPrompt(incomingText, kind, budget, s.defaultLang)
                 val cfg = LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
                 val out = LlmFactory.create(cfg).generate(prompt, budget)
                 if (!out.isNullOrBlank()) return out
@@ -105,21 +101,31 @@ object Responder {
                 EventLog(context).add("LLM ошибка: ${e.message}, шаблон")
             }
         }
+        // Офлайн: язык по эвристике, затем шаблон.
+        val lang = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
+            LangDetect.detect(incomingText, s.defaultLang) else s.defaultLang
         return s.template(lang)
     }
 
-    private fun buildPrompt(lang: String, incomingText: String?, kind: Kind, budget: Int): String {
-        val langName = when (lang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
-        val ctx = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
-            "The customer sent this SMS: \"$incomingText\"."
-        else
-            "The customer tried to call but we could not answer."
-        return """
-            You are an automatic reply system for a business that is currently CLOSED.
-            $ctx
-            Write ONE short, polite SMS reply in $langName.
-            Say we are closed now and ask them to contact us again tomorrow (or answer their question briefly if possible).
-            Hard limit: at most $budget characters. No greetings signature, no emojis, plain text only.
-        """.trimIndent()
+    private fun buildPrompt(incomingText: String?, kind: Kind, budget: Int, defaultLang: String): String {
+        val defName = when (defaultLang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
+        return if (kind == Kind.SMS && !incomingText.isNullOrBlank()) {
+            """
+            You are an automatic SMS reply system for a business that is currently CLOSED.
+            A customer sent this message:
+            "$incomingText"
+            Detect the language of the customer's message and write your reply in THAT SAME language.
+            Say we are closed now and ask them to contact us again tomorrow, or briefly answer their question.
+            Hard limit: at most $budget characters. One short message, no signature, no emojis, plain text only.
+            """.trimIndent()
+        } else {
+            """
+            You are an automatic SMS reply system for a business that is currently CLOSED.
+            A customer tried to call but we could not answer.
+            Write ONE short, polite SMS reply in $defName.
+            Say we are closed now and ask them to call back tomorrow.
+            Hard limit: at most $budget characters. No signature, no emojis, plain text only.
+            """.trimIndent()
+        }
     }
 }

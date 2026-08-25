@@ -29,9 +29,17 @@ object SegmentBudget {
         return if (maxSegments <= 1) single else per * maxSegments
     }
 
-    /** Жёсткая обрезка по границе слова под бюджет символов. */
-    fun clampToBudget(text: String, lang: String, maxSegments: Int): String {
-        val budget = charBudget(lang, maxSegments)
+    /** Бюджет символов по ФАКТИЧЕСКОЙ кодировке текста (а не по угаданному языку). */
+    fun budgetForText(text: String, maxSegments: Int): Int {
+        val ucs2 = !isGsm7(text)
+        val per = if (ucs2) 67 else 153
+        val single = if (ucs2) 70 else 160
+        return if (maxSegments <= 1) single else per * maxSegments
+    }
+
+    /** Жёсткая обрезка по границе слова под бюджет (кодировка определяется по тексту). */
+    fun clampToBudget(text: String, maxSegments: Int): String {
+        val budget = budgetForText(text, maxSegments)
         if (text.length <= budget) return text
         val cut = text.substring(0, budget)
         val lastSpace = cut.lastIndexOf(' ')

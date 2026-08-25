@@ -3,15 +3,24 @@ package com.davnozdu.autoresponder.llm
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import org.json.JSONArray
 import org.json.JSONObject
 
-/** Локальный Ollama: /api/tags, /api/generate. Ключ не нужен. */
+/**
+ * Ollama: локальный (без ключа) и Ollama Cloud (https://ollama.com + Bearer-ключ).
+ * listModels -> /api/tags ; generate -> /api/chat. Ключ добавляется, если задан.
+ */
 class OllamaProvider(private val cfg: LlmConfig) : LlmProvider {
 
     private fun base() = cfg.baseUrl.trimEnd('/')
 
+    private fun Request.Builder.auth(): Request.Builder {
+        if (cfg.apiKey.isNotBlank()) header("Authorization", "Bearer ${cfg.apiKey}")
+        return this
+    }
+
     override fun listModels(): List<String> {
-        val req = Request.Builder().url("${base()}/api/tags").get().build()
+        val req = Request.Builder().url("${base()}/api/tags").auth().get().build()
         Http.client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) return emptyList()
             val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("models") ?: return emptyList()
@@ -20,16 +29,20 @@ class OllamaProvider(private val cfg: LlmConfig) : LlmProvider {
     }
 
     override fun generate(prompt: String, maxChars: Int): String? {
+        val messages = JSONArray().put(
+            JSONObject().put("role", "user").put("content", prompt)
+        )
         val body = JSONObject()
-            .put("model", cfg.model.ifBlank { "llama3" })
-            .put("prompt", prompt)
+            .put("model", cfg.model.ifBlank { "gemma3" })
+            .put("messages", messages)
             .put("stream", false)
             .put("options", JSONObject().put("num_predict", (maxChars / 2).coerceAtLeast(64)))
             .toString().toRequestBody(Http.JSON.toMediaType())
-        val req = Request.Builder().url("${base()}/api/generate").post(body).build()
+        val req = Request.Builder().url("${base()}/api/chat").auth().post(body).build()
         Http.client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) return null
-            return JSONObject(r.body?.string() ?: "{}").optString("response").trim().ifBlank { null }
+            return JSONObject(r.body?.string() ?: "{}")
+                .optJSONObject("message")?.optString("content")?.trim()?.ifBlank { null }
         }
     }
 }
