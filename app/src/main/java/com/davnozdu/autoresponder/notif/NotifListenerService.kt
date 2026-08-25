@@ -27,6 +27,9 @@ class NotifListenerService : NotificationListenerService() {
             val pkg = sbn.packageName ?: return
             if (pkg !in Settings(this).monitoredApps) return
             val n = sbn.notification ?: return
+            // Игнорируем старые/восстановленные уведомления (после перезагрузки система
+            // восстанавливает непрочитанные — на них отвечать нельзя). Только свежие.
+            if (System.currentTimeMillis() - sbn.postTime > 60_000L) return
             // Telegram: только личные чаты — не каналы, не группы (по id канала уведомления).
             if (pkg == "org.telegram.messenger" &&
                 !(n.channelId ?: "").contains("private", ignoreCase = true)) return
