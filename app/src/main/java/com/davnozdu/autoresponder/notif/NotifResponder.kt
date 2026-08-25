@@ -37,7 +37,7 @@ object NotifResponder {
         scope.launch { process(app, sbn, sender, text, channel, isGroup, hasReply) }
     }
 
-    private fun process(context: Context, sbn: StatusBarNotification, sender: String,
+    private suspend fun process(context: Context, sbn: StatusBarNotification, sender: String,
                         text: String, channel: Channel, isGroup: Boolean, hasReply: Boolean) {
         val s = Settings(context)
         val log = EventLog(context)
