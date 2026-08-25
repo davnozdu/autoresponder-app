@@ -14,6 +14,7 @@ class TestReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != "com.davnozdu.autoresponder.TEST") return
         if (intent.getStringExtra("kind") == "STATUS") { Responder.debugStatus(context); return }
+        if (intent.getStringExtra("kind") == "MODELS") { Responder.debugModels(context); return }
         val num = intent.getStringExtra("num")
         val text = intent.getStringExtra("text")
         val kind = if (intent.getStringExtra("kind") == "CALL") Kind.CALL else Kind.SMS

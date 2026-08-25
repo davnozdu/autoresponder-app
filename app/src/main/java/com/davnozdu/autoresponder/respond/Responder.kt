@@ -29,6 +29,23 @@ object Responder {
         scope.launch { process(app, number, incomingText, kind) }
     }
 
+    /** DEBUG: выполнить запрос моделей и записать результат/ошибку в журнал. */
+    fun debugModels(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            val s = Settings(app)
+            val log = EventLog(app)
+            try {
+                val cfg = com.davnozdu.autoresponder.llm.LlmConfig(
+                    s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
+                val list = com.davnozdu.autoresponder.llm.LlmFactory.create(cfg).listModels()
+                log.add("MODELS[${s.llmProvider} ${s.llmBaseUrl}]: ${list.size} шт: ${list.take(5)}")
+            } catch (e: Exception) {
+                log.add("MODELS ОШИБКА: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+    }
+
     /** DEBUG: вывести в лог текущее состояние (DND/расписание/закрыто). */
     fun debugStatus(context: Context) {
         val app = context.applicationContext
