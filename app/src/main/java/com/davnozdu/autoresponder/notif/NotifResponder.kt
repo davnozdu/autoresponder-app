@@ -23,66 +23,67 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** Обработка входящих сообщений мессенджеров (RCS/Google Messages) через уведомления. */
+enum class Channel { MESSAGES, WHATSAPP, TELEGRAM }
+
+/** Обработка входящих сообщений мессенджеров (RCS/WhatsApp/Telegram) через уведомления. */
 object NotifResponder {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String) {
+    fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String,
+               channel: Channel, isGroup: Boolean) {
         val app = context.applicationContext
-        scope.launch { process(app, sbn, sender, text) }
+        scope.launch { process(app, sbn, sender, text, channel, isGroup) }
     }
 
-    private fun process(context: Context, sbn: StatusBarNotification, sender: String, text: String) {
+    private fun process(context: Context, sbn: StatusBarNotification, sender: String,
+                        text: String, channel: Channel, isGroup: Boolean) {
         val s = Settings(context)
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
         if (text.isBlank()) return
-
+        if (isGroup) { log.add("NOTIF ${sender.take(16)} — группа, пропуск"); return }
         if (ClosedState.reason(context, s) == null) return  // открыто — молчим
 
-        // Определяем номер отправителя (в уведомлении может быть имя контакта).
-        val number = extractNumber(sender)
-        if (number == null) {
-            log.add("NOTIF ${sender.take(20)} — не номер (контакт), пропуск"); return
-        }
-        if (!PhoneMask.matches(number, s.allowedPrefixes)) {
-            log.add("NOTIF $number — не под маску, пропуск"); return
-        }
-        SkipPolicy.reason(context, number, s, isCall = false)?.let {
-            log.add("NOTIF $number — $it, пропуск"); return
-        }
-        val norm = PhoneMask.normalize(number)!!
-        val store = ReplyStore(context)
-        if (!store.canReply(norm, s.maxReplies, s.timeoutHours)) {
-            log.add("NOTIF $norm — лимит, пропуск"); return
-        }
-        if (!Dedup.claim(text)) {
-            log.add("NOTIF $norm — дубль, пропуск"); return
+        val tag = channel.name.lowercase()
+
+        // Ключ для лимита/анти-петли и правила по номеру (только для Messages).
+        val key: String
+        val number: String?
+        if (channel == Channel.MESSAGES) {
+            number = extractNumber(sender)
+            if (number == null) { log.add("NOTIF[$tag] ${sender.take(16)} — контакт без номера, пропуск"); return }
+            if (!PhoneMask.matches(number, s.allowedPrefixes)) { log.add("NOTIF[$tag] $number — не под маску, пропуск"); return }
+            SkipPolicy.reason(context, number, s, isCall = false)?.let { log.add("NOTIF[$tag] $number — $it, пропуск"); return }
+            key = PhoneMask.normalize(number)!!
+        } else {
+            // WhatsApp/Telegram: номера нет, маска не применяется; ключ по имени.
+            number = null
+            key = "$tag:${sender.trim().lowercase()}"
         }
 
-        val returning = store.count(norm) > 0
+        val store = ReplyStore(context)
+        if (!store.canReply(key, s.maxReplies, s.timeoutHours)) { log.add("NOTIF[$tag] $key — лимит, пропуск"); return }
+        if (!Dedup.claim("$tag|$sender|$text")) { log.add("NOTIF[$tag] $key — дубль, пропуск"); return }
+
+        val returning = store.count(key) > 0
         val reply = Responder.composeReply(context, s, text, Kind.SMS, returning)
 
-        // Пытаемся ответить через кнопку уведомления (уйдёт в тот же тред — RCS).
-        val viaNotif = tryRemoteInputReply(context, sbn, reply)
-        if (viaNotif) {
-            store.markReplied(norm, s.timeoutHours)
-            log.add("NOTIF $norm — ответ через RCS [#${store.count(norm)}/${s.maxReplies}]")
+        // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
+        if (tryRemoteInputReply(context, sbn, reply)) {
+            store.markReplied(key, s.timeoutHours)
+            log.add("NOTIF[$tag] $key — ответ в приложении [#${store.count(key)}/${s.maxReplies}]")
             return
         }
-        // Запасной вариант — обычное SMS с выбранной SIM.
-        val subId = SimUtil.resolveSubId(context, s.smsSlot)
-        val segs = SmsSender.send(context, norm, reply, subId)
-        if (segs >= 0) {
-            store.markReplied(norm, s.timeoutHours)
-            log.add("NOTIF $norm — ответ запасным SMS [$segs сег.]")
-        } else {
-            log.add("NOTIF $norm — ОШИБКА ответа")
+        // Запасной SMS только для Messages (есть номер).
+        if (channel == Channel.MESSAGES && number != null) {
+            val subId = SimUtil.resolveSubId(context, s.smsSlot)
+            val segs = SmsSender.send(context, key, reply, subId)
+            if (segs >= 0) { store.markReplied(key, s.timeoutHours); log.add("NOTIF[$tag] $key — запасной SMS [$segs сег.]"); return }
         }
+        log.add("NOTIF[$tag] $key — ответить не удалось (нет кнопки Reply)")
     }
 
-    /** Заполняет RemoteInput кнопки «Ответить» и отправляет её PendingIntent. */
     private fun tryRemoteInputReply(context: Context, sbn: StatusBarNotification, text: String): Boolean {
         return try {
             val n = sbn.notification ?: return false
@@ -92,39 +93,33 @@ object NotifResponder {
             val results = Bundle()
             for (ri in inputs) results.putCharSequence(ri.resultKey, text)
             RemoteInput.addResultsToIntent(inputs, intent, results)
-            // некоторые клиенты требуют флаг «reply» в clip data — базовый путь обычно работает
             action.actionIntent.send(context, 0, intent)
             true
         } catch (e: Exception) {
-            EventLog(context).add("NOTIF remoteInput error: ${e.message}")
-            false
+            EventLog(context).add("NOTIF remoteInput error: ${e.message}"); false
         }
     }
 
-    /** Извлекает телефонный номер из строки отправителя; null, если это имя. */
     private fun extractNumber(sender: String): String? {
-        val cleaned = sender.trim()
-        // считаем номером, если состоит в основном из цифр/+/пробелов/скобок/дефисов
-        val digits = cleaned.count { it.isDigit() }
-        val looksNumber = digits >= 6 && cleaned.all { it.isDigit() || it in "+()- " }
-        return if (looksNumber) PhoneMask.normalize(cleaned) else null
+        val c = sender.trim()
+        val digits = c.count { it.isDigit() }
+        val looksNumber = digits >= 6 && c.all { it.isDigit() || it in "+()- " }
+        return if (looksNumber) PhoneMask.normalize(c) else null
     }
 
-    /** Достаёт (отправитель, текст) из уведомления мессенджера. */
-    fun extract(n: Notification): Pair<String, String>? {
-        // MessagingStyle — самый надёжный для Messages/WhatsApp/Telegram
+    /** (отправитель, текст, группа?) из уведомления. */
+    fun extract(n: Notification): Triple<String, String, Boolean>? {
         val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
         if (style != null && style.messages.isNotEmpty()) {
             val last = style.messages.last()
-            val who = last.person?.name?.toString()
-                ?: style.conversationTitle?.toString() ?: "?"
+            val who = last.person?.name?.toString() ?: style.conversationTitle?.toString() ?: "?"
             val body = last.text?.toString() ?: ""
-            return who to body
+            return Triple(who, body, style.isGroupConversation)
         }
         val ex = n.extras
         val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return null
         val text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: return null
-        return title to text
+        return Triple(title, text, false)
     }
 }

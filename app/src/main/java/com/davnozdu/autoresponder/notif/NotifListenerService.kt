@@ -5,34 +5,32 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.davnozdu.autoresponder.data.EventLog
 
-/**
- * Ловит входящие сообщения мессенджеров через уведомления.
- * Google Messages (SMS+RCS) — обрабатываем и отвечаем. WhatsApp/Telegram — пока только лог.
- */
+/** Ловит входящие сообщения Google Messages(RCS)/WhatsApp/Telegram через уведомления. */
 class NotifListenerService : NotificationListenerService() {
 
-    private val messages = "com.google.android.apps.messaging"
-    private val logged = setOf("com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
+    private fun channelFor(pkg: String): Channel? = when (pkg) {
+        "com.google.android.apps.messaging" -> Channel.MESSAGES
+        "com.whatsapp", "com.whatsapp.w4b" -> Channel.WHATSAPP
+        "org.telegram.messenger" -> Channel.TELEGRAM
+        else -> null
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         try {
             val pkg = sbn.packageName ?: return
-            if (pkg != messages && pkg !in logged) return
+            val channel = channelFor(pkg) ?: return
             val n = sbn.notification ?: return
             if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
             if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return
 
-            val pair = NotifResponder.extract(n) ?: return
-            val (sender, text) = pair
+            val (sender, text, isGroup) = NotifResponder.extract(n) ?: return
             if (text.isBlank()) return
 
             val hasReply = n.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true
-            val short = pkg.substringAfterLast('.')
-            EventLog(this).add("NOTIF[$short] from='${sender.take(24)}' reply=$hasReply text='${text.take(40)}'")
-
-            if (pkg == messages) {
-                NotifResponder.handle(this, sbn, sender, text)
-            }
+            EventLog(this).add(
+                "NOTIF[${channel.name.lowercase()}] from='${sender.take(20)}' group=$isGroup reply=$hasReply text='${text.take(36)}'"
+            )
+            NotifResponder.handle(this, sbn, sender, text, channel, isGroup)
         } catch (e: Exception) {
             EventLog(this).add("NOTIF error: ${e.message}")
         }
