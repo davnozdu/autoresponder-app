@@ -2,6 +2,7 @@ package com.davnozdu.autoresponder.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.json.JSONObject
 
 /**
  * Синхронные настройки на SharedPreferences — удобно читать из сервисов/ресиверов.
@@ -92,19 +93,10 @@ class Settings(context: Context) {
         get() = sp.getInt(K_TIMEOUT, 3)
         set(v) = sp.edit().putInt(K_TIMEOUT, v).apply()
 
-    /**
-     * Пауза между отклонением звонка и отправкой SMS, мс.
-     * Даёт телефонии договорить разрыв вызова: если слать сразу,
-     * отправка приходится на занятый радиомодуль.
-     */
-    var callSmsDelayMs: Int
-        get() = sp.getInt(K_CALL_DELAY, 1500)
-        set(v) = sp.edit().putInt(K_CALL_DELAY, v).apply()
-
-    // --- задержка перед авто-ответом на сброшенный звонок (мс) ---
-    var callReplyDelayMs: Long
-        get() = sp.getLong(K_CALL_DELAY, 1500L)
-        set(v) = sp.edit().putLong(K_CALL_DELAY, v).apply()
+    // --- задержка перед авто-ответом (мс), для звонков и SMS ---
+    var replyDelayMs: Long
+        get() = sp.getLong(K_REPLY_DELAY, 1500L)
+        set(v) = sp.edit().putLong(K_REPLY_DELAY, v).apply()
 
     // --- максимум SMS-сегментов в одном ответе ---
     var maxSegments: Int
@@ -168,6 +160,48 @@ class Settings(context: Context) {
         get() = sp.getString(K_LLM_MODEL, "") ?: ""
         set(v) = sp.edit().putString(K_LLM_MODEL, v).apply()
 
+    // --- Импорт/экспорт всех настроек (с сохранением типов) ---
+    fun exportJson(): String {
+        val root = JSONObject()
+        for ((k, v) in sp.all) {
+            val o = JSONObject()
+            when (v) {
+                is Boolean -> { o.put("t", "b"); o.put("v", v) }
+                is Int -> { o.put("t", "i"); o.put("v", v) }
+                is Long -> { o.put("t", "l"); o.put("v", v) }
+                is Float -> { o.put("t", "f"); o.put("v", v.toDouble()) }
+                is String -> { o.put("t", "s"); o.put("v", v) }
+                else -> continue
+            }
+            root.put(k, o)
+        }
+        return root.toString(2)
+    }
+
+    /** Возвращает true при успехе. Полностью заменяет текущие настройки. */
+    fun importJson(json: String): Boolean {
+        return try {
+            val root = JSONObject(json)
+            val e = sp.edit().clear()
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val o = root.getJSONObject(k)
+                when (o.getString("t")) {
+                    "b" -> e.putBoolean(k, o.getBoolean("v"))
+                    "i" -> e.putInt(k, o.getInt("v"))
+                    "l" -> e.putLong(k, o.getLong("v"))
+                    "f" -> e.putFloat(k, o.getDouble("v").toFloat())
+                    "s" -> e.putString(k, o.getString("v"))
+                }
+            }
+            e.apply()
+            true
+        } catch (ex: Exception) {
+            false
+        }
+    }
+
     companion object {
         private const val K_ENABLED = "enabled"
         private const val K_TRIG_DND = "trig_dnd"
@@ -184,8 +218,7 @@ class Settings(context: Context) {
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
-        private const val K_CALL_DELAY = "call_delay_ms"
-        private const val K_CALL_DELAY = "call_sms_delay_ms"
+        private const val K_REPLY_DELAY = "reply_delay_ms"
         private const val K_TPL_PREFIX = "tpl_"
         private const val K_DEF_LANG = "def_lang"
         private const val K_LLM_ON = "llm_on"

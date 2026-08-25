@@ -1,6 +1,10 @@
 package com.davnozdu.autoresponder.ui
 
 import android.Manifest
+import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
@@ -64,8 +68,7 @@ fun AppScreen() {
     var maxReplies by remember { mutableStateOf(s.maxReplies.toString()) }
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
-    var callDelay by remember { mutableStateOf(s.callReplyDelayMs.toString()) }
-    var callDelay by remember { mutableStateOf(s.callSmsDelayMs.toString()) }
+    var replyDelay by remember { mutableStateOf(s.replyDelayMs.toString()) }
     var defLang by remember { mutableStateOf(s.defaultLang) }
 
     var tplRu by remember { mutableStateOf(s.template("ru")) }
@@ -86,6 +89,33 @@ fun AppScreen() {
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {}
+    val exportFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(s.exportJson().toByteArray()) }
+                Toast.makeText(ctx, "Настройки сохранены", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(ctx, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val importFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val txt = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: ""
+                if (s.importJson(txt)) {
+                    Toast.makeText(ctx, "Настройки загружены", Toast.LENGTH_SHORT).show()
+                    (ctx as? Activity)?.recreate()
+                } else Toast.makeText(ctx, "Неверный файл", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(ctx, "Ошибка загрузки", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     val contactLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { res ->
@@ -171,12 +201,9 @@ fun AppScreen() {
             OutlinedTextField(maxSeg, { maxSeg = it; it.toIntOrNull()?.let { v -> s.maxSegments = v } },
                 label = { Text("Макс. SMS-сегментов") }, modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            OutlinedTextField(callDelay, { callDelay = it; it.toLongOrNull()?.let { v -> s.callReplyDelayMs = v } },
-                label = { Text("Задержка ответа на звонок, мс") }, modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            OutlinedTextField(callDelay, { callDelay = it; it.toIntOrNull()?.let { v -> s.callSmsDelayMs = v } },
-                label = { Text("Пауза после сброса звонка, мс") }, modifier = Modifier.fillMaxWidth(),
-                supportingText = { Text("SMS уходит через столько после отклонения. По умолчанию 1500") },
+            OutlinedTextField(replyDelay, { replyDelay = it; it.toLongOrNull()?.let { v -> s.replyDelayMs = v } },
+                label = { Text("Задержка перед авто-ответом, мс") }, modifier = Modifier.fillMaxWidth(),
+                supportingText = { Text("Пауза перед отправкой SMS (звонок и SMS). По умолчанию 1500") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             OutlinedTextField(defLang, { defLang = it.trim(); s.defaultLang = it.trim() },
                 label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
@@ -258,6 +285,28 @@ fun AppScreen() {
             Button(onClick = {
                 ctx.startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }) { Text("Доступ к уведомлениям") }
+
+            HorizontalDivider()
+            Text("Импорт / экспорт настроек", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("autoresp", s.exportJson()))
+                    Toast.makeText(ctx, "Скопировано в буфер", Toast.LENGTH_SHORT).show()
+                }) { Text("Копировать") }
+                OutlinedButton(onClick = {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val txt = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString() ?: ""
+                    if (txt.isNotBlank() && s.importJson(txt)) {
+                        Toast.makeText(ctx, "Загружено из буфера", Toast.LENGTH_SHORT).show()
+                        (ctx as? Activity)?.recreate()
+                    } else Toast.makeText(ctx, "В буфере нет валидных настроек", Toast.LENGTH_SHORT).show()
+                }) { Text("Вставить") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { exportFileLauncher.launch("autoresp-settings.json") }) { Text("Сохранить в файл") }
+                OutlinedButton(onClick = { importFileLauncher.launch(arrayOf("application/json", "text/*")) }) { Text("Загрузить из файла") }
+            }
 
             HorizontalDivider()
             Text("Журнал", style = MaterialTheme.typography.titleMedium)

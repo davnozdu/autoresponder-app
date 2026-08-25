@@ -73,13 +73,6 @@ object Responder {
         if (kind == Kind.CALL && !s.respondCalls) return
         if (kind == Kind.SMS && !s.respondSms) return
 
-        // Звонок только что отклонён — даём телефонии закончить разрыв вызова,
-        // иначе отправка приходится на занятый радиомодуль.
-        if (kind == Kind.CALL) {
-            val pause = s.callSmsDelayMs.coerceIn(0, 30_000)
-            if (pause > 0) delay(pause.toLong())
-        }
-
         val closedReason = ClosedState.reason(context, s)
         if (closedReason == null) {
             log.add("$tag $from — открыто, пропуск"); return
@@ -100,9 +93,9 @@ object Responder {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
-        // Пауза после сброса звонка — чтобы отклонение точно дошло до телефонного стека,
-        // и только затем стартовал авто-ответ (для SMS задержка не нужна).
-        if (kind == Kind.CALL && s.callReplyDelayMs > 0) delay(s.callReplyDelayMs)
+        // Пауза перед отправкой — стабильность: даём телефонии/радиомодулю
+        // устояться после сброса звонка или приёма SMS.
+        if (s.replyDelayMs > 0) delay(s.replyDelayMs)
 
         val returning = store.count(norm) > 0
         val reply = buildReply(context, s, incomingText, kind, returning)
