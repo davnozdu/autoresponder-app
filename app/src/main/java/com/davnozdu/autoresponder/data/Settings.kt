@@ -149,7 +149,7 @@ class Settings(context: Context) {
         set(v) = sp.edit().putString(K_LLM_PROV, v).apply()
 
     var llmBaseUrl: String
-        get() = sp.getString(K_LLM_URL, "http://127.0.0.1:11434") ?: "http://127.0.0.1:11434"
+        get() = sp.getString(K_LLM_URL, "https://ollama.com") ?: "https://ollama.com"
         set(v) = sp.edit().putString(K_LLM_URL, v).apply()
 
     var llmApiKey: String

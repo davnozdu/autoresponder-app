@@ -233,14 +233,19 @@ fun AppScreen() {
             Button(onClick = {
                 status = "Запрашиваю модели…"
                 scope.launch {
-                    val list = withContext(Dispatchers.IO) {
+                    val res = withContext(Dispatchers.IO) {
                         try {
-                            LlmFactory.create(LlmConfig(provider, baseUrl, apiKey, model)).listModels()
-                        } catch (e: Exception) { emptyList() }
+                            Result.success(LlmFactory.create(LlmConfig(provider, baseUrl, apiKey, model)).listModels())
+                        } catch (e: Exception) { Result.failure<List<String>>(e) }
                     }
-                    models = list
-                    status = if (list.isEmpty()) "Модели не найдены (проверьте URL/ключ/сеть)"
-                             else "Найдено моделей: ${list.size}"
+                    res.onSuccess { list ->
+                        models = list
+                        status = if (list.isEmpty()) "Пусто: сервер ответил, но моделей нет (проверьте URL/ключ)"
+                                 else "Найдено моделей: ${list.size}"
+                    }.onFailure { e ->
+                        models = emptyList()
+                        status = "Ошибка: ${e.javaClass.simpleName}: ${e.message}"
+                    }
                 }
             }) { Text("Запросить все модели") }
             if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
