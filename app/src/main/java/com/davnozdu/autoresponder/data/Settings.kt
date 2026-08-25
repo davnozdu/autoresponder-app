@@ -113,6 +113,20 @@ class Settings(context: Context) {
         get() = sp.getString(K_DEF_LANG, "en") ?: "en"
         set(v) = sp.edit().putString(K_DEF_LANG, v).apply()
 
+    // --- Редактируемые промпты (LLM) ---
+    var promptCall: String
+        get() = sp.getString(K_PROMPT_CALL, DEF_PROMPT_CALL) ?: DEF_PROMPT_CALL
+        set(v) = sp.edit().putString(K_PROMPT_CALL, v).apply()
+
+    var promptSms: String
+        get() = sp.getString(K_PROMPT_SMS, DEF_PROMPT_SMS) ?: DEF_PROMPT_SMS
+        set(v) = sp.edit().putString(K_PROMPT_SMS, v).apply()
+
+    /** Префикс в начале каждого исходящего сообщения (пометка, что это ИИ). */
+    var aiPrefix: String
+        get() = sp.getString(K_AI_PREFIX, DEF_AI_PREFIX) ?: DEF_AI_PREFIX
+        set(v) = sp.edit().putString(K_AI_PREFIX, v).apply()
+
     // --- LLM ---
     var llmEnabled: Boolean
         get() = sp.getBoolean(K_LLM_ON, false)
@@ -158,5 +172,20 @@ class Settings(context: Context) {
         private const val K_LLM_URL = "llm_url"
         private const val K_LLM_KEY = "llm_key"
         private const val K_LLM_MODEL = "llm_model"
+        private const val K_PROMPT_CALL = "prompt_call"
+        private const val K_PROMPT_SMS = "prompt_sms"
+        private const val K_AI_PREFIX = "ai_prefix"
+
+        const val DEF_AI_PREFIX = "Ответ от AI:"
+        const val DEF_PROMPT_CALL =
+            "Ты — вежливый автоответчик компании, которая сейчас закрыта. " +
+            "Клиент звонил, но мы не можем ответить сейчас. Кратко, в рамках лимита символов, " +
+            "сообщи, что ответить сейчас не можем, попроси написать SMS, и что ответим при первой возможности."
+        const val DEF_PROMPT_SMS =
+            "Ты — вежливый автоответчик компании, которая сейчас закрыта. " +
+            "Ответь кратко и по делу в рамках лимита символов, учитывая содержание сообщения клиента. " +
+            "Поблагодари и сообщи, что ответим как можно скорее. " +
+            "Новому контакту: «спасибо за сообщение, ответим вам как можно быстрее». " +
+            "Тому, кто уже обращался: «спасибо, ответим как можно быстрее»."
     }
 }

@@ -57,6 +57,9 @@ fun AppScreen() {
     var exStarred by remember { mutableStateOf(s.excludeStarred) }
     var exContacts by remember { mutableStateOf(s.excludeContacts) }
     var respectDnd by remember { mutableStateOf(s.respectDndPriority) }
+    var promptCall by remember { mutableStateOf(s.promptCall) }
+    var promptSms by remember { mutableStateOf(s.promptSms) }
+    var aiPrefix by remember { mutableStateOf(s.aiPrefix) }
     var maxReplies by remember { mutableStateOf(s.maxReplies.toString()) }
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
@@ -207,6 +210,24 @@ fun AppScreen() {
             models.forEach { m ->
                 TextButton(onClick = { model = m; s.llmModel = m }) { Text(m) }
             }
+
+            HorizontalDivider()
+            Text("Промпты AI", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(aiPrefix, { aiPrefix = it; s.aiPrefix = it },
+                label = { Text("Префикс (пометка ИИ)") }, modifier = Modifier.fillMaxWidth(),
+                singleLine = true)
+            OutlinedTextField(promptSms, { promptSms = it; s.promptSms = it },
+                label = { Text("Промпт для SMS") }, modifier = Modifier.fillMaxWidth(),
+                minLines = 3)
+            OutlinedTextField(promptCall, { promptCall = it; s.promptCall = it },
+                label = { Text("Промпт для звонков") }, modifier = Modifier.fillMaxWidth(),
+                minLines = 3)
+            TextButton(onClick = {
+                promptSms = com.davnozdu.autoresponder.data.Settings.DEF_PROMPT_SMS
+                promptCall = com.davnozdu.autoresponder.data.Settings.DEF_PROMPT_CALL
+                aiPrefix = com.davnozdu.autoresponder.data.Settings.DEF_AI_PREFIX
+                s.promptSms = promptSms; s.promptCall = promptCall; s.aiPrefix = aiPrefix
+            }) { Text("Сбросить промпты по умолчанию") }
 
             HorizontalDivider()
             Text("Разрешения и роли", style = MaterialTheme.typography.titleMedium)

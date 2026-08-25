@@ -39,8 +39,9 @@ object Responder {
                 log.add("TEST[$kind] $norm — ЛИМИТ ${s.maxReplies}/таймаут ${s.timeoutHours}ч, пропуск")
                 return@launch
             }
-            val reply = buildReply(app, s, incomingText, kind)
-            val clamped = SegmentBudget.clampToBudget(reply, s.maxSegments)
+            val returning = store.count(norm) > 0
+            val reply = buildReply(app, s, incomingText, kind, returning)
+            val clamped = SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
             val segs = if (send) SmsSender.send(app, norm, clamped) else SmsSender.segmentCount(app, clamped)
             store.markReplied(norm, s.timeoutHours)
             val mode = if (send) "SENT" else "dry"
@@ -77,8 +78,10 @@ object Responder {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
-        val reply = buildReply(context, s, incomingText, kind)
-        val clamped = SegmentBudget.clampToBudget(reply, s.maxSegments)
+        val returning = store.count(norm) > 0
+        val reply = buildReply(context, s, incomingText, kind, returning)
+        val prefixed = applyPrefix(s.aiPrefix, reply)
+        val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
 
         val segs = SmsSender.send(context, norm, clamped, subId = -1)
         if (segs >= 0) {
@@ -90,13 +93,14 @@ object Responder {
     }
 
     private fun buildReply(
-        context: Context, s: Settings, incomingText: String?, kind: Kind
+        context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean
     ): String {
         if (s.llmEnabled && NetworkUtil.isOnline(context) && s.llmModel.isNotBlank()) {
             try {
-                // Консервативный бюджет (UCS-2), т.к. язык ответа заранее неизвестен.
-                val budget = SegmentBudget.charBudget("ru", s.maxSegments)
-                val prompt = buildPrompt(incomingText, kind, budget, s.defaultLang)
+                // Бюджет с учётом префикса «Ответ от AI:» (консервативно как UCS-2).
+                val prefixLen = if (s.aiPrefix.isBlank()) 0 else s.aiPrefix.length + 1
+                val budget = (SegmentBudget.charBudget("ru", s.maxSegments) - prefixLen).coerceAtLeast(40)
+                val prompt = buildPrompt(s, incomingText, kind, budget, returning)
                 val cfg = LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
                 val out = LlmFactory.create(cfg).generate(prompt, budget)
                 if (!out.isNullOrBlank()) return out
@@ -111,25 +115,34 @@ object Responder {
         return s.template(lang)
     }
 
-    private fun buildPrompt(incomingText: String?, kind: Kind, budget: Int, defaultLang: String): String {
-        val defName = when (defaultLang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
+    /** Добавляет пометку ИИ в начало, без двойных пробелов. */
+    private fun applyPrefix(prefix: String, text: String): String {
+        val p = prefix.trim()
+        return if (p.isEmpty()) text else "$p $text"
+    }
+
+    private fun buildPrompt(
+        s: Settings, incomingText: String?, kind: Kind, budget: Int, returning: Boolean
+    ): String {
+        val defName = when (s.defaultLang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
         return if (kind == Kind.SMS && !incomingText.isNullOrBlank()) {
+            val ret = if (returning) "This number has contacted us before (returning contact)."
+                      else "This is a new contact (first message)."
             """
-            You are an automatic SMS reply system for a business that is currently CLOSED.
-            A customer sent this message:
-            "$incomingText"
-            Detect the language of the customer's message (it may be Russian, Ukrainian, Czech, English or any other) and write your reply in THAT SAME language.
-            If you cannot confidently determine the language, reply in $defName.
-            Say we are closed now and ask them to contact us again tomorrow, or briefly answer their question.
-            Hard limit: at most $budget characters. One short message, no signature, no emojis, plain text only.
+            ${s.promptSms}
+
+            Customer's SMS: "$incomingText"
+            $ret
+            Detect the language of the customer's message (Russian, Ukrainian, Czech, English, or any other) and reply in THAT SAME language. If you cannot determine it, reply in $defName.
+            Use the content of the SMS as context. Keep it brief and polite.
+            Hard limit: at most $budget characters. One short message, no signature, no emojis, plain text only. Do NOT add any prefix yourself.
             """.trimIndent()
         } else {
             """
-            You are an automatic SMS reply system for a business that is currently CLOSED.
-            A customer tried to call but we could not answer.
-            Write ONE short, polite SMS reply in $defName.
-            Say we are closed now and ask them to call back tomorrow.
-            Hard limit: at most $budget characters. No signature, no emojis, plain text only.
+            ${s.promptCall}
+
+            Reply in $defName.
+            Hard limit: at most $budget characters. No signature, no emojis, plain text only. Do NOT add any prefix yourself.
             """.trimIndent()
         }
     }
