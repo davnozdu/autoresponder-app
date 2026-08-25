@@ -58,6 +58,21 @@ class Settings(context: Context) {
         excludedNumbers = excludedNumbers.filterNot { it.equals(number.trim(), true) }
     }
 
+    /** не отвечать звёздным (избранным) контактам телефона */
+    var excludeStarred: Boolean
+        get() = sp.getBoolean(K_EXCL_STARRED, true)
+        set(v) = sp.edit().putBoolean(K_EXCL_STARRED, v).apply()
+
+    /** не отвечать любым контактам из телефонной книги */
+    var excludeContacts: Boolean
+        get() = sp.getBoolean(K_EXCL_CONTACTS, false)
+        set(v) = sp.edit().putBoolean(K_EXCL_CONTACTS, v).apply()
+
+    /** уважать приоритетных отправителей режима «Не беспокоить» */
+    var respectDndPriority: Boolean
+        get() = sp.getBoolean(K_RESPECT_DND, true)
+        set(v) = sp.edit().putBoolean(K_RESPECT_DND, v).apply()
+
     // --- отвечать на звонки / SMS ---
     var respondCalls: Boolean
         get() = sp.getBoolean(K_RESP_CALLS, true)
@@ -128,6 +143,9 @@ class Settings(context: Context) {
         private const val K_SCHED_END = "sched_end"
         private const val K_PREFIXES = "prefixes"
         private const val K_EXCLUDED = "excluded"
+        private const val K_EXCL_STARRED = "excl_starred"
+        private const val K_EXCL_CONTACTS = "excl_contacts"
+        private const val K_RESPECT_DND = "respect_dnd"
         private const val K_RESP_CALLS = "resp_calls"
         private const val K_RESP_SMS = "resp_sms"
         private const val K_MAX_REPLIES = "max_replies"

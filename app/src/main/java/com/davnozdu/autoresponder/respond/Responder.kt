@@ -9,6 +9,7 @@ import com.davnozdu.autoresponder.llm.LlmFactory
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.LangDetect
 import com.davnozdu.autoresponder.rules.PhoneMask
+import com.davnozdu.autoresponder.rules.SkipPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,8 +67,8 @@ object Responder {
         if (!PhoneMask.matches(number, s.allowedPrefixes)) {
             log.add("$tag $from — не подходит под маску стран, пропуск"); return
         }
-        if (PhoneMask.isExcluded(number, s.excludedNumbers)) {
-            log.add("$tag $from — в Избранных (исключение), пропуск"); return
+        SkipPolicy.reason(context, number, s, kind == Kind.CALL)?.let { r ->
+            log.add("$tag $from — $r, пропуск"); return
         }
         val norm = PhoneMask.normalize(number)!!
 
@@ -117,7 +118,8 @@ object Responder {
             You are an automatic SMS reply system for a business that is currently CLOSED.
             A customer sent this message:
             "$incomingText"
-            Detect the language of the customer's message and write your reply in THAT SAME language.
+            Detect the language of the customer's message (it may be Russian, Ukrainian, Czech, English or any other) and write your reply in THAT SAME language.
+            If you cannot confidently determine the language, reply in $defName.
             Say we are closed now and ask them to contact us again tomorrow, or briefly answer their question.
             Hard limit: at most $budget characters. One short message, no signature, no emojis, plain text only.
             """.trimIndent()

@@ -8,6 +8,7 @@ import com.davnozdu.autoresponder.respond.Kind
 import com.davnozdu.autoresponder.respond.Responder
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
+import com.davnozdu.autoresponder.rules.SkipPolicy
 
 /**
  * Screening всех входящих звонков (держим роль CALL_SCREENING).
@@ -24,9 +25,9 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val s = Settings(this)
         val closed = ClosedState.isClosed(this, s)
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
-        val excluded = PhoneMask.isExcluded(number, s.excludedNumbers)
+        val skip = SkipPolicy.reason(this, number, s, isCall = true) != null
 
-        if (s.enabled && s.respondCalls && closed && matches && !excluded) {
+        if (s.enabled && s.respondCalls && closed && matches && !skip) {
             // Отклоняем звонок без записи в журнал пропущенных/уведомления.
             val response = CallResponse.Builder()
                 .setDisallowCall(true)

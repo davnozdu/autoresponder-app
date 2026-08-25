@@ -54,6 +54,9 @@ fun AppScreen() {
     var endMin by remember { mutableStateOf(s.scheduleEndMin) }
     var excluded by remember { mutableStateOf(s.excludedNumbers) }
     var newExcl by remember { mutableStateOf("") }
+    var exStarred by remember { mutableStateOf(s.excludeStarred) }
+    var exContacts by remember { mutableStateOf(s.excludeContacts) }
+    var respectDnd by remember { mutableStateOf(s.respectDndPriority) }
     var maxReplies by remember { mutableStateOf(s.maxReplies.toString()) }
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
@@ -128,6 +131,9 @@ fun AppScreen() {
 
             HorizontalDivider()
             Text("Избранные (не отвечать)", style = MaterialTheme.typography.titleMedium)
+            SwitchRow("Не отвечать звёздным контактам", exStarred) { exStarred = it; s.excludeStarred = it }
+            SwitchRow("Не отвечать всем контактам из книги", exContacts) { exContacts = it; s.excludeContacts = it }
+            SwitchRow("Уважать приоритетных в «Не беспокоить»", respectDnd) { respectDnd = it; s.respectDndPriority = it }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(newExcl, { newExcl = it }, label = { Text("Номер") },
