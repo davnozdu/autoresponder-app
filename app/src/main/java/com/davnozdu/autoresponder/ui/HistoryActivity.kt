@@ -65,7 +65,7 @@ fun HistoryScreen() {
         1 -> listOf("call"); 2 -> listOf("sms", "rcs"); 3 -> listOf("whatsapp", "telegram"); else -> emptyList()
     }
     fun reloadConvs() {
-        scope.launch { convs = withContext(Dispatchers.IO) { db.conversations(query, channelsFor(filter)) } }
+        scope.launch { convs = withContext(Dispatchers.IO) { db.conversations(query, channelsFor(filter), autoOnly = filter == 4) } }
     }
     fun loadThread(num: String) {
         val now = System.currentTimeMillis()
@@ -100,6 +100,7 @@ fun HistoryScreen() {
                     FilterChip(filter == 1, { filter = 1 }, { Text("Звонки") })
                     FilterChip(filter == 2, { filter = 2 }, { Text("СМС") })
                     FilterChip(filter == 3, { filter = 3 }, { Text("Чаты") })
+                    FilterChip(filter == 4, { filter = 4 }, { Text("🤖 Авто") })
                 }
                 TextButton(onClick = { confirmClear = true },
                     modifier = Modifier.padding(horizontal = 8.dp)) { Text("🗑 Очистить историю") }
@@ -162,7 +163,7 @@ fun HistoryScreen() {
                                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                                     Text(m.body, style = MaterialTheme.typography.bodyMedium)
                                     Text(
-                                        "${if (out) "Мы" else "Клиент"} · ${m.channel} · ${tsFmt.format(Date(m.ts))}",
+                                        "${if (out) (if (m.auto) "🤖 Автоответ" else "Мы") else "Клиент"} · ${m.channel} · ${tsFmt.format(Date(m.ts))}",
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.fillMaxWidth(),
                                         textAlign = if (out) TextAlign.End else TextAlign.Start

@@ -14,12 +14,13 @@ data class BlackEntry(
 
 data class HistItem(
     val id: Long, val number: String, val name: String?,
-    val channel: String, val direction: String, val body: String, val ts: Long
+    val channel: String, val direction: String, val body: String, val ts: Long,
+    val auto: Boolean = false
 )
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 4) {
+    SQLiteOpenHelper(context.applicationContext, "history.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -30,7 +31,8 @@ class HistoryDb private constructor(context: Context) :
                 "channel TEXT NOT NULL," +      // sms|rcs|whatsapp|telegram|call
                 "direction TEXT NOT NULL," +    // in|out
                 "body TEXT," +
-                "ts INTEGER NOT NULL)"
+                "ts INTEGER NOT NULL," +
+                "auto INTEGER NOT NULL DEFAULT 0)"
         )
         db.execSQL("CREATE INDEX idx_num ON events(number)")
         db.execSQL("CREATE INDEX idx_ts ON events(ts)")
@@ -60,6 +62,7 @@ class HistoryDb private constructor(context: Context) :
     override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
         if (oldV < 2) createBlacklist(db)
         if (oldV < 3) createQa(db)
+        if (oldV < 5) db.execSQL("ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
         if (oldV < 4) {
             db.execSQL("ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
             db.execSQL("ALTER TABLE blacklist ADD COLUMN on_msgr INTEGER NOT NULL DEFAULT 1")
@@ -68,10 +71,10 @@ class HistoryDb private constructor(context: Context) :
         }
     }
 
-    fun insert(number: String, name: String?, channel: String, direction: String, body: String, ts: Long = System.currentTimeMillis()) {
+    fun insert(number: String, name: String?, channel: String, direction: String, body: String, ts: Long = System.currentTimeMillis(), auto: Boolean = false) {
         val cv = ContentValues().apply {
             put("number", number); put("name", name); put("channel", channel)
-            put("direction", direction); put("body", body); put("ts", ts)
+            put("direction", direction); put("body", body); put("ts", ts); put("auto", if (auto) 1 else 0)
         }
         writableDatabase.insert("events", null, cv)
     }
@@ -86,7 +89,7 @@ class HistoryDb private constructor(context: Context) :
     }
 
     /** Различные ветки (по номеру), с последним сообщением — для списка/поиска. */
-    fun conversations(query: String, channels: List<String> = emptyList(), limit: Int = 100): List<HistItem> {
+    fun conversations(query: String, channels: List<String> = emptyList(), autoOnly: Boolean = false, limit: Int = 100): List<HistItem> {
         val res = ArrayList<HistItem>()
         val like = "%${query.trim()}%"
         val chFilter = if (channels.isEmpty()) "" else
@@ -97,7 +100,8 @@ class HistoryDb private constructor(context: Context) :
         if (channels.isNotEmpty()) where.add("e.channel IN (${channels.joinToString(",") { "'" + it + "'" }})")
         val whereSql = if (where.isEmpty()) "" else "WHERE " + where.joinToString(" AND ") + " "
         val sql = "SELECT e.* FROM events e JOIN (" +
-            "SELECT number, MAX(ts) mts FROM events $chFilter GROUP BY number) m " +
+            "SELECT number, MAX(ts) mts FROM events $chFilter GROUP BY number" +
+            (if (autoOnly) " HAVING SUM(auto)>0" else "") + ") m " +
             "ON e.number=m.number AND e.ts=m.mts " +
             whereSql +
             "ORDER BY e.ts DESC LIMIT $limit"
@@ -126,10 +130,13 @@ class HistoryDb private constructor(context: Context) :
         return res
     }
 
-    private fun row(c: android.database.Cursor) = HistItem(
-        c.getLong(0), c.getString(1), c.getStringOrNull(2),
-        c.getString(3), c.getString(4), c.getStringOrNull(5) ?: "", c.getLong(6)
-    )
+    private fun row(c: android.database.Cursor): HistItem {
+        val autoIdx = c.getColumnIndex("auto")
+        return HistItem(
+            c.getLong(0), c.getString(1), c.getStringOrNull(2),
+            c.getString(3), c.getString(4), c.getStringOrNull(5) ?: "", c.getLong(6),
+            autoIdx >= 0 && c.getInt(autoIdx) == 1)
+    }
     private fun android.database.Cursor.getStringOrNull(i: Int) = if (isNull(i)) null else getString(i)
 
     // --- История запросов (Q&A чат) ---
