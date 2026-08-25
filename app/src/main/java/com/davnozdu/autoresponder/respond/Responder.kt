@@ -68,8 +68,8 @@ object Responder {
         val norm = PhoneMask.normalize(number)!!
 
         val store = ReplyStore(context)
-        if (store.isOnCooldown(norm, s.cooldownHours)) {
-            log.add("$tag $norm — cooldown, пропуск"); return
+        if (!store.canReply(norm, s.maxReplies, s.timeoutHours)) {
+            log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
         val lang = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
@@ -80,8 +80,8 @@ object Responder {
 
         val segs = SmsSender.send(context, norm, clamped, subId = -1)
         if (segs >= 0) {
-            store.markReplied(norm)
-            log.add("$tag $norm — отправлено [$lang, $segs сег.]: ${clamped.take(40)}…")
+            store.markReplied(norm, s.timeoutHours)
+            log.add("$tag $norm — отправлено [$lang, $segs сег., #${store.count(norm)}/${s.maxReplies}]: ${clamped.take(40)}…")
         } else {
             log.add("$tag $norm — ОШИБКА отправки SMS")
         }

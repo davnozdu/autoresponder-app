@@ -3,23 +3,40 @@ package com.davnozdu.autoresponder.data
 import android.content.Context
 
 /**
- * Персистентный учёт последних авто-ответов на номер — защита от петель.
+ * Анти-флуд на номер: не более [maxReplies] авто-ответов, затем таймаут [timeoutHours].
+ * Окно скользит от последнего ответа: после лимита номер молчит, пока не пройдёт таймаут,
+ * после чего счётчик обнуляется.
  */
 class ReplyStore(context: Context) {
     private val sp = context.applicationContext
         .getSharedPreferences("autoresp_replies", Context.MODE_PRIVATE)
 
-    /** true, если на этот номер уже отвечали в пределах cooldown-окна */
-    fun isOnCooldown(number: String, cooldownHours: Int): Boolean {
-        val last = sp.getLong(key(number), 0L)
-        if (last == 0L) return false
-        val elapsed = System.currentTimeMillis() - last
-        return elapsed < cooldownHours * 3600_000L
+    /** Можно ли ответить сейчас. */
+    fun canReply(number: String, maxReplies: Int, timeoutHours: Int): Boolean {
+        val k = key(number)
+        val count = sp.getInt(k + "_c", 0)
+        val last = sp.getLong(k + "_t", 0L)
+        if (count == 0 || last == 0L) return true
+        val windowMs = timeoutHours * 3600_000L
+        if (System.currentTimeMillis() - last >= windowMs) return true // таймаут прошёл → сброс
+        return count < maxReplies
     }
 
-    fun markReplied(number: String) {
-        sp.edit().putLong(key(number), System.currentTimeMillis()).apply()
+    /** Зафиксировать отправленный ответ (учитывает сброс по таймауту). */
+    fun markReplied(number: String, timeoutHours: Int) {
+        val k = key(number)
+        val last = sp.getLong(k + "_t", 0L)
+        val windowMs = timeoutHours * 3600_000L
+        val prev = if (last == 0L || System.currentTimeMillis() - last >= windowMs) 0
+                   else sp.getInt(k + "_c", 0)
+        sp.edit()
+            .putInt(k + "_c", prev + 1)
+            .putLong(k + "_t", System.currentTimeMillis())
+            .apply()
     }
 
-    private fun key(number: String) = "last_" + number.filter { it.isDigit() || it == '+' }
+    /** Текущий счётчик (для лога). */
+    fun count(number: String): Int = sp.getInt(key(number) + "_c", 0)
+
+    private fun key(number: String) = "n_" + number.filter { it.isDigit() || it == '+' }
 }

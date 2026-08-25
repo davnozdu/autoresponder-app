@@ -23,7 +23,16 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
       - run: chmod +x ./gradlew
+      - name: Decode keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
       - name: Build release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: ./gradlew assembleRelease --stacktrace
       - name: Rename APK
         run: |
@@ -31,8 +40,7 @@ jobs:
           mkdir -p out
           cp app/build/outputs/apk/release/*.apk "out/AutoResponder-$TAG.apk"
           ls -la out
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
           files: out/*.apk

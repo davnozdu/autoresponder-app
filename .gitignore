@@ -8,3 +8,9 @@
 .externalNativeBuild
 .cxx
 app/build/
+
+# signing keystore (NEVER commit)
+keystore-backup/
+*.p12
+*.jks
+keystore.properties

@@ -51,10 +51,15 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_RESP_SMS, true)
         set(v) = sp.edit().putBoolean(K_RESP_SMS, v).apply()
 
-    // --- анти-петля: одно авто-СМС на номер за N часов ---
-    var cooldownHours: Int
-        get() = sp.getInt(K_COOLDOWN, 6)
-        set(v) = sp.edit().putInt(K_COOLDOWN, v).apply()
+    // --- анти-флуд: не более N авто-ответов на номер, затем таймаут ---
+    var maxReplies: Int
+        get() = sp.getInt(K_MAX_REPLIES, 3)
+        set(v) = sp.edit().putInt(K_MAX_REPLIES, v).apply()
+
+    /** таймаут после исчерпания лимита, часы */
+    var timeoutHours: Int
+        get() = sp.getInt(K_TIMEOUT, 3)
+        set(v) = sp.edit().putInt(K_TIMEOUT, v).apply()
 
     // --- максимум SMS-сегментов в одном ответе ---
     var maxSegments: Int
@@ -108,7 +113,8 @@ class Settings(context: Context) {
         private const val K_PREFIXES = "prefixes"
         private const val K_RESP_CALLS = "resp_calls"
         private const val K_RESP_SMS = "resp_sms"
-        private const val K_COOLDOWN = "cooldown_h"
+        private const val K_MAX_REPLIES = "max_replies"
+        private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
         private const val K_TPL_PREFIX = "tpl_"
         private const val K_DEF_LANG = "def_lang"

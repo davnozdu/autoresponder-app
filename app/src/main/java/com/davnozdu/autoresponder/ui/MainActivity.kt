@@ -51,7 +51,8 @@ fun AppScreen() {
     var prefixes by remember { mutableStateOf(s.allowedPrefixes.joinToString(",")) }
     var startMin by remember { mutableStateOf(s.scheduleStartMin.toString()) }
     var endMin by remember { mutableStateOf(s.scheduleEndMin.toString()) }
-    var cooldown by remember { mutableStateOf(s.cooldownHours.toString()) }
+    var maxReplies by remember { mutableStateOf(s.maxReplies.toString()) }
+    var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
     var defLang by remember { mutableStateOf(s.defaultLang) }
 
@@ -102,13 +103,16 @@ fun AppScreen() {
                 label = { Text("напр. +420,+7") }, modifier = Modifier.fillMaxWidth())
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(cooldown, { cooldown = it; it.toIntOrNull()?.let { v -> s.cooldownHours = v } },
-                    label = { Text("Cooldown, ч") }, modifier = Modifier.weight(1f),
+                OutlinedTextField(maxReplies, { maxReplies = it; it.toIntOrNull()?.let { v -> s.maxReplies = v } },
+                    label = { Text("Макс. ответов") }, modifier = Modifier.weight(1f),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                OutlinedTextField(maxSeg, { maxSeg = it; it.toIntOrNull()?.let { v -> s.maxSegments = v } },
-                    label = { Text("Макс. сегментов") }, modifier = Modifier.weight(1f),
+                OutlinedTextField(timeoutH, { timeoutH = it; it.toIntOrNull()?.let { v -> s.timeoutHours = v } },
+                    label = { Text("Таймаут, ч") }, modifier = Modifier.weight(1f),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             }
+            OutlinedTextField(maxSeg, { maxSeg = it; it.toIntOrNull()?.let { v -> s.maxSegments = v } },
+                label = { Text("Макс. SMS-сегментов") }, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             OutlinedTextField(defLang, { defLang = it.trim(); s.defaultLang = it.trim() },
                 label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
 
