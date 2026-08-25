@@ -26,23 +26,26 @@ object Responder {
         scope.launch { process(app, number, incomingText, kind) }
     }
 
-    /** DEBUG: прогнать конвейер ответа без гейтинга. send=false — только лог. */
+    /** DEBUG: прогнать конвейер С гейтингом лимита. send=false — без реальной отправки. */
     fun debugCompose(context: Context, number: String?, incomingText: String?, kind: Kind, send: Boolean) {
         val app = context.applicationContext
         scope.launch {
             val s = Settings(app)
             val log = EventLog(app)
+            val norm = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number) ?: "+000"
+            val store = ReplyStore(app)
+            if (!store.canReply(norm, s.maxReplies, s.timeoutHours)) {
+                log.add("TEST[$kind] $norm — ЛИМИТ ${s.maxReplies}/таймаут ${s.timeoutHours}ч, пропуск")
+                return@launch
+            }
             val lang = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
                 LangDetect.detect(incomingText, s.defaultLang) else s.defaultLang
             val reply = buildReply(app, s, lang, incomingText, kind)
             val clamped = SegmentBudget.clampToBudget(reply, lang, s.maxSegments)
-            val segs = SmsSender.segmentCount(app, clamped)
-            log.add("TEST[$kind] lang=$lang seg=$segs len=${clamped.length}: ${clamped.take(60)}")
-            if (send && !number.isNullOrBlank()) {
-                val n = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number)!!
-                val sent = SmsSender.send(app, n, clamped)
-                log.add("TEST send -> $n : $sent сег.")
-            }
+            val segs = if (send) SmsSender.send(app, norm, clamped) else SmsSender.segmentCount(app, clamped)
+            store.markReplied(norm, s.timeoutHours)
+            val mode = if (send) "SENT" else "dry"
+            log.add("TEST[$kind] $norm $mode #${store.count(norm)}/${s.maxReplies} lang=$lang seg=$segs len=${clamped.length}")
         }
     }
 
