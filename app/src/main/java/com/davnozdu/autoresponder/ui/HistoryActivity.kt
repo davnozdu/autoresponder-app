@@ -14,7 +14,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import com.davnozdu.autoresponder.store.HistItem
+import com.davnozdu.autoresponder.store.Importer
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.Summarizer
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +73,14 @@ fun HistoryScreen() {
             if (openNumber == null) {
                 OutlinedTextField(query, { query = it }, label = { Text("Поиск: номер или имя") },
                     modifier = Modifier.fillMaxWidth().padding(12.dp), singleLine = true)
+                OutlinedButton(onClick = {
+                    Toast.makeText(ctx, "Импортирую…", Toast.LENGTH_SHORT).show()
+                    scope.launch {
+                        val cnt = withContext(Dispatchers.IO) { Importer.importAll(ctx) }
+                        Toast.makeText(ctx, "Импортировано: $cnt", Toast.LENGTH_LONG).show()
+                        reloadConvs()
+                    }
+                }, modifier = Modifier.padding(horizontal = 12.dp)) { Text("⤵ Импорт SMS и звонков из телефона") }
                 if (convs.isEmpty()) Text("Пусто", Modifier.padding(16.dp))
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(convs) { c ->

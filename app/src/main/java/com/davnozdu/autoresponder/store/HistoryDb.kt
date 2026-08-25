@@ -39,6 +39,13 @@ class HistoryDb private constructor(context: Context) :
         writableDatabase.insert("events", null, cv)
     }
 
+    fun existsAt(number: String, ts: Long, direction: String): Boolean {
+        readableDatabase.rawQuery(
+            "SELECT 1 FROM events WHERE number=? AND ts=? AND direction=? LIMIT 1",
+            arrayOf(number, ts.toString(), direction)
+        ).use { c -> return c.moveToFirst() }
+    }
+
     /** Различные ветки (по номеру), с последним сообщением — для списка/поиска. */
     fun conversations(query: String, limit: Int = 100): List<HistItem> {
         val res = ArrayList<HistItem>()
