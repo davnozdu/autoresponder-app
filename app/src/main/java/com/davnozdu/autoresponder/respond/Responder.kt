@@ -111,7 +111,7 @@ object Responder {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
-        if (kind == Kind.SMS && !Dedup.claim(incomingText)) {
+        if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {
             log.add("$tag $norm — дубль (уже обработано уведомлением), пропуск"); return
         }
 

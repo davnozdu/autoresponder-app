@@ -70,7 +70,7 @@ object NotifResponder {
         // Для Messages ждём: обычное SMS за это время застолбит SmsReceiver (уйдёт с выбранной SIM),
         // а до сюда дойдёт только настоящий RCS (у него события приёмника нет).
         if (channel == Channel.MESSAGES) delay(2000)
-        val dedupKey = if (channel == Channel.MESSAGES) text else "$tag|$text"
+        val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key:$text"
         if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
 
         val returning = store.count(key) > 0
