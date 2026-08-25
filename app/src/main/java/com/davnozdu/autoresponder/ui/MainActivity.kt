@@ -308,6 +308,10 @@ fun AppScreen() {
             }) { Text("Доступ к уведомлениям") }
 
             HorizontalDivider()
+            Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth()) { Text("📜 История сообщений") }
+
+            HorizontalDivider()
             Text("Импорт / экспорт настроек", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
