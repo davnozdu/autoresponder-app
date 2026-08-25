@@ -93,6 +93,10 @@ class Settings(context: Context) {
         get() = sp.getInt(K_TIMEOUT, 3)
         set(v) = sp.edit().putInt(K_TIMEOUT, v).apply()
 
+    var lastUpdateCheck: Long
+        get() = sp.getLong(K_UPD_CHECK, 0L)
+        set(v) = sp.edit().putLong(K_UPD_CHECK, v).apply()
+
     // --- макс. возраст уведомления для ответа (мин) — защита от старых/восстановленных ---
     var notifMaxAgeMin: Int
         get() = sp.getInt(K_NOTIF_AGE, 5)
@@ -254,6 +258,7 @@ class Settings(context: Context) {
         private const val K_SMS_SLOT = "sms_slot"
         private const val K_MON_APPS = "monitored_apps"
         private const val K_NOTIF_AGE = "notif_age_min"
+        private const val K_UPD_CHECK = "last_upd_check"
         val DEFAULT_APPS = setOf(
             "com.google.android.apps.messaging", "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
         private const val K_TPL_PREFIX = "tpl_"

@@ -89,8 +89,10 @@ fun AppScreen() {
     var update by remember { mutableStateOf<com.davnozdu.autoresponder.update.UpdateInfo?>(null) }
     var updBusy by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        val u = withContext(Dispatchers.IO) { try { com.davnozdu.autoresponder.update.Updater.check() } catch (e: Exception) { null } }
-        update = u
+        if (System.currentTimeMillis() - s.lastUpdateCheck > 86_400_000L) {
+            val u = withContext(Dispatchers.IO) { try { com.davnozdu.autoresponder.update.Updater.check() } catch (e: Exception) { null } }
+            s.lastUpdateCheck = System.currentTimeMillis(); update = u
+        }
     }
     var llm2On by remember { mutableStateOf(s.llm2Enabled) }
     var provider2 by remember { mutableStateOf(s.llm2Provider) }
@@ -402,6 +404,14 @@ fun AppScreen() {
                     ctx.startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                 }
             }) { Text("Отключить оптимизацию батареи") }
+            Button(onClick = {
+                Toast.makeText(ctx, "Проверяю обновления…", Toast.LENGTH_SHORT).show()
+                scope.launch {
+                    val u = withContext(Dispatchers.IO) { try { com.davnozdu.autoresponder.update.Updater.check() } catch (e: Exception) { null } }
+                    s.lastUpdateCheck = System.currentTimeMillis(); update = u
+                    if (u == null) Toast.makeText(ctx, "Установлена последняя версия ✓", Toast.LENGTH_SHORT).show()
+                }
+            }) { Text("Проверить обновление") }
 
             HorizontalDivider()
             Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
