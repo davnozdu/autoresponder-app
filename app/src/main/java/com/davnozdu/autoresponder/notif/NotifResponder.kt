@@ -42,7 +42,7 @@ object NotifResponder {
         val s = Settings(context)
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
-        if (text.isBlank()) return
+        if (text.isBlank() || isPlaceholder(text)) { return }
         if (isGroup) { log.add("NOTIF ${sender.take(16)} — группа, пропуск"); return }
         // WhatsApp/Telegram без кнопки ответа = канал/рассылка/не-сообщение → пропуск.
         if (channel != Channel.MESSAGES && !hasReply) return
@@ -70,7 +70,7 @@ object NotifResponder {
         // Для Messages ждём: обычное SMS за это время застолбит SmsReceiver (уйдёт с выбранной SIM),
         // а до сюда дойдёт только настоящий RCS (у него события приёмника нет).
         if (channel == Channel.MESSAGES) delay(2000)
-        val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key:$text"
+        val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
         if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
 
         val returning = store.count(key) > 0
@@ -120,7 +120,10 @@ object NotifResponder {
         if (style != null && style.messages.isNotEmpty()) {
             val last = style.messages.last()
             val who = last.person?.name?.toString() ?: style.conversationTitle?.toString() ?: "?"
-            val body = last.text?.toString() ?: ""
+            // Контекст: последние сообщения (входящие от клиента), новейшее — последним.
+            val recent = style.messages.takeLast(4)
+                .mapNotNull { it.text?.toString()?.trim()?.ifBlank { null } }
+            val body = if (recent.size > 1) recent.joinToString("\n") else (last.text?.toString() ?: "")
             return Triple(who, body, style.isGroupConversation)
         }
         val ex = n.extras
