@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.AutoResponder" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
