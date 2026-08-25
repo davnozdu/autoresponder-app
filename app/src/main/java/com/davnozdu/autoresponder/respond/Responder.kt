@@ -131,6 +131,9 @@ object Responder {
             """
             ${s.promptSms}
 
+            Facts about the business (use them to answer):
+            ${s.businessInfo}
+
             Customer's SMS: "$incomingText"
             $ret
             Detect the language of the customer's message (Russian, Ukrainian, Czech, English, or any other) and reply in THAT SAME language. If you cannot determine it, reply in $defName.

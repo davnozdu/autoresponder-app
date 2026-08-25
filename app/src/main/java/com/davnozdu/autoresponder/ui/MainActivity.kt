@@ -60,6 +60,7 @@ fun AppScreen() {
     var promptCall by remember { mutableStateOf(s.promptCall) }
     var promptSms by remember { mutableStateOf(s.promptSms) }
     var aiPrefix by remember { mutableStateOf(s.aiPrefix) }
+    var bizInfo by remember { mutableStateOf(s.businessInfo) }
     var maxReplies by remember { mutableStateOf(s.maxReplies.toString()) }
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
@@ -222,11 +223,15 @@ fun AppScreen() {
             OutlinedTextField(promptCall, { promptCall = it; s.promptCall = it },
                 label = { Text("Промпт для звонков") }, modifier = Modifier.fillMaxWidth(),
                 minLines = 3)
+            OutlinedTextField(bizInfo, { bizInfo = it; s.businessInfo = it },
+                label = { Text("Факты о компании (база знаний)") }, modifier = Modifier.fillMaxWidth(),
+                minLines = 3)
             TextButton(onClick = {
                 promptSms = com.davnozdu.autoresponder.data.Settings.DEF_PROMPT_SMS
                 promptCall = com.davnozdu.autoresponder.data.Settings.DEF_PROMPT_CALL
                 aiPrefix = com.davnozdu.autoresponder.data.Settings.DEF_AI_PREFIX
-                s.promptSms = promptSms; s.promptCall = promptCall; s.aiPrefix = aiPrefix
+                bizInfo = com.davnozdu.autoresponder.data.Settings.DEF_BUSINESS_INFO
+                s.promptSms = promptSms; s.promptCall = promptCall; s.aiPrefix = aiPrefix; s.businessInfo = bizInfo
             }) { Text("Сбросить промпты по умолчанию") }
 
             HorizontalDivider()
