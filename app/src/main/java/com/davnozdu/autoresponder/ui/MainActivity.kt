@@ -70,6 +70,7 @@ fun AppScreen() {
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
     var replyDelay by remember { mutableStateOf(s.replyDelayMs.toString()) }
+    var notifAge by remember { mutableStateOf(s.notifMaxAgeMin.toString()) }
     var smsSlot by remember { mutableStateOf(s.smsSlot) }
     val sims = remember { SimUtil.activeSims(ctx) }
     var defLang by remember { mutableStateOf(s.defaultLang) }
@@ -214,6 +215,10 @@ fun AppScreen() {
             OutlinedTextField(replyDelay, { replyDelay = it; it.toLongOrNull()?.let { v -> s.replyDelayMs = v } },
                 label = { Text("Задержка перед авто-ответом, мс") }, modifier = Modifier.fillMaxWidth(),
                 supportingText = { Text("Пауза перед отправкой SMS (звонок и SMS). По умолчанию 1500") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            OutlinedTextField(notifAge, { notifAge = it; it.toIntOrNull()?.let { v -> s.notifMaxAgeMin = v } },
+                label = { Text("Не отвечать на сообщения старше, мин") }, modifier = Modifier.fillMaxWidth(),
+                supportingText = { Text("Защита от старых/восстановленных после перезагрузки. По умолчанию 5") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
 
             Text("SIM для отправки", style = MaterialTheme.typography.titleSmall)

@@ -94,6 +94,7 @@ object NotifResponder {
         if (tryRemoteInputReply(context, sbn, reply)) {
             store.markReplied(key, s.timeoutHours)
             HistoryLogger.record(context, inId, inCh, "out", reply)
+            NotifListenerService.dismiss(sbn.key)
             log.add("NOTIF[$tag] $key — ответ (#${store.count(key)}/${s.maxReplies}): $reply")
             return
         }

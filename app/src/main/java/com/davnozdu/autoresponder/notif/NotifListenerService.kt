@@ -12,6 +12,18 @@ class NotifListenerService : NotificationListenerService() {
 
     private val messagesPkg = "com.google.android.apps.messaging"
 
+    override fun onListenerConnected() { instance = this }
+    override fun onListenerDisconnected() { instance = null }
+
+    companion object {
+        @Volatile private var instance: NotifListenerService? = null
+        /** Снять уведомление после ответа, чтобы не обрабатывать повторно. */
+        fun dismiss(key: String?) {
+            if (key == null) return
+            try { instance?.cancelNotification(key) } catch (_: Exception) {}
+        }
+    }
+
     private fun tagFor(pkg: String): String = when (pkg) {
         messagesPkg -> "rcs"
         "com.whatsapp", "com.whatsapp.w4b" -> "whatsapp"
@@ -25,11 +37,12 @@ class NotifListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         try {
             val pkg = sbn.packageName ?: return
-            if (pkg !in Settings(this).monitoredApps) return
+            val s = Settings(this)
+            if (pkg !in s.monitoredApps) return
             val n = sbn.notification ?: return
             // Игнорируем старые/восстановленные уведомления (после перезагрузки система
             // восстанавливает непрочитанные — на них отвечать нельзя). Только свежие.
-            if (System.currentTimeMillis() - sbn.postTime > 60_000L) return
+            if (System.currentTimeMillis() - sbn.postTime > s.notifMaxAgeMin * 60_000L) return
             // Telegram: только личные чаты — не каналы, не группы (по id канала уведомления).
             if (pkg == "org.telegram.messenger" &&
                 !(n.channelId ?: "").contains("private", ignoreCase = true)) return
