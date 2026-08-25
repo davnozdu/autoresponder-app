@@ -49,8 +49,6 @@ object NotifResponder {
         if (isGroup) { log.add("NOTIF ${sender.take(16)} — группа, пропуск"); return }
         // WhatsApp/Telegram без кнопки ответа = канал/рассылка/не-сообщение → пропуск.
         if (channel != Channel.MESSAGES && !hasReply) return
-        if (ClosedState.reason(context, s) == null) return  // открыто — молчим
-
         // Ключ для лимита/анти-петли и правила по номеру (только для Messages).
         val key: String
         val number: String?
@@ -61,31 +59,33 @@ object NotifResponder {
             SkipPolicy.reason(context, number, s, isCall = false)?.let { log.add("NOTIF[$tag] $number — $it, пропуск"); return }
             key = PhoneMask.normalize(number)!!
         } else {
-            // WhatsApp/Telegram: номера нет, маска не применяется; ключ по имени.
             number = null
             key = "$tag:${sender.trim().lowercase()}"
         }
 
+        // История входящего RCS (мессенджеры пишутся в listener) — всегда.
+        if (channel == Channel.MESSAGES) HistoryLogger.record(context, number, "rcs", "in", text)
+        val inCh = if (channel == Channel.MESSAGES) "rcs" else tag
+        val inId = if (channel == Channel.MESSAGES) number else sender
+
+        // Чёрный список отвечает ВСЕГДА; обычные — только когда «закрыто».
+        val bl = HistoryDb.get(context).blacklistMatch(
+            if (channel == Channel.MESSAGES) number else null, sender)
+        val closedReason = ClosedState.reason(context, s)
+        if (bl != null && !bl.viaLlm) { log.add("NOTIF[$tag] $key — чёрный список, без ответа"); return }
+        val forceReply = bl != null && bl.viaLlm
+        if (!forceReply && closedReason == null) return  // открыто — молчим
+        val override = if (forceReply) bl.prompt else null
+
         val store = ReplyStore(context)
         if (!store.canReply(key, s.maxReplies, s.timeoutHours)) { log.add("NOTIF[$tag] $key — лимит, пропуск"); return }
-        // Для Messages ждём: обычное SMS за это время застолбит SmsReceiver (уйдёт с выбранной SIM),
-        // а до сюда дойдёт только настоящий RCS (у него события приёмника нет).
+        // Для Messages пауза: обычное SMS застолбит SmsReceiver, до сюда дойдёт только RCS.
         if (channel == Channel.MESSAGES) delay(2000)
         val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
         if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
 
-        // История входящего: RCS — здесь (по номеру); мессенджеры пишутся в listener.
-        val inCh = if (channel == Channel.MESSAGES) "rcs" else tag
-        val inId = if (channel == Channel.MESSAGES) number else sender
-        if (channel == Channel.MESSAGES) HistoryLogger.record(context, inId, inCh, "in", text)
-
-        val bl = HistoryDb.get(context).blacklistMatch(
-            if (channel == Channel.MESSAGES) number else null, sender)
-        if (bl != null && !bl.viaLlm) { log.add("NOTIF[$tag] $key — чёрный список, без ответа"); return }
-        val override = if (bl != null && bl.viaLlm) bl.prompt else null
-
         val returning = store.count(key) > 0
-        val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override)
+        val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null)
 
         // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
         if (tryRemoteInputReply(context, sbn, reply)) {

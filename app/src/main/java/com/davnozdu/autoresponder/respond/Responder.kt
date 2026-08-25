@@ -93,10 +93,6 @@ object Responder {
         if (kind == Kind.CALL && !s.respondCalls) return
         if (kind == Kind.SMS && !s.respondSms) return
 
-        val closedReason = ClosedState.reason(context, s)
-        if (closedReason == null) {
-            log.add("$tag $from — открыто, пропуск"); return
-        }
         if (PhoneMask.isAlphanumericSender(number)) {
             log.add("$tag $from — буквенный отправитель, пропуск"); return
         }
@@ -113,20 +109,22 @@ object Responder {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
+        // Чёрный список отвечает ВСЕГДА (через LLM), обычные — только когда «закрыто».
+        val bl = HistoryDb.get(context).blacklistMatch(norm, null)
+        val closedReason = ClosedState.reason(context, s)
+        if (bl != null && !bl.viaLlm) { log.add("$tag $norm — чёрный список, без ответа"); return }
+        val forceReply = bl != null && bl.viaLlm
+        if (!forceReply && closedReason == null) { log.add("$tag $from — открыто, пропуск"); return }
+        val override = if (forceReply) bl.prompt else null
+
         if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {
             log.add("$tag $norm — дубль (уже обработано уведомлением), пропуск"); return
         }
 
-        // Пауза перед отправкой — стабильность: даём телефонии/радиомодулю
-        // устояться после сброса звонка или приёма SMS.
         if (s.replyDelayMs > 0) delay(s.replyDelayMs)
 
-        val bl = HistoryDb.get(context).blacklistMatch(norm, null)
-        if (bl != null && !bl.viaLlm) { log.add("$tag $norm — чёрный список, без ответа"); return }
-        val override = if (bl != null && bl.viaLlm) bl.prompt else null
-
         val returning = store.count(norm) > 0
-        val reply = buildReply(context, s, incomingText, kind, returning, override)
+        val reply = buildReply(context, s, incomingText, kind, returning, override, closedReason != null)
         val prefixed = applyPrefix(s.aiPrefix, reply)
         val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
 
@@ -135,27 +133,27 @@ object Responder {
         if (segs >= 0) {
             store.markReplied(norm, s.timeoutHours)
             HistoryLogger.record(context, norm, if (kind == Kind.CALL) "call" else "sms", "out", clamped)
-            log.add("$tag $norm — ответ (закрыто:$closedReason, $segs сег, #${store.count(norm)}/${s.maxReplies}): $clamped")
+            log.add("$tag $norm — ответ (${closedReason ?: "ЧС"}, $segs сег, #${store.count(norm)}/${s.maxReplies}): $clamped")
         } else {
             log.add("$tag $norm — ОШИБКА отправки SMS")
         }
     }
 
     /** Публичная сборка финального ответа (LLM/шаблон + префикс + обрезка сегментов). */
-    fun composeReply(context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean, promptOverride: String? = null): String {
-        val reply = buildReply(context, s, incomingText, kind, returning, promptOverride)
+    fun composeReply(context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean, promptOverride: String? = null, closedNow: Boolean = true): String {
+        val reply = buildReply(context, s, incomingText, kind, returning, promptOverride, closedNow)
         return SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
     }
 
     private fun buildReply(
-        context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean, promptOverride: String? = null
+        context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean, promptOverride: String? = null, closedNow: Boolean = true
     ): String {
         if (s.llmEnabled && NetworkUtil.isOnline(context) && s.llmModel.isNotBlank()) {
             try {
                 // Бюджет с учётом префикса «Ответ от AI:» (консервативно как UCS-2).
                 val prefixLen = if (s.aiPrefix.isBlank()) 0 else s.aiPrefix.length + 1
                 val budget = (SegmentBudget.charBudget("ru", s.maxSegments) - prefixLen).coerceAtLeast(40)
-                val prompt = buildPrompt(s, incomingText, kind, budget, returning, promptOverride)
+                val prompt = buildPrompt(s, incomingText, kind, budget, returning, promptOverride, closedNow)
                 val out = com.davnozdu.autoresponder.llm.Llm.generate(context, prompt, budget)
                 if (!out.isNullOrBlank()) return out
                 EventLog(context).add("LLM пустой ответ, шаблон")
@@ -176,7 +174,7 @@ object Responder {
     }
 
     private fun buildPrompt(
-        s: Settings, incomingText: String?, kind: Kind, budget: Int, returning: Boolean, promptOverride: String? = null
+        s: Settings, incomingText: String?, kind: Kind, budget: Int, returning: Boolean, promptOverride: String? = null, closedNow: Boolean = true
     ): String {
         val defName = when (s.defaultLang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
         return if (kind == Kind.SMS && !incomingText.isNullOrBlank()) {
@@ -188,6 +186,7 @@ object Responder {
             Facts about the business (use them to answer):
             ${s.businessInfo}
 
+            Текущий режим: ${if (closedNow) "нерабочее время (Не беспокоить включён)" else "рабочее время"}.
             Customer's SMS: "$incomingText"
             $ret
             Detect the language of the customer's message (Russian, Ukrainian, Czech, English, or any other) and reply in THAT SAME language. If you cannot determine it, reply in $defName.
