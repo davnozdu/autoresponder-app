@@ -101,6 +101,11 @@ class Settings(context: Context) {
         get() = sp.getInt(K_CALL_DELAY, 1500)
         set(v) = sp.edit().putInt(K_CALL_DELAY, v).apply()
 
+    // --- задержка перед авто-ответом на сброшенный звонок (мс) ---
+    var callReplyDelayMs: Long
+        get() = sp.getLong(K_CALL_DELAY, 1500L)
+        set(v) = sp.edit().putLong(K_CALL_DELAY, v).apply()
+
     // --- максимум SMS-сегментов в одном ответе ---
     var maxSegments: Int
         get() = sp.getInt(K_MAX_SEG, 6)
@@ -179,6 +184,7 @@ class Settings(context: Context) {
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
+        private const val K_CALL_DELAY = "call_delay_ms"
         private const val K_CALL_DELAY = "call_sms_delay_ms"
         private const val K_TPL_PREFIX = "tpl_"
         private const val K_DEF_LANG = "def_lang"

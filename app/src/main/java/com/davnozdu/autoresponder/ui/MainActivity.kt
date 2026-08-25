@@ -64,6 +64,7 @@ fun AppScreen() {
     var maxReplies by remember { mutableStateOf(s.maxReplies.toString()) }
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
+    var callDelay by remember { mutableStateOf(s.callReplyDelayMs.toString()) }
     var callDelay by remember { mutableStateOf(s.callSmsDelayMs.toString()) }
     var defLang by remember { mutableStateOf(s.defaultLang) }
 
@@ -169,6 +170,9 @@ fun AppScreen() {
             }
             OutlinedTextField(maxSeg, { maxSeg = it; it.toIntOrNull()?.let { v -> s.maxSegments = v } },
                 label = { Text("Макс. SMS-сегментов") }, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            OutlinedTextField(callDelay, { callDelay = it; it.toLongOrNull()?.let { v -> s.callReplyDelayMs = v } },
+                label = { Text("Задержка ответа на звонок, мс") }, modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             OutlinedTextField(callDelay, { callDelay = it; it.toIntOrNull()?.let { v -> s.callSmsDelayMs = v } },
                 label = { Text("Пауза после сброса звонка, мс") }, modifier = Modifier.fillMaxWidth(),

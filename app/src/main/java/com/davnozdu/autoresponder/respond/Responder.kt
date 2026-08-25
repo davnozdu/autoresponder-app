@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class Kind { CALL, SMS }
@@ -98,6 +99,10 @@ object Responder {
         if (!store.canReply(norm, s.maxReplies, s.timeoutHours)) {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
+
+        // Пауза после сброса звонка — чтобы отклонение точно дошло до телефонного стека,
+        // и только затем стартовал авто-ответ (для SMS задержка не нужна).
+        if (kind == Kind.CALL && s.callReplyDelayMs > 0) delay(s.callReplyDelayMs)
 
         val returning = store.count(norm) > 0
         val reply = buildReply(context, s, incomingText, kind, returning)
