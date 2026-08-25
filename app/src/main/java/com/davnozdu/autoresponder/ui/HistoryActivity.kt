@@ -4,6 +4,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,8 +15,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.widget.Toast
 import com.davnozdu.autoresponder.store.HistItem
@@ -43,6 +50,7 @@ fun HistoryScreen() {
     val scope = rememberCoroutineScope()
 
     var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(0) } // 0=все,1=звонки,2=смс,3=чаты
     var convs by remember { mutableStateOf(listOf<HistItem>()) }
     var openNumber by remember { mutableStateOf<String?>(null) }
     var openName by remember { mutableStateOf<String?>(null) }
@@ -51,8 +59,11 @@ fun HistoryScreen() {
     var summary by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
+    fun channelsFor(f: Int) = when (f) {
+        1 -> listOf("call"); 2 -> listOf("sms", "rcs"); 3 -> listOf("whatsapp", "telegram"); else -> emptyList()
+    }
     fun reloadConvs() {
-        scope.launch { convs = withContext(Dispatchers.IO) { db.conversations(query) } }
+        scope.launch { convs = withContext(Dispatchers.IO) { db.conversations(query, channelsFor(filter)) } }
     }
     fun loadThread(num: String) {
         val now = System.currentTimeMillis()
@@ -60,7 +71,7 @@ fun HistoryScreen() {
         scope.launch { thread = withContext(Dispatchers.IO) { db.thread(num, from) } }
     }
 
-    LaunchedEffect(query) { reloadConvs() }
+    LaunchedEffect(query, filter) { reloadConvs() }
     LaunchedEffect(openNumber, period) { openNumber?.let { loadThread(it) } }
 
     Scaffold(topBar = {
@@ -81,17 +92,33 @@ fun HistoryScreen() {
                         reloadConvs()
                     }
                 }, modifier = Modifier.padding(horizontal = 12.dp)) { Text("⤵ Импорт SMS и звонков из телефона") }
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(filter == 0, { filter = 0 }, { Text("Все") })
+                    FilterChip(filter == 1, { filter = 1 }, { Text("Звонки") })
+                    FilterChip(filter == 2, { filter = 2 }, { Text("СМС") })
+                    FilterChip(filter == 3, { filter = 3 }, { Text("Чаты") })
+                }
                 if (convs.isEmpty()) Text("Пусто", Modifier.padding(16.dp))
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(convs) { c ->
-                        Column(Modifier.fillMaxWidth().clickable {
+                        Row(Modifier.fillMaxWidth().clickable {
                             openNumber = c.number; openName = c.name; summary = null
-                        }.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                            Text(c.name ?: c.number, style = MaterialTheme.typography.titleSmall)
-                            Text("${c.channel} · ${tsFmt.format(Date(c.ts))}", style = MaterialTheme.typography.labelSmall)
-                            Text(c.body.take(60), style = MaterialTheme.typography.bodySmall)
-                            HorizontalDivider(Modifier.padding(top = 8.dp))
+                        }.padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            val icon = when (c.channel) {
+                                "call" -> Icons.Filled.Call
+                                "sms", "rcs" -> Icons.Filled.Sms
+                                else -> Icons.Filled.Chat
+                            }
+                            Icon(icon, contentDescription = c.channel, modifier = Modifier.padding(end = 12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(c.name ?: c.number, style = MaterialTheme.typography.titleSmall)
+                                Text("${c.channel} · ${tsFmt.format(Date(c.ts))}", style = MaterialTheme.typography.labelSmall)
+                                Text(c.body.take(60), style = MaterialTheme.typography.bodySmall)
+                            }
                         }
+                        HorizontalDivider()
                     }
                 }
             } else {
@@ -113,13 +140,31 @@ fun HistoryScreen() {
                     }
                 }
                 HorizontalDivider()
-                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
                     items(thread) { m ->
-                        val who = if (m.direction == "in") "Клиент" else "Мы"
-                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                            Text("$who · ${m.channel} · ${tsFmt.format(Date(m.ts))}",
-                                style = MaterialTheme.typography.labelSmall)
-                            Text(m.body, style = MaterialTheme.typography.bodyMedium)
+                        val out = m.direction == "out"
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = if (out) Arrangement.End else Arrangement.Start) {
+                            Surface(
+                                color = if (out) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(
+                                    topStart = 16.dp, topEnd = 16.dp,
+                                    bottomStart = if (out) 16.dp else 4.dp,
+                                    bottomEnd = if (out) 4.dp else 16.dp),
+                                tonalElevation = 1.dp,
+                                modifier = Modifier.widthIn(max = 300.dp)
+                            ) {
+                                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                    Text(m.body, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "${if (out) "Мы" else "Клиент"} · ${m.channel} · ${tsFmt.format(Date(m.ts))}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        textAlign = if (out) TextAlign.End else TextAlign.Start
+                                    )
+                                }
+                            }
                         }
                     }
                 }

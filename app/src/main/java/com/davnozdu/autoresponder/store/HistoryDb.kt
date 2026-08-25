@@ -66,16 +66,22 @@ class HistoryDb private constructor(context: Context) :
     }
 
     /** Различные ветки (по номеру), с последним сообщением — для списка/поиска. */
-    fun conversations(query: String, limit: Int = 100): List<HistItem> {
+    fun conversations(query: String, channels: List<String> = emptyList(), limit: Int = 100): List<HistItem> {
         val res = ArrayList<HistItem>()
         val like = "%${query.trim()}%"
+        val chFilter = if (channels.isEmpty()) "" else
+            "WHERE channel IN (${channels.joinToString(",") { "'" + it + "'" }}) "
+        val where = ArrayList<String>()
+        val args = ArrayList<String>()
+        if (query.isNotBlank()) { where.add("(e.number LIKE ? OR e.name LIKE ?)"); args.add(like); args.add(like) }
+        if (channels.isNotEmpty()) where.add("e.channel IN (${channels.joinToString(",") { "'" + it + "'" }})")
+        val whereSql = if (where.isEmpty()) "" else "WHERE " + where.joinToString(" AND ") + " "
         val sql = "SELECT e.* FROM events e JOIN (" +
-            "SELECT number, MAX(ts) mts FROM events GROUP BY number) m " +
+            "SELECT number, MAX(ts) mts FROM events $chFilter GROUP BY number) m " +
             "ON e.number=m.number AND e.ts=m.mts " +
-            (if (query.isBlank()) "" else "WHERE e.number LIKE ? OR e.name LIKE ? ") +
+            whereSql +
             "ORDER BY e.ts DESC LIMIT $limit"
-        val args = if (query.isBlank()) emptyArray() else arrayOf(like, like)
-        readableDatabase.rawQuery(sql, args).use { c ->
+        readableDatabase.rawQuery(sql, args.toTypedArray()).use { c ->
             while (c.moveToNext()) res.add(row(c))
         }
         return res
