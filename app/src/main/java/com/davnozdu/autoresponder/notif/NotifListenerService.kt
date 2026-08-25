@@ -22,6 +22,9 @@ class NotifListenerService : NotificationListenerService() {
             val n = sbn.notification ?: return
             if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
             if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return
+            // Уже отвечали в этом уведомлении (нами или вручную) — не зацикливаемся.
+            val history = n.extras.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY)
+            if (history != null && history.isNotEmpty()) return
 
             val (sender, text, isGroup) = NotifResponder.extract(n) ?: return
             if (text.isBlank()) return

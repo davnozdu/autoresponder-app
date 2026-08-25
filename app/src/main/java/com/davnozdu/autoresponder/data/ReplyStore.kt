@@ -38,5 +38,7 @@ class ReplyStore(context: Context) {
     /** Текущий счётчик (для лога). */
     fun count(number: String): Int = sp.getInt(key(number) + "_c", 0)
 
-    private fun key(number: String) = "n_" + number.filter { it.isDigit() || it == '+' }
+    // Ключ: телефоны нормализуются (пробелы/дефисы прочь), имена мессенджеров сохраняются.
+    private fun key(id: String) =
+        "n_" + id.lowercase().filter { it.isLetterOrDigit() || it == '+' || it == ':' }
 }

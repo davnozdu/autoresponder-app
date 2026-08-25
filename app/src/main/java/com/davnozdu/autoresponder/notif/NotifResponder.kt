@@ -21,6 +21,7 @@ import com.davnozdu.autoresponder.rules.SkipPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class Channel { MESSAGES, WHATSAPP, TELEGRAM }
@@ -66,7 +67,11 @@ object NotifResponder {
 
         val store = ReplyStore(context)
         if (!store.canReply(key, s.maxReplies, s.timeoutHours)) { log.add("NOTIF[$tag] $key — лимит, пропуск"); return }
-        if (!Dedup.claim("$tag|$sender|$text")) { log.add("NOTIF[$tag] $key — дубль, пропуск"); return }
+        // Для Messages ждём: обычное SMS за это время застолбит SmsReceiver (уйдёт с выбранной SIM),
+        // а до сюда дойдёт только настоящий RCS (у него события приёмника нет).
+        if (channel == Channel.MESSAGES) delay(2000)
+        val dedupKey = if (channel == Channel.MESSAGES) text else "$tag|$text"
+        if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
 
         val returning = store.count(key) > 0
         val reply = Responder.composeReply(context, s, text, Kind.SMS, returning)
