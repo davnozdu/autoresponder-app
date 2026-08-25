@@ -9,6 +9,7 @@ import com.davnozdu.autoresponder.respond.Responder
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SkipPolicy
+import com.davnozdu.autoresponder.store.HistoryLogger
 
 /**
  * Screening всех входящих звонков (держим роль CALL_SCREENING).
@@ -22,6 +23,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
         }
 
         val number = callDetails.handle?.schemeSpecificPart // tel:+420... -> +420...
+        if (number != null) HistoryLogger.record(this, number, "call", "in", "входящий звонок")
         val s = Settings(this)
         val closedReason = ClosedState.reason(this, s)
         val matches = PhoneMask.matches(number, s.allowedPrefixes)

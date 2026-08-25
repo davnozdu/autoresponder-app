@@ -30,5 +30,19 @@ object ContactUtil {
     }
 
     fun isKnownContact(context: Context, number: String?): Boolean = lookup(context, number).known
+
+    /** Имя контакта по номеру или null. */
+    fun nameFor(context: Context, number: String?): String? {
+        if (number.isNullOrBlank()) return null
+        return try {
+            val uri = android.net.Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI, android.net.Uri.encode(number))
+            context.contentResolver.query(uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) return c.getString(0)?.ifBlank { null }
+            }
+            null
+        } catch (e: Exception) { null }
+    }
     fun isStarred(context: Context, number: String?): Boolean = lookup(context, number).starred
 }

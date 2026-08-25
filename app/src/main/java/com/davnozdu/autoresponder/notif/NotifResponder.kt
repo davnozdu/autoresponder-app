@@ -13,7 +13,9 @@ import com.davnozdu.autoresponder.data.Settings
 import com.davnozdu.autoresponder.respond.Dedup
 import com.davnozdu.autoresponder.respond.Kind
 import com.davnozdu.autoresponder.respond.Responder
+import com.davnozdu.autoresponder.respond.EventQueue
 import com.davnozdu.autoresponder.respond.SmsSender
+import com.davnozdu.autoresponder.store.HistoryLogger
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SimUtil
@@ -34,7 +36,7 @@ object NotifResponder {
     fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String,
                channel: Channel, isGroup: Boolean, hasReply: Boolean) {
         val app = context.applicationContext
-        scope.launch { process(app, sbn, sender, text, channel, isGroup, hasReply) }
+        EventQueue.submit { process(app, sbn, sender, text, channel, isGroup, hasReply) }
     }
 
     private suspend fun process(context: Context, sbn: StatusBarNotification, sender: String,
@@ -73,12 +75,18 @@ object NotifResponder {
         val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
         if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
 
+        // История входящего (RCS — по номеру, WA/TG — по имени).
+        val inCh = if (channel == Channel.MESSAGES) "rcs" else tag
+        val inId = if (channel == Channel.MESSAGES) number else sender
+        HistoryLogger.record(context, inId, inCh, "in", text)
+
         val returning = store.count(key) > 0
         val reply = Responder.composeReply(context, s, text, Kind.SMS, returning)
 
         // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
         if (tryRemoteInputReply(context, sbn, reply)) {
             store.markReplied(key, s.timeoutHours)
+            HistoryLogger.record(context, inId, inCh, "out", reply)
             log.add("NOTIF[$tag] $key — ответ (#${store.count(key)}/${s.maxReplies}): $reply")
             return
         }
@@ -86,7 +94,7 @@ object NotifResponder {
         if (channel == Channel.MESSAGES && number != null) {
             val subId = SimUtil.resolveSubId(context, s.smsSlot)
             val segs = SmsSender.send(context, key, reply, subId)
-            if (segs >= 0) { store.markReplied(key, s.timeoutHours); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return }
+            if (segs >= 0) { store.markReplied(key, s.timeoutHours); HistoryLogger.record(context, key, "sms", "out", reply); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return }
         }
         log.add("NOTIF[$tag] $key — ответить не удалось (нет кнопки Reply)")
     }
@@ -105,6 +113,15 @@ object NotifResponder {
         } catch (e: Exception) {
             EventLog(context).add("NOTIF remoteInput error: ${e.message}"); false
         }
+    }
+
+    private val placeholderRe = Regex("^\\s*\\d+\\s+(new\\s+)?messages?\\s*$", RegexOption.IGNORE_CASE)
+    private fun isPlaceholder(text: String): Boolean {
+        val t = text.trim()
+        return t.isEmpty() || placeholderRe.matches(t) ||
+            t.equals("new message", true) || t.equals("Фото", true) || t.equals("Photo", true) ||
+            t.equals("Видео", true) || t.equals("Video", true) || t.equals("Sticker", true) ||
+            t.equals("GIF", true) || t.equals("Voice message", true)
     }
 
     private fun extractNumber(sender: String): String? {

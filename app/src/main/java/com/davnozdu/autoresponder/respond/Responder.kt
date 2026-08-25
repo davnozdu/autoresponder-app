@@ -10,6 +10,7 @@ import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.LangDetect
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SkipPolicy
+import com.davnozdu.autoresponder.store.HistoryLogger
 import com.davnozdu.autoresponder.rules.SimUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,7 @@ object Responder {
 
     fun handle(context: Context, number: String?, incomingText: String?, kind: Kind) {
         val app = context.applicationContext
-        scope.launch { process(app, number, incomingText, kind) }
+        EventQueue.submit { process(app, number, incomingText, kind) }
     }
 
     /** DEBUG: выполнить запрос моделей и записать результат/ошибку в журнал. */
@@ -128,6 +129,7 @@ object Responder {
         val segs = SmsSender.send(context, norm, clamped, subId)
         if (segs >= 0) {
             store.markReplied(norm, s.timeoutHours)
+            HistoryLogger.record(context, norm, if (kind == Kind.CALL) "call" else "sms", "out", clamped)
             log.add("$tag $norm — ответ (закрыто:$closedReason, $segs сег, #${store.count(norm)}/${s.maxReplies}): $clamped")
         } else {
             log.add("$tag $norm — ОШИБКА отправки SMS")

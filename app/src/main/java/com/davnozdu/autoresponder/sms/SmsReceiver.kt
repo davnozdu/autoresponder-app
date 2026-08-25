@@ -6,6 +6,7 @@ import android.content.Intent
 import android.provider.Telephony
 import com.davnozdu.autoresponder.respond.Kind
 import com.davnozdu.autoresponder.respond.Responder
+import com.davnozdu.autoresponder.store.HistoryLogger
 
 /** Приём входящих SMS. RCS сюда не попадает (обрабатывается отдельно, позже). */
 class SmsReceiver : BroadcastReceiver() {
@@ -20,6 +21,7 @@ class SmsReceiver : BroadcastReceiver() {
         val sender = messages[0].displayOriginatingAddress
         val body = messages.joinToString("") { it.displayMessageBody ?: "" }
 
+        HistoryLogger.record(context, sender, "sms", "in", body)
         Responder.handle(context, sender, body, Kind.SMS)
     }
 }
