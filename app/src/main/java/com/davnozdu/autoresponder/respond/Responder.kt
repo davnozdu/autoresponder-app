@@ -128,7 +128,7 @@ object Responder {
         val segs = SmsSender.send(context, norm, clamped, subId)
         if (segs >= 0) {
             store.markReplied(norm, s.timeoutHours)
-            log.add("$tag $norm — отправлено (закрыто: $closedReason) [$segs сег., #${store.count(norm)}/${s.maxReplies}]: ${clamped.take(40)}…")
+            log.add("$tag $norm — ответ (закрыто:$closedReason, $segs сег, #${store.count(norm)}/${s.maxReplies}): $clamped")
         } else {
             log.add("$tag $norm — ОШИБКА отправки SMS")
         }

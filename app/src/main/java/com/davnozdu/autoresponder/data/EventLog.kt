@@ -5,21 +5,28 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Простой кольцевой лог событий для UI/диагностики. */
-class EventLog(context: Context) {
-    private val sp = context.applicationContext
-        .getSharedPreferences("autoresp_log", Context.MODE_PRIVATE)
+/**
+ * Журнал событий целиком в оперативной памяти (RAM) — НИКАКОЙ записи на flash.
+ * Процесс держится живым за счёт NotificationListenerService, поэтому лог не теряется
+ * между событиями, но чистится при перезагрузке/убийстве процесса (он не нужен постоянно).
+ * Кольцевой буфер с ротацией по числу строк.
+ */
+class EventLog(@Suppress("UNUSED_PARAMETER") context: Context? = null) {
 
-    fun add(line: String) {
-        val ts = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date())
-        val entry = "$ts  $line"
-        val cur = sp.getString(KEY, "") ?: ""
-        val merged = (entry + "\n" + cur).lines().take(MAX).joinToString("\n")
-        sp.edit().putString(KEY, merged).apply()
+    fun add(line: String) = Store.add(line)
+    fun all(): String = Store.snapshot()
+    fun clear() = Store.clear()
+
+    private object Store {
+        private const val MAX = 300
+        private val buf = ArrayDeque<String>()
+        private val fmt = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
+
+        @Synchronized fun add(line: String) {
+            buf.addFirst("${fmt.format(Date())}  $line")
+            while (buf.size > MAX) buf.removeLast()
+        }
+        @Synchronized fun snapshot(): String = buf.joinToString("\n")
+        @Synchronized fun clear() = buf.clear()
     }
-
-    fun all(): String = sp.getString(KEY, "") ?: ""
-    fun clear() = sp.edit().remove(KEY).apply()
-
-    companion object { private const val KEY = "log"; private const val MAX = 200 }
 }

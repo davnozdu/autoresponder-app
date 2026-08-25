@@ -74,14 +74,14 @@ object NotifResponder {
         // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
         if (tryRemoteInputReply(context, sbn, reply)) {
             store.markReplied(key, s.timeoutHours)
-            log.add("NOTIF[$tag] $key — ответ в приложении [#${store.count(key)}/${s.maxReplies}]")
+            log.add("NOTIF[$tag] $key — ответ (#${store.count(key)}/${s.maxReplies}): $reply")
             return
         }
         // Запасной SMS только для Messages (есть номер).
         if (channel == Channel.MESSAGES && number != null) {
             val subId = SimUtil.resolveSubId(context, s.smsSlot)
             val segs = SmsSender.send(context, key, reply, subId)
-            if (segs >= 0) { store.markReplied(key, s.timeoutHours); log.add("NOTIF[$tag] $key — запасной SMS [$segs сег.]"); return }
+            if (segs >= 0) { store.markReplied(key, s.timeoutHours); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return }
         }
         log.add("NOTIF[$tag] $key — ответить не удалось (нет кнопки Reply)")
     }
