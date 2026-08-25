@@ -59,6 +59,7 @@ fun HistoryScreen() {
     var period by remember { mutableStateOf(0) } // 0=вся,1=24ч,2=7д
     var summary by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
 
     fun channelsFor(f: Int) = when (f) {
         1 -> listOf("call"); 2 -> listOf("sms", "rcs"); 3 -> listOf("whatsapp", "telegram"); else -> emptyList()
@@ -93,8 +94,6 @@ fun HistoryScreen() {
                         reloadConvs()
                     }
                 }, modifier = Modifier.padding(horizontal = 12.dp)) { Text("⤵ Импорт SMS и звонков из телефона") }
-                Button(onClick = { ctx.startActivity(Intent(ctx, HistoryChatActivity::class.java)) },
-                    modifier = Modifier.padding(horizontal = 12.dp)) { Text("💬 Чат по истории (спросить AI)") }
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(filter == 0, { filter = 0 }, { Text("Все") })
@@ -102,6 +101,8 @@ fun HistoryScreen() {
                     FilterChip(filter == 2, { filter = 2 }, { Text("СМС") })
                     FilterChip(filter == 3, { filter = 3 }, { Text("Чаты") })
                 }
+                TextButton(onClick = { confirmClear = true },
+                    modifier = Modifier.padding(horizontal = 8.dp)) { Text("🗑 Очистить историю") }
                 if (convs.isEmpty()) Text("Пусто", Modifier.padding(16.dp))
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(convs) { c ->

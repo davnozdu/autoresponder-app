@@ -74,10 +74,10 @@ object NotifResponder {
         val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
         if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
 
-        // История входящего (RCS — по номеру, WA/TG — по имени).
+        // История входящего: RCS — здесь (по номеру); мессенджеры пишутся в listener.
         val inCh = if (channel == Channel.MESSAGES) "rcs" else tag
         val inId = if (channel == Channel.MESSAGES) number else sender
-        HistoryLogger.record(context, inId, inCh, "in", text)
+        if (channel == Channel.MESSAGES) HistoryLogger.record(context, inId, inCh, "in", text)
 
         val bl = HistoryDb.get(context).blacklistMatch(
             if (channel == Channel.MESSAGES) number else null, sender)

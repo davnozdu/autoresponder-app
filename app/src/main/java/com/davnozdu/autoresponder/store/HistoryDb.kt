@@ -17,7 +17,7 @@ data class HistItem(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 2) {
+    SQLiteOpenHelper(context.applicationContext, "history.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -33,6 +33,11 @@ class HistoryDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX idx_num ON events(number)")
         db.execSQL("CREATE INDEX idx_ts ON events(ts)")
         createBlacklist(db)
+        createQa(db)
+    }
+
+    private fun createQa(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE qa(_id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT, text TEXT, ts INTEGER)")
     }
 
     private fun createBlacklist(db: SQLiteDatabase) {
@@ -48,6 +53,7 @@ class HistoryDb private constructor(context: Context) :
 
     override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
         if (oldV < 2) createBlacklist(db)
+        if (oldV < 3) createQa(db)
     }
 
     fun insert(number: String, name: String?, channel: String, direction: String, body: String, ts: Long = System.currentTimeMillis()) {
@@ -57,6 +63,8 @@ class HistoryDb private constructor(context: Context) :
         }
         writableDatabase.insert("events", null, cv)
     }
+
+    fun clearEvents() { writableDatabase.delete("events", null, null) }
 
     fun existsAt(number: String, ts: Long, direction: String): Boolean {
         readableDatabase.rawQuery(
@@ -111,6 +119,20 @@ class HistoryDb private constructor(context: Context) :
         c.getString(3), c.getString(4), c.getStringOrNull(5) ?: "", c.getLong(6)
     )
     private fun android.database.Cursor.getStringOrNull(i: Int) = if (isNull(i)) null else getString(i)
+
+    // --- История запросов (Q&A чат) ---
+    fun qaAll(): List<Pair<String, String>> {
+        val res = ArrayList<Pair<String, String>>()
+        readableDatabase.rawQuery("SELECT role,text FROM qa ORDER BY _id ASC", null).use { c ->
+            while (c.moveToNext()) res.add(c.getString(0) to c.getString(1))
+        }
+        return res
+    }
+    fun qaAdd(role: String, text: String) {
+        val cv = ContentValues().apply { put("role", role); put("text", text); put("ts", System.currentTimeMillis()) }
+        writableDatabase.insert("qa", null, cv)
+    }
+    fun qaClear() { writableDatabase.delete("qa", null, null) }
 
     // --- Чёрный список ---
     fun blacklistAll(): List<BlackEntry> {

@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryQa
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -31,13 +32,15 @@ fun ChatScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     // pair: role ("Вы"/"AI") to text
-    var turns by remember { mutableStateOf(listOf<Pair<String, String>>()) }
+    val db = remember { HistoryDb.get(ctx) }
+    var turns by remember { mutableStateOf(db.qaAll()) }
+    var confirmNew by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Чат по истории") },
-            actions = { TextButton(onClick = { turns = emptyList() }) { Text("Новый чат") } })
+        TopAppBar(title = { Text("История запросов") },
+            actions = { TextButton(onClick = { confirmNew = true }) { Text("Новый чат") } })
     }) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
             if (turns.isEmpty()) Text(
@@ -64,14 +67,26 @@ fun ChatScreen() {
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = !busy && input.isNotBlank(), onClick = {
                     val q = input.trim(); input = ""
-                    turns = turns + ("Вы" to q)
+                    turns = turns + ("Вы" to q); db.qaAdd("Вы", q)
                     busy = true
                     scope.launch {
                         val ans = withContext(Dispatchers.IO) { HistoryQa.ask(ctx, q, turns) }
-                        turns = turns + ("AI" to ans); busy = false
+                        turns = turns + ("AI" to ans); db.qaAdd("AI", ans); busy = false
                     }
                 }) { Text("→") }
             }
         }
+    }
+
+    if (confirmNew) {
+        AlertDialog(
+            onDismissRequest = { confirmNew = false },
+            title = { Text("Новый чат?") },
+            text = { Text("История запросов будет очищена.") },
+            confirmButton = { TextButton(onClick = {
+                db.qaClear(); turns = emptyList(); confirmNew = false
+            }) { Text("Очистить") } },
+            dismissButton = { TextButton(onClick = { confirmNew = false }) { Text("Отмена") } }
+        )
     }
 }

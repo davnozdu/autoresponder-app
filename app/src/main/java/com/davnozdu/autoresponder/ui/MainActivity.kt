@@ -318,7 +318,9 @@ fun AppScreen() {
 
             HorizontalDivider()
             Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
-                modifier = Modifier.fillMaxWidth()) { Text("📜 История сообщений") }
+                modifier = Modifier.fillMaxWidth()) { Text("💬 История общения") }
+            Button(onClick = { ctx.startActivity(Intent(ctx, HistoryChatActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth()) { Text("🤖 История запросов (чат с AI)") }
             Button(onClick = { ctx.startActivity(Intent(ctx, BlacklistActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth()) { Text("🚫 Чёрный список") }
             Button(onClick = { ctx.startActivity(Intent(ctx, AppPickerActivity::class.java)) },
