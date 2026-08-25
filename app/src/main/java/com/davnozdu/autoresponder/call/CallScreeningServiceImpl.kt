@@ -36,7 +36,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
                 .setSkipNotification(false)
                 .build()
             respondToCall(callDetails, response)
-            EventLog(this).add("CALL ${number ?: "?"} — отклонён, готовлю SMS")
+            EventLog(this).add("CALL ${number ?: "?"} — отклонён, SMS через ${s.callSmsDelayMs} мс")
             Responder.handle(this, number, null, Kind.CALL)
         } else {
             respondAllow(callDetails)

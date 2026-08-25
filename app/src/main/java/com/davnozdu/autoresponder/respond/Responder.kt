@@ -13,6 +13,7 @@ import com.davnozdu.autoresponder.rules.SkipPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class Kind { CALL, SMS }
@@ -49,7 +50,7 @@ object Responder {
         }
     }
 
-    private fun process(context: Context, number: String?, incomingText: String?, kind: Kind) {
+    private suspend fun process(context: Context, number: String?, incomingText: String?, kind: Kind) {
         val s = Settings(context)
         val log = EventLog(context)
         val tag = if (kind == Kind.CALL) "CALL" else "SMS"
@@ -58,6 +59,13 @@ object Responder {
         if (!s.enabled) return
         if (kind == Kind.CALL && !s.respondCalls) return
         if (kind == Kind.SMS && !s.respondSms) return
+
+        // Звонок только что отклонён — даём телефонии закончить разрыв вызова,
+        // иначе отправка приходится на занятый радиомодуль.
+        if (kind == Kind.CALL) {
+            val pause = s.callSmsDelayMs.coerceIn(0, 30_000)
+            if (pause > 0) delay(pause.toLong())
+        }
 
         if (!ClosedState.isClosed(context, s)) {
             log.add("$tag $from — открыто, пропуск"); return
