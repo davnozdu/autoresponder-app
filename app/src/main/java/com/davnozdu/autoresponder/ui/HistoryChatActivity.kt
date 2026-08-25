@@ -22,7 +22,7 @@ import kotlinx.coroutines.withContext
 class HistoryChatActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { ChatScreen() } }
+        setContent { AppTheme { ChatScreen() } }
     }
 }
 

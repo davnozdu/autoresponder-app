@@ -19,6 +19,19 @@ object LlmFactory {
     fun create(cfg: LlmConfig): LlmProvider = when (cfg.provider) {
         "openai" -> OpenAiProvider(cfg)
         "claude" -> ClaudeProvider(cfg)
+        "gemini" -> OpenAiProvider(cfg.copy(
+            baseUrl = cfg.baseUrl.ifBlank { "https://generativelanguage.googleapis.com/v1beta/openai" }))
+        "deepseek" -> OpenAiProvider(cfg.copy(
+            baseUrl = cfg.baseUrl.ifBlank { "https://api.deepseek.com" }))
         else -> OllamaProvider(cfg)
+    }
+
+    fun defaultBaseUrl(provider: String): String = when (provider) {
+        "ollama" -> "https://ollama.com"
+        "openai" -> "https://api.openai.com"
+        "claude" -> "https://api.anthropic.com"
+        "gemini" -> "https://generativelanguage.googleapis.com/v1beta/openai"
+        "deepseek" -> "https://api.deepseek.com"
+        else -> ""
     }
 }

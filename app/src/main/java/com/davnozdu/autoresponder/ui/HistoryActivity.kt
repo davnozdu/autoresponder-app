@@ -37,7 +37,7 @@ import java.util.Locale
 class HistoryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { HistoryScreen() } }
+        setContent { AppTheme { HistoryScreen() } }
     }
 }
 
@@ -174,5 +174,18 @@ fun HistoryScreen() {
                 }
             }
         }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Очистить историю?") },
+            text = { Text("Вся сохранённая история звонков и сообщений будет удалена. Действие необратимо.") },
+            confirmButton = { TextButton(onClick = {
+                db.clearEvents(); confirmClear = false
+                openNumber = null; summary = null; reloadConvs()
+            }) { Text("Да, очистить") } },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } }
+        )
     }
 }

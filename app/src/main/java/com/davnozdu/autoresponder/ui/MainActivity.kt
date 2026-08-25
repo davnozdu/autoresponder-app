@@ -38,7 +38,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { AppScreen() } }
+        setContent { AppTheme { AppScreen() } }
     }
 }
 
@@ -85,6 +85,13 @@ fun AppScreen() {
     var model by remember { mutableStateOf(s.llmModel) }
     var models by remember { mutableStateOf(listOf<String>()) }
     var status by remember { mutableStateOf("") }
+    var llm2On by remember { mutableStateOf(s.llm2Enabled) }
+    var provider2 by remember { mutableStateOf(s.llm2Provider) }
+    var baseUrl2 by remember { mutableStateOf(s.llm2BaseUrl) }
+    var apiKey2 by remember { mutableStateOf(s.llm2ApiKey) }
+    var model2 by remember { mutableStateOf(s.llm2Model) }
+    var models2 by remember { mutableStateOf(listOf<String>()) }
+    var status2 by remember { mutableStateOf("") }
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -234,9 +241,11 @@ fun AppScreen() {
             Text("LLM (при интернете)", style = MaterialTheme.typography.titleMedium)
             SwitchRow("Использовать LLM", llmOn) { llmOn = it; s.llmEnabled = it }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("ollama", "openai", "claude").forEach { p ->
-                    FilterChip(selected = provider == p, onClick = { provider = p; s.llmProvider = p },
-                        label = { Text(p) })
+                listOf("ollama", "openai", "claude", "gemini", "deepseek").forEach { p ->
+                    FilterChip(selected = provider == p, onClick = {
+                        provider = p; s.llmProvider = p
+                        baseUrl = LlmFactory.defaultBaseUrl(p); s.llmBaseUrl = baseUrl
+                    }, label = { Text(p) })
                 }
             }
             OutlinedTextField(baseUrl, { baseUrl = it; s.llmBaseUrl = it },
@@ -270,6 +279,38 @@ fun AppScreen() {
             }
 
             HorizontalDivider()
+            Text("Резервная модель (если основная недоступна)", style = MaterialTheme.typography.titleMedium)
+            SwitchRow("Использовать резервную", llm2On) { llm2On = it; s.llm2Enabled = it }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("ollama", "openai", "claude", "gemini", "deepseek").forEach { p ->
+                    FilterChip(selected = provider2 == p, onClick = {
+                        provider2 = p; s.llm2Provider = p
+                        baseUrl2 = LlmFactory.defaultBaseUrl(p); s.llm2BaseUrl = baseUrl2
+                    }, label = { Text(p) })
+                }
+            }
+            OutlinedTextField(baseUrl2, { baseUrl2 = it; s.llm2BaseUrl = it },
+                label = { Text("Base URL (резерв)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(apiKey2, { apiKey2 = it; s.llm2ApiKey = it },
+                label = { Text("API key (резерв)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(model2, { model2 = it; s.llm2Model = it },
+                label = { Text("Модель (резерв)") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = {
+                status2 = "Запрашиваю модели…"
+                scope.launch {
+                    val res = withContext(Dispatchers.IO) {
+                        try { Result.success(LlmFactory.create(LlmConfig(provider2, baseUrl2, apiKey2, model2)).listModels()) }
+                        catch (e: Exception) { Result.failure<List<String>>(e) }
+                    }
+                    res.onSuccess { list -> models2 = list
+                        status2 = if (list.isEmpty()) "Пусто (проверьте URL/ключ)" else "Найдено: ${list.size}"
+                    }.onFailure { e -> models2 = emptyList(); status2 = "Ошибка: ${e.message}" }
+                }
+            }) { Text("Запросить модели (резерв)") }
+            if (status2.isNotBlank()) Text(status2, style = MaterialTheme.typography.bodySmall)
+            models2.forEach { m -> TextButton(onClick = { model2 = m; s.llm2Model = m }) { Text(m) } }
+
+            HorizontalDivider()
             Text("Промпты AI", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(aiPrefix, { aiPrefix = it; s.aiPrefix = it },
                 label = { Text("Префикс (пометка ИИ)") }, modifier = Modifier.fillMaxWidth(),
@@ -294,20 +335,34 @@ fun AppScreen() {
             HorizontalDivider()
             Text("Разрешения и роли", style = MaterialTheme.typography.titleMedium)
             Button(onClick = {
-                permLauncher.launch(arrayOf(
+                val perms = arrayOf(
                     Manifest.permission.RECEIVE_SMS, Manifest.permission.SEND_SMS,
                     Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CONTACTS,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ))
+                    Manifest.permission.POST_NOTIFICATIONS)
+                val missing = perms.filter {
+                    ctx.checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+                if (missing.isEmpty())
+                    Toast.makeText(ctx, "Все разрешения уже выданы ✓", Toast.LENGTH_SHORT).show()
+                else permLauncher.launch(missing.toTypedArray())
             }) { Text("Выдать разрешения") }
-            Button(onClick = { requestCallScreeningRole(ctx, roleLauncher::launch) }) {
-                Text("Стать приложением скрининга звонков")
-            }
+            Button(onClick = {
+                val rm = ctx.getSystemService(RoleManager::class.java)
+                when {
+                    rm == null || !rm.isRoleAvailable(RoleManager.ROLE_CALL_SCREENING) ->
+                        Toast.makeText(ctx, "Роль недоступна на этом устройстве", Toast.LENGTH_SHORT).show()
+                    rm.isRoleHeld(RoleManager.ROLE_CALL_SCREENING) ->
+                        Toast.makeText(ctx, "Уже назначено приложением скрининга ✓", Toast.LENGTH_SHORT).show()
+                    else -> roleLauncher.launch(rm.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING))
+                }
+            }) { Text("Стать приложением скрининга звонков") }
             Button(onClick = {
                 ctx.startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }) { Text("Доступ к уведомлениям") }
             Button(onClick = {
-                try {
+                val pm = ctx.getSystemService(android.os.PowerManager::class.java)
+                if (pm != null && pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
+                    Toast.makeText(ctx, "Оптимизация батареи уже отключена ✓", Toast.LENGTH_SHORT).show()
+                } else try {
                     ctx.startActivity(Intent(
                         AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                         android.net.Uri.parse("package:" + ctx.packageName)))

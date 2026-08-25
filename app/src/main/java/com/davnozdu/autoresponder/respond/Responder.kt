@@ -156,8 +156,7 @@ object Responder {
                 val prefixLen = if (s.aiPrefix.isBlank()) 0 else s.aiPrefix.length + 1
                 val budget = (SegmentBudget.charBudget("ru", s.maxSegments) - prefixLen).coerceAtLeast(40)
                 val prompt = buildPrompt(s, incomingText, kind, budget, returning, promptOverride)
-                val cfg = LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
-                val out = LlmFactory.create(cfg).generate(prompt, budget)
+                val out = com.davnozdu.autoresponder.llm.Llm.generate(context, prompt, budget)
                 if (!out.isNullOrBlank()) return out
                 EventLog(context).add("LLM пустой ответ, шаблон")
             } catch (e: Exception) {

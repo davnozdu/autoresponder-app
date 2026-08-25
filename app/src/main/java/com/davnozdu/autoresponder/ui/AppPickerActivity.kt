@@ -20,7 +20,7 @@ data class AppInfo(val pkg: String, val label: String)
 class AppPickerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { AppPickerScreen() } }
+        setContent { AppTheme { AppPickerScreen() } }
     }
 }
 
@@ -33,10 +33,14 @@ fun AppPickerScreen() {
     val apps = remember {
         val pm = ctx.packageManager
         val launch = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        pm.queryIntentActivities(launch, 0)
+        val fromLauncher = pm.queryIntentActivities(launch, 0)
             .map { AppInfo(it.activityInfo.packageName, it.loadLabel(pm).toString()) }
-            .distinctBy { it.pkg }
-            .sortedBy { it.label.lowercase() }
+        // добавим уже отмеченные (вдруг система их не отдала через launcher)
+        val extra = s.monitoredApps.filter { m -> fromLauncher.none { it.pkg == m } }.map { pkg ->
+            val label = try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (e: Exception) { pkg }
+            AppInfo(pkg, label)
+        }
+        (fromLauncher + extra).distinctBy { it.pkg }.sortedBy { it.label.lowercase() }
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Приложения для автоответа") }) }) { pad ->

@@ -22,7 +22,7 @@ import com.davnozdu.autoresponder.store.HistoryDb
 class BlacklistActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { BlacklistScreen() } }
+        setContent { AppTheme { BlacklistScreen() } }
     }
 }
 

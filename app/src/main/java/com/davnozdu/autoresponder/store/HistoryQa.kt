@@ -42,8 +42,7 @@ object HistoryQa {
         """.trimIndent()
 
         return try {
-            val cfg = LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
-            LlmFactory.create(cfg).generate(prompt, 2000) ?: "Не удалось получить ответ."
+            com.davnozdu.autoresponder.llm.Llm.generate(context, prompt, 2000) ?: "Не удалось получить ответ."
         } catch (e: Exception) { "Ошибка: ${e.message}" }
     }
 }

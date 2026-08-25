@@ -30,8 +30,8 @@ object Summarizer {
         """.trimIndent()
 
         return try {
-            val cfg = LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
-            LlmFactory.create(cfg).generate(prompt, 1500) ?: "Не удалось получить пересказ (LLM недоступна)."
+            com.davnozdu.autoresponder.llm.Llm.generate(context, prompt, 1500)
+                ?: "Не удалось получить пересказ (LLM недоступна)."
         } catch (e: Exception) {
             "Ошибка пересказа: ${e.message}"
         }

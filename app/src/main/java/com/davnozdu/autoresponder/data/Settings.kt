@@ -129,6 +129,23 @@ class Settings(context: Context) {
         get() = sp.getString(K_DEF_LANG, "en") ?: "en"
         set(v) = sp.edit().putString(K_DEF_LANG, v).apply()
 
+    // --- Резервная LLM (если основная недоступна) ---
+    var llm2Enabled: Boolean
+        get() = sp.getBoolean(K_LLM2_ON, false)
+        set(v) = sp.edit().putBoolean(K_LLM2_ON, v).apply()
+    var llm2Provider: String
+        get() = sp.getString(K_LLM2_PROV, "gemini") ?: "gemini"
+        set(v) = sp.edit().putString(K_LLM2_PROV, v).apply()
+    var llm2BaseUrl: String
+        get() = sp.getString(K_LLM2_URL, "") ?: ""
+        set(v) = sp.edit().putString(K_LLM2_URL, v).apply()
+    var llm2ApiKey: String
+        get() = sp.getString(K_LLM2_KEY, "") ?: ""
+        set(v) = sp.edit().putString(K_LLM2_KEY, v).apply()
+    var llm2Model: String
+        get() = sp.getString(K_LLM2_MODEL, "") ?: ""
+        set(v) = sp.edit().putString(K_LLM2_MODEL, v).apply()
+
     // --- Редактируемые промпты (LLM) ---
     var promptCall: String
         get() = sp.getString(K_PROMPT_CALL, DEF_PROMPT_CALL) ?: DEF_PROMPT_CALL
@@ -240,6 +257,11 @@ class Settings(context: Context) {
         private const val K_LLM_URL = "llm_url"
         private const val K_LLM_KEY = "llm_key"
         private const val K_LLM_MODEL = "llm_model"
+        private const val K_LLM2_ON = "llm2_on"
+        private const val K_LLM2_PROV = "llm2_prov"
+        private const val K_LLM2_URL = "llm2_url"
+        private const val K_LLM2_KEY = "llm2_key"
+        private const val K_LLM2_MODEL = "llm2_model"
         private const val K_PROMPT_CALL = "prompt_call"
         private const val K_PROMPT_SMS = "prompt_sms"
         private const val K_AI_PREFIX = "ai_prefix"
