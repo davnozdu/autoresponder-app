@@ -27,6 +27,9 @@ class NotifListenerService : NotificationListenerService() {
             val pkg = sbn.packageName ?: return
             if (pkg !in Settings(this).monitoredApps) return
             val n = sbn.notification ?: return
+            // Telegram: только личные чаты — не каналы, не группы (по id канала уведомления).
+            if (pkg == "org.telegram.messenger" &&
+                !(n.channelId ?: "").contains("private", ignoreCase = true)) return
             if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
             if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return
             val history = n.extras.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY)
@@ -34,6 +37,8 @@ class NotifListenerService : NotificationListenerService() {
 
             val (sender, text, isGroup) = NotifResponder.extract(n) ?: return
             if (text.isBlank()) return
+            // Отсекаем Telegram-ботов (имя оканчивается на "bot").
+            if (pkg == "org.telegram.messenger" && sender.trim().lowercase().endsWith("bot")) return
 
             val channel = if (pkg == messagesPkg) Channel.MESSAGES else Channel.MESSENGER
             val tag = tagFor(pkg)
