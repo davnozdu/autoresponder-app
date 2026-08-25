@@ -97,6 +97,15 @@ class HistoryDb private constructor(context: Context) :
         return res
     }
 
+    /** Последние события (все каналы) для LLM-контекста. */
+    fun recentEvents(limit: Int = 400): List<HistItem> {
+        val res = ArrayList<HistItem>()
+        readableDatabase.rawQuery("SELECT * FROM events ORDER BY ts DESC LIMIT $limit", null).use { c ->
+            while (c.moveToNext()) res.add(row(c))
+        }
+        return res
+    }
+
     private fun row(c: android.database.Cursor) = HistItem(
         c.getLong(0), c.getString(1), c.getStringOrNull(2),
         c.getString(3), c.getString(4), c.getStringOrNull(5) ?: "", c.getLong(6)

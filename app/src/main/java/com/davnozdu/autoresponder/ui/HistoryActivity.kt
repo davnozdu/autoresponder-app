@@ -1,5 +1,6 @@
 package com.davnozdu.autoresponder.ui
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -92,6 +93,8 @@ fun HistoryScreen() {
                         reloadConvs()
                     }
                 }, modifier = Modifier.padding(horizontal = 12.dp)) { Text("⤵ Импорт SMS и звонков из телефона") }
+                Button(onClick = { ctx.startActivity(Intent(ctx, HistoryChatActivity::class.java)) },
+                    modifier = Modifier.padding(horizontal = 12.dp)) { Text("💬 Чат по истории (спросить AI)") }
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(filter == 0, { filter = 0 }, { Text("Все") })
