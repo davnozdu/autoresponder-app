@@ -12,6 +12,7 @@ import com.davnozdu.autoresponder.rules.LangDetect
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.SkipPolicy
+import com.davnozdu.autoresponder.store.AboutInfo
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
 import com.davnozdu.autoresponder.rules.SimUtil
@@ -246,7 +247,7 @@ object Responder {
             $warnPrompt
 
             Facts about the business (use if relevant):
-            ${s.businessInfo}
+            ${AboutInfo.text(context, s.businessInfo)}
             $history
             ${if (!incomingText.isNullOrBlank()) "Customer's last message: \"$incomingText\"" else ""}
             Reply in the customer's language; if unknown, reply in $defName.
@@ -260,7 +261,7 @@ object Responder {
             ${promptOverride ?: s.promptSms}
 
             Facts about the business (use them to answer):
-            ${s.businessInfo}
+            ${AboutInfo.text(context, s.businessInfo)}
             $history
             Текущий режим: ${if (closedNow) "нерабочее время (Не беспокоить включён)" else "рабочее время"}.
             Customer's SMS: "$incomingText"

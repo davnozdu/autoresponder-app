@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Доступ к /sdcard/AutoResponder (about.md, бэкапы БД). Грант выдаёт модуль (appops). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
         android:allowBackup="true"
