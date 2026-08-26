@@ -38,7 +38,7 @@ object NotifResponder {
     fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String,
                channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean) {
         val app = context.applicationContext
-        EventQueue.submit { process(app, sbn, sender, text, channel, tag, isGroup, hasReply) }
+        EventQueue.submitMsg { process(app, sbn, sender, text, channel, tag, isGroup, hasReply) }
     }
 
     private suspend fun process(context: Context, sbn: StatusBarNotification, sender: String,
@@ -65,8 +65,6 @@ object NotifResponder {
             key = "$tag:${sender.trim().lowercase()}"
         }
 
-        // История входящего RCS (мессенджеры пишутся в listener) — всегда.
-        if (channel == Channel.MESSAGES) HistoryLogger.record(context, number, "rcs", "in", text)
         val inCh = if (channel == Channel.MESSAGES) "rcs" else tag
         val inId = if (channel == Channel.MESSAGES) number else sender
 
@@ -89,6 +87,9 @@ object NotifResponder {
         if (channel == Channel.MESSAGES) delay(2000)
         val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
         if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
+
+        // История входящего RCS — только здесь (после дедупа), чтобы не дублировать SMS.
+        if (channel == Channel.MESSAGES) HistoryLogger.record(context, number, "rcs", "in", text)
 
         val returning = store.count(key) > 0
         val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null)

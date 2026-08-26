@@ -18,7 +18,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class Kind { CALL, SMS }
@@ -102,21 +101,24 @@ object Responder {
         if (PhoneMask.isAlphanumericSender(number)) {
             log.add("$tag $from — буквенный отправитель, пропуск"); return
         }
-        if (!PhoneMask.matches(number, s.allowedPrefixes)) {
-            log.add("$tag $from — не подходит под маску стран, пропуск"); return
+        val norm = PhoneMask.normalize(number) ?: run { log.add("$tag $from — нет номера, пропуск"); return }
+
+        // Чёрный список обходит маску стран и SkipPolicy (контакт выбран явно).
+        val bl = HistoryDb.get(context).blacklistMatch(norm, null)
+        if (bl == null) {
+            if (!PhoneMask.matches(number, s.allowedPrefixes)) {
+                log.add("$tag $from — не подходит под маску стран, пропуск"); return
+            }
+            SkipPolicy.reason(context, number, s, kind == Kind.CALL)?.let { r ->
+                log.add("$tag $from — $r, пропуск"); return
+            }
         }
-        SkipPolicy.reason(context, number, s, kind == Kind.CALL)?.let { r ->
-            log.add("$tag $from — $r, пропуск"); return
-        }
-        val norm = PhoneMask.normalize(number)!!
 
         val store = ReplyStore(context)
         if (!store.canReply(norm, s.maxReplies, s.timeoutHours)) {
             log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
         }
 
-        // Чёрный список: каналы, звонки, персональный промпт.
-        val bl = HistoryDb.get(context).blacklistMatch(norm, null)
         if (bl != null) com.davnozdu.autoresponder.notif.BlacklistNotifier.record(
             context, norm, bl.name, if (kind == Kind.CALL) "call" else "sms")
         val closedReason = ClosedState.reason(context, s)

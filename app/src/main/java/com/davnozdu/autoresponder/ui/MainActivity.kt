@@ -322,11 +322,11 @@ fun AppScreen() {
             Text("LLM (при интернете)", style = MaterialTheme.typography.titleMedium)
             SwitchRow("Использовать LLM", llmOn) { llmOn = it; s.llmEnabled = it }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("ollama", "openai", "claude", "gemini", "deepseek").forEach { p ->
+                listOf("ollama", "openai", "gemini", "deepseek").forEach { p ->
                     FilterChip(selected = provider == p, onClick = {
                         provider = p; s.llmProvider = p
                         baseUrl = LlmFactory.defaultBaseUrl(p); s.llmBaseUrl = baseUrl
-                    }, label = { Text(p) })
+                    }, label = { Text(if (p == "deepseek") "DSeek" else p) })
                 }
             }
             OutlinedTextField(baseUrl, { baseUrl = it; s.llmBaseUrl = it },
@@ -366,11 +366,11 @@ fun AppScreen() {
             Text("Резервная модель (если основная недоступна)", style = MaterialTheme.typography.titleMedium)
             SwitchRow("Использовать резервную", llm2On) { llm2On = it; s.llm2Enabled = it }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("ollama", "openai", "claude", "gemini", "deepseek").forEach { p ->
+                listOf("ollama", "openai", "gemini", "deepseek").forEach { p ->
                     FilterChip(selected = provider2 == p, onClick = {
                         provider2 = p; s.llm2Provider = p
                         baseUrl2 = LlmFactory.defaultBaseUrl(p); s.llm2BaseUrl = baseUrl2
-                    }, label = { Text(p) })
+                    }, label = { Text(if (p == "deepseek") "DSeek" else p) })
                 }
             }
             OutlinedTextField(baseUrl2, { baseUrl2 = it; s.llm2BaseUrl = it },
