@@ -15,7 +15,15 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object NumberLock {
     private val locks = ConcurrentHashMap<String, Mutex>()
+    private const val MAX_KEYS = 512
 
-    suspend fun <T> withKey(key: String, block: suspend () -> T): T =
-        locks.getOrPut(key) { Mutex() }.withLock { block() }
+    suspend fun <T> withKey(key: String, block: suspend () -> T): T {
+        // Карта живёт всё время работы процесса, а ключей столько же, сколько уникальных
+        // собеседников. Держим её ограниченной: свободные мьютексы можно выбросить —
+        // при следующем обращении создастся новый.
+        if (locks.size > MAX_KEYS) {
+            locks.entries.removeAll { !it.value.isLocked && it.key != key }
+        }
+        return locks.getOrPut(key) { Mutex() }.withLock { block() }
+    }
 }

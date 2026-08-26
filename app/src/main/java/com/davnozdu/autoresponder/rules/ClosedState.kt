@@ -38,7 +38,9 @@ object ClosedState {
         }
         val start = s.scheduleStartMin
         val end = s.scheduleEndMin
-        return if (start <= end) cur in start until end
+        // Одинаковые границы = окно на целые сутки (раньше «закрыто» не наступало никогда).
+        if (start == end) return true
+        return if (start < end) cur in start until end
                else cur >= start || cur < end
     }
 }

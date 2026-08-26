@@ -77,14 +77,14 @@ object Responder {
                 log.add("TEST[$kind] $norm — ЛИМИТ ${s.maxReplies}/таймаут ${s.timeoutHours}ч, пропуск")
                 return@launch
             }
-            val returning = store.count(norm) > 0
+            val returning = store.everReplied(norm)
             val reply = buildReply(app, s, incomingText, kind, returning)
             val clamped = SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
             val segs = if (send) SmsSender.send(app, norm, clamped, SimUtil.resolveSubId(app, s.slotForNumber(norm)))
                        else SmsSender.segmentCount(app, clamped)
             store.markReplied(norm, s.timeoutHours)
             val mode = if (send) "SENT" else "dry"
-            log.add("TEST[$kind] $norm $mode #${store.count(norm)}/${s.maxReplies} seg=$segs len=${clamped.length}")
+            log.add("TEST[$kind] $norm $mode #${store.count(norm, s.timeoutHours)}/${s.maxReplies} seg=$segs len=${clamped.length}")
         }
     }
 
@@ -153,7 +153,7 @@ object Responder {
             if (s.replyDelayMs > 0) delay(s.replyDelayMs)
 
             val warn = mode == ReplyMode.WARN
-            val returning = store.count(norm) > 0
+            val returning = store.everReplied(norm)
             val reply = buildReply(context, s, incomingText, kind, returning, override, closedReason != null, norm, warn, fallbackText)
             val prefixed = applyPrefix(s.aiPrefix, reply)
             val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
@@ -170,7 +170,7 @@ object Responder {
                 store.markReplied(norm, s.timeoutHours)
                 HistoryLogger.record(context, norm, if (kind == Kind.CALL) "call" else "sms", "out", clamped, auto = true)
                 val label = if (warn) "предупреждение" else (closedReason ?: "ЧС")
-                log.add("$tag $norm — ответ ($label, $segs сег, #${store.count(norm)}/${s.maxReplies}): $clamped")
+                log.add("$tag $norm — ответ ($label, $segs сег, #${store.count(norm, s.timeoutHours)}/${s.maxReplies}): $clamped")
             } else {
                 log.add("$tag $norm — ОШИБКА отправки SMS")
             }
@@ -212,9 +212,10 @@ object Responder {
             EventLog(context).add("Ответ шаблоном (офлайн-заглушка): $skip")
         } else {
             try {
-                // Бюджет с учётом префикса «Ответ от AI:» (консервативно как UCS-2).
+                // Бюджет с учётом префикса «Ответ от AI:». Для латиницы в сегмент влезает вдвое
+                // больше символов, поэтому берём бюджет по языку ответа, а не всегда по UCS-2.
                 val prefixLen = if (s.aiPrefix.isBlank()) 0 else s.aiPrefix.length + 1
-                val budget = (SegmentBudget.charBudget("ru", s.maxSegments) - prefixLen).coerceAtLeast(40)
+                val budget = (SegmentBudget.charBudget(lang, s.maxSegments) - prefixLen).coerceAtLeast(40)
                 val prompt = buildPrompt(context, s, incomingText, kind, budget, returning, promptOverride, closedNow, historyKey, warn)
                 val out = com.davnozdu.autoresponder.llm.Llm.generate(context, prompt, budget)
                 if (!out.isNullOrBlank()) return out

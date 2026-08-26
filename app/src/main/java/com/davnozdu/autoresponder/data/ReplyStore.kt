@@ -56,8 +56,12 @@ class ReplyStore(context: Context) {
             .apply()
     }
 
-    /** Текущий счётчик (для лога). */
-    fun count(number: String): Int = sp.getInt(key(number) + "_c", 0)
+    /** Счётчик в текущем окне, с учётом сброса по таймауту (иначе в журнале появлялось «#7/6»). */
+    fun count(number: String, timeoutHours: Int): Int = effectiveCount(number, timeoutHours)
+
+    /** Отвечали ли этому адресату когда-либо — «повторный контакт» для промпта.
+     *  Здесь таймаут НЕ учитываем: вернувшийся через сутки клиент всё равно не новый. */
+    fun everReplied(number: String): Boolean = sp.getInt(key(number) + "_c", 0) > 0
 
     // Ключ: телефоны нормализуются (пробелы/дефисы прочь), имена мессенджеров сохраняются.
     private fun key(id: String) =

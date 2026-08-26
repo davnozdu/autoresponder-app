@@ -13,9 +13,11 @@ object SmsSender {
         return try {
             val sm = smsManager(context, subId)
             val parts = sm.divideMessage(text)
+            // Статус запрашиваем только для ОДНОСЕГМЕНТНЫХ сообщений: повтор пересылает текст
+            // целиком, и для многосегментного это продублировало бы уже доставленные части.
             val sent = ArrayList<PendingIntent?>()
             for (i in parts.indices) {
-                sent.add(if (i == 0) sentPi(context, number, text, subId, attempt) else null)
+                sent.add(if (i == 0 && parts.size == 1) sentPi(context, number, text, subId, attempt) else null)
             }
             sm.sendMultipartTextMessage(number, null, parts, sent, null)
             parts.size

@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ТОЛЬКО debug-сборка: триггер конвейера ответа через `adb shell am broadcast`.
+         Экспортирован без permission намеренно — shell не получает signature-разрешений,
+         а с ними триггер перестал бы работать. В release-сборке этого ресивера нет,
+         поэтому debug-APK не стоит держать на «боевом» телефоне: любое приложение
+         на устройстве сможет инициировать отправку SMS. -->
     <application>
         <receiver
             android:name=".debug.TestReceiver"

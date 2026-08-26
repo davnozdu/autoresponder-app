@@ -8,7 +8,6 @@ import android.widget.Toast
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.provider.ContactsContract
 import android.provider.Settings as AndroidSettings
@@ -743,12 +742,3 @@ private fun pickTime(ctx: Context, minutes: Int, onSet: (Int) -> Unit) {
     android.app.TimePickerDialog(ctx, { _, hh, mm -> onSet(hh * 60 + mm) }, h, m, true).show()
 }
 
-private fun requestCallScreeningRole(ctx: Context, launch: (Intent) -> Unit) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val rm = ctx.getSystemService(RoleManager::class.java)
-        if (rm != null && rm.isRoleAvailable(RoleManager.ROLE_CALL_SCREENING)
-            && !rm.isRoleHeld(RoleManager.ROLE_CALL_SCREENING)) {
-            launch(rm.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING))
-        }
-    }
-}

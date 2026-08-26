@@ -24,18 +24,12 @@ import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SimUtil
 import com.davnozdu.autoresponder.rules.SkipPolicy
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 enum class Channel { MESSAGES, MESSENGER }
 
 /** Обработка входящих сообщений мессенджеров (RCS/WhatsApp/Telegram) через уведомления. */
 object NotifResponder {
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String,
                channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean) {
@@ -121,7 +115,7 @@ object NotifResponder {
             val warn = mode == ReplyMode.WARN
             val histKey = if (channel == Channel.MESSAGES) key else sender.trim()
 
-            val returning = store.count(key) > 0
+            val returning = store.everReplied(key)
             val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null, histKey, warn)
 
             // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
@@ -129,7 +123,7 @@ object NotifResponder {
                 store.markReplied(key, s.timeoutHours)
                 HistoryLogger.record(context, inId, inCh, "out", reply, auto = true)
                 NotifListenerService.dismiss(sbn.key)
-                log.add("NOTIF[$tag] $key — ответ (#${store.count(key)}/${s.maxReplies}): $reply")
+                log.add("NOTIF[$tag] $key — ответ (#${store.count(key, s.timeoutHours)}/${s.maxReplies}): $reply")
                 return@withKey
             }
             // Запасной SMS только для Messages (есть номер).
