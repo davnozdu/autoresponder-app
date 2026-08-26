@@ -86,6 +86,15 @@ class HistoryDb private constructor(context: Context) :
     }
 
     /** Кол-во авто-ответов (out, auto=1) по каналам с момента from. */
+    /** Список авто-ответов (out, auto=1) с момента from — для экрана статистики. */
+    fun autoReplies(from: Long): List<HistItem> {
+        val res = ArrayList<HistItem>()
+        readableDatabase.rawQuery(
+            "SELECT * FROM events WHERE direction='out' AND auto=1 AND ts>=? ORDER BY ts DESC",
+            arrayOf(from.toString())).use { c -> while (c.moveToNext()) res.add(row(c)) }
+        return res
+    }
+
     fun countAuto(from: Long, channels: List<String> = emptyList()): Int {
         val chSql = if (channels.isEmpty()) "" else
             " AND channel IN (${channels.joinToString(",") { "'" + it + "'" }})"

@@ -11,6 +11,7 @@ import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.ui.HistoryActivity
+import com.davnozdu.autoresponder.ui.StatsActivity
 
 object AutoNotifications {
     const val CH_DND = "autoresp_dnd"
@@ -98,7 +99,7 @@ object AutoNotifications {
         val msgr = (total - sms - calls).coerceAtLeast(0)
         if (total == 0) return
         val tap = PendingIntent.getActivity(context, 10,
-            Intent(context, HistoryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(context, StatsActivity::class.java).putExtra("from", from).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val n = androidx.core.app.NotificationCompat.Builder(context, CH_SUMMARY)
             .setSmallIcon(android.R.drawable.sym_action_email)

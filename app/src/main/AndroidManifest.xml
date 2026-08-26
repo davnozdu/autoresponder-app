@@ -29,6 +29,7 @@
         <activity android:name=".ui.BlacklistActivity" android:exported="false" />
         <activity android:name=".ui.HistoryChatActivity" android:exported="false" />
         <activity android:name=".ui.AppPickerActivity" android:exported="false" />
+        <activity android:name=".ui.StatsActivity" android:exported="false" />
 
         <activity
             android:name=".ui.MainActivity"
