@@ -378,7 +378,21 @@ fun AppScreen() {
                 exclNames.forEach { nm ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text(nm)
+                        // Показываем, КАК запись будет сопоставляться — иначе номер с припиской
+                        // молча сравнивается как имя и правило не срабатывает.
+                        val isNum = com.davnozdu.autoresponder.rules.PhoneMask.looksLikeNumber(nm)
+                        val digits = nm.count { it.isDigit() }
+                        Column(Modifier.weight(1f)) {
+                            Text(nm)
+                            Text(when {
+                                isNum -> "номер — сравнение по цифрам, формат не важен"
+                                digits >= 8 -> "сравнивается как ИМЯ (есть лишние символы). "
+                                    + "Для номера оставьте только цифры и +"
+                                else -> "имя / @username — точное совпадение"
+                            }, style = MaterialTheme.typography.labelSmall,
+                               color = if (!isNum && digits >= 8) MaterialTheme.colorScheme.error
+                                       else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         TextButton(onClick = { s.removeExcludedName(nm); exclNames = s.excludedNames }) { Text("Удалить") }
                     }
                 }

@@ -194,7 +194,13 @@ class Settings(context: Context) {
         val n = name.trim()
         if (n.isEmpty()) return
         val cur = excludedNames.toMutableList()
-        if (cur.none { it.equals(n, true) }) { cur.add(n); excludedNames = cur }
+        // Тот же номер в другом формате («+31 615 092 866» и «31615092866») — не дубликат
+        // по тексту, но один и тот же человек. Второй раз не добавляем.
+        val exists = cur.any {
+            it.equals(n, true) ||
+            com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(it, n)
+        }
+        if (!exists) { cur.add(n); excludedNames = cur }
     }
     fun removeExcludedName(name: String) {
         excludedNames = excludedNames.filterNot { it.equals(name.trim(), true) }
