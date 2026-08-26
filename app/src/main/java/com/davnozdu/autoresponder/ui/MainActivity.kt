@@ -96,6 +96,9 @@ fun AppScreen() {
     val sims = remember { SimUtil.activeSims(ctx) }
     var defLang by remember { mutableStateOf(s.defaultLang) }
 
+    var warnRu by remember { mutableStateOf(s.warnTemplateRaw("ru")) }
+    var warnCs by remember { mutableStateOf(s.warnTemplateRaw("cs")) }
+    var warnEn by remember { mutableStateOf(s.warnTemplateRaw("en")) }
     var tplRu by remember { mutableStateOf(s.template("ru")) }
     var tplCs by remember { mutableStateOf(s.template("cs")) }
     var tplEn by remember { mutableStateOf(s.template("en")) }
@@ -109,12 +112,15 @@ fun AppScreen() {
     var models by remember { mutableStateOf(listOf<String>()) }
     var status by remember { mutableStateOf("") }
     var exportKeys by remember { mutableStateOf(s.exportSecrets) }
+    var updStatus by remember { mutableStateOf("") }
     var update by remember { mutableStateOf<com.davnozdu.autoresponder.update.UpdateInfo?>(null) }
     var updBusy by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (System.currentTimeMillis() - s.lastUpdateCheck > 86_400_000L) {
-            val u = withContext(Dispatchers.IO) { try { com.davnozdu.autoresponder.update.Updater.check() } catch (e: Exception) { null } }
-            s.lastUpdateCheck = System.currentTimeMillis(); update = u
+            val res = withContext(Dispatchers.IO) { com.davnozdu.autoresponder.update.Updater.check() }
+            s.lastUpdateCheck = System.currentTimeMillis()
+            if (res is com.davnozdu.autoresponder.update.UpdateCheck.Available) update = res.info
+            updStatus = updLabel(res)
         }
     }
     var llm2On by remember { mutableStateOf(s.llm2Enabled) }
@@ -379,10 +385,19 @@ fun AppScreen() {
                     label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
             }
 
-            ExpandableSection("Шаблоны (офлайн)") {
+            ExpandableSection("Шаблоны — ответ БЕЗ LLM (заглушка)") {
+                Text("Этот текст уходит, когда LLM не отработала: выключена, нет интернета, не задана "
+                    + "модель/ключ, ошибка или пустой ответ. Промпты тут ни при чём — причина всегда "
+                    + "пишется в Журнал строкой «Ответ шаблоном».",
+                    style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(tplRu, { tplRu = it; s.setTemplate("ru", it) }, label = { Text("RU") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(tplCs, { tplCs = it; s.setTemplate("cs", it) }, label = { Text("CS") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(tplEn, { tplEn = it; s.setTemplate("en", it) }, label = { Text("EN") }, modifier = Modifier.fillMaxWidth())
+                Text("Предупреждение перед тишиной (тоже без LLM). {hours} — часы таймаута.",
+                    style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(warnRu, { warnRu = it; s.setWarnTemplate("ru", it) }, label = { Text("RU (предупреждение)") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(warnCs, { warnCs = it; s.setWarnTemplate("cs", it) }, label = { Text("CS (предупреждение)") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(warnEn, { warnEn = it; s.setWarnTemplate("en", it) }, label = { Text("EN (предупреждение)") }, modifier = Modifier.fillMaxWidth())
             }
 
             ExpandableSection("LLM — основная модель") {
@@ -599,14 +614,19 @@ fun AppScreen() {
                         ctx.startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     }
                 }) { Text("Отключить оптимизацию батареи") }
+                Text("Текущая версия: ${com.davnozdu.autoresponder.update.Updater.currentVersion}",
+                    style = MaterialTheme.typography.bodySmall)
                 Button(onClick = {
-                    Toast.makeText(ctx, "Проверяю обновления…", Toast.LENGTH_SHORT).show()
+                    updStatus = "Проверяю…"
                     scope.launch {
-                        val u = withContext(Dispatchers.IO) { try { com.davnozdu.autoresponder.update.Updater.check() } catch (e: Exception) { null } }
-                        s.lastUpdateCheck = System.currentTimeMillis(); update = u
-                        if (u == null) Toast.makeText(ctx, "Установлена последняя версия ✓", Toast.LENGTH_SHORT).show()
+                        val res = withContext(Dispatchers.IO) { com.davnozdu.autoresponder.update.Updater.check() }
+                        s.lastUpdateCheck = System.currentTimeMillis()
+                        update = (res as? com.davnozdu.autoresponder.update.UpdateCheck.Available)?.info
+                        updStatus = updLabel(res)
+                        Toast.makeText(ctx, updStatus, Toast.LENGTH_LONG).show()
                     }
                 }) { Text("Проверить обновление") }
+                if (updStatus.isNotBlank()) Text(updStatus, style = MaterialTheme.typography.bodySmall)
             }
 
             ExpandableSection("Экраны") {
@@ -691,6 +711,19 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         verticalAlignment = Alignment.CenterVertically) {
         Text(label)
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/** Человеческий текст результата проверки обновления (ошибку не выдаём за «актуально»). */
+private fun updLabel(res: com.davnozdu.autoresponder.update.UpdateCheck): String {
+    val cur = com.davnozdu.autoresponder.update.Updater.currentVersion
+    return when (res) {
+        is com.davnozdu.autoresponder.update.UpdateCheck.Available ->
+            "Доступна ${res.info.version} (установлена $cur)"
+        is com.davnozdu.autoresponder.update.UpdateCheck.UpToDate ->
+            "Установлена последняя версия ✓ ($cur, в релизах ${res.latest})"
+        is com.davnozdu.autoresponder.update.UpdateCheck.Failed ->
+            "Не удалось проверить: ${res.reason}"
     }
 }
 

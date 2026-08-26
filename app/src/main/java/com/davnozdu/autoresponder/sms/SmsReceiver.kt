@@ -21,8 +21,22 @@ class SmsReceiver : BroadcastReceiver() {
         val sender = messages[0].displayOriginatingAddress
         val body = messages.joinToString("") { it.displayMessageBody ?: "" }
 
-        val subId = intent.getIntExtra("subscription",
-            intent.getIntExtra("android.telephony.extra.SUBSCRIPTION_INDEX", -1))
+        // На разных прошивках subId приезжает в разных extra. Ключи со СЛОТОМ («slot»/«phone»)
+        // держим отдельно: слот 0/1 — это не subId, его нужно преобразовать, иначе ответ уйдёт
+        // не с той карты.
+        val subId = listOf("subscription", "android.telephony.extra.SUBSCRIPTION_INDEX",
+                           "subscription_id", "simId")
+            .map { intent.getIntExtra(it, -1) }
+            .firstOrNull { it >= 0 }
+            ?: listOf("slot", "phone", "android.telephony.extra.SLOT_INDEX")
+                .map { intent.getIntExtra(it, -1) }
+                .firstOrNull { it >= 0 }
+                ?.let { com.davnozdu.autoresponder.rules.SimUtil.subIdForSlot(context, it) }
+                ?.takeIf { it >= 0 }
+            ?: -1
+        val keys = intent.extras?.keySet()?.joinToString(",") ?: "-"
+        com.davnozdu.autoresponder.data.EventLog(context)
+            .add("SMS вход: subId=$subId extras=[$keys] | ${com.davnozdu.autoresponder.rules.SimUtil.describe(context)}")
         HistoryLogger.record(context, sender, "sms", "in", body)
         Responder.handle(context, sender, body, Kind.SMS, subId)
     }

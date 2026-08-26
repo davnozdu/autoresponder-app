@@ -1,9 +1,6 @@
 package com.davnozdu.autoresponder.store
 
 import android.content.Context
-import com.davnozdu.autoresponder.data.Settings
-import com.davnozdu.autoresponder.llm.LlmConfig
-import com.davnozdu.autoresponder.llm.LlmFactory
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -14,8 +11,8 @@ object HistoryQa {
     private val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
 
     fun ask(context: Context, question: String, history: List<Pair<String, String>>): String {
-        val s = Settings(context)
-        if (!s.llmEnabled || s.llmModel.isBlank()) return "LLM не настроена — чат недоступен."
+        if (!com.davnozdu.autoresponder.llm.Llm.isConfigured(context))
+            return "LLM не настроена — чат недоступен."
 
         val events = HistoryDb.get(context).recentEvents(500)
         val data = buildString {

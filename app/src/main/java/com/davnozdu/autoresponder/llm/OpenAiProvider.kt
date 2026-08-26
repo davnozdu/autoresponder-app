@@ -17,7 +17,7 @@ class OpenAiProvider(private val cfg: LlmConfig) : LlmProvider {
         Http.client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) return emptyList()
             val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("data") ?: return emptyList()
-            return (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optString("id") }
+            return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("id")?.ifBlank { null } }
         }
     }
 

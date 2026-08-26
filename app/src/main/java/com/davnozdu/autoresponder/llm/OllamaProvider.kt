@@ -24,7 +24,7 @@ class OllamaProvider(private val cfg: LlmConfig) : LlmProvider {
         Http.client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) return emptyList()
             val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("models") ?: return emptyList()
-            return (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optString("name") }
+            return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("name")?.ifBlank { null } }
         }
     }
 

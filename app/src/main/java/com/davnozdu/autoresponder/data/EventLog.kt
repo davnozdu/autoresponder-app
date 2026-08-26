@@ -25,6 +25,9 @@ class EventLog(@Suppress("UNUSED_PARAMETER") context: Context? = null) {
         @Synchronized fun add(line: String) {
             buf.addFirst("${fmt.format(Date())}  $line")
             while (buf.size > MAX) buf.removeLast()
+            // Дублируем в logcat: журнал живёт только в RAM, а при разборе проблем удобно
+            // смотреть через `adb logcat -s AutoResp`.
+            android.util.Log.i("AutoResp", line)
         }
         @Synchronized fun snapshot(): String = buf.joinToString("\n")
         @Synchronized fun clear() = buf.clear()

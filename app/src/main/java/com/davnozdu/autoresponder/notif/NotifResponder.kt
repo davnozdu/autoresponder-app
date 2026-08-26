@@ -49,10 +49,14 @@ object NotifResponder {
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
         if (AutoReplyState.isPaused(context)) return
-        if (text.isBlank() || isPlaceholder(text)) { return }
+        if (text.isBlank() || isPlaceholder(text)) {
+            log.add("NOTIF[$tag] ${sender.take(16)} — заглушка/пустой текст, пропуск"); return
+        }
         if (isGroup) { log.add("NOTIF ${sender.take(16)} — группа, пропуск"); return }
         // WhatsApp/Telegram без кнопки ответа = канал/рассылка/не-сообщение → пропуск.
-        if (channel != Channel.MESSAGES && !hasReply) return
+        if (channel != Channel.MESSAGES && !hasReply) {
+            log.add("NOTIF[$tag] ${sender.take(16)} — нет кнопки «Ответить» в уведомлении, пропуск"); return
+        }
         // Ключ для лимита/анти-петли и правила по номеру (только для Messages).
         val key: String
         val number: String?
@@ -82,7 +86,9 @@ object NotifResponder {
             if (!bl.viaLlm || !chOk) { log.add("NOTIF[$tag] $key — ЧС: без ответа"); return }
         }
         val forceReply = bl != null
-        if (!forceReply && closedReason == null) return  // открыто — молчим
+        if (!forceReply && closedReason == null) {
+            log.add("NOTIF[$tag] ${sender.take(16)} — сейчас открыто (не DND/не расписание), пропуск"); return
+        }
         val override = if (forceReply) bl.prompt else null
 
         val store = ReplyStore(context)
@@ -174,8 +180,12 @@ object NotifResponder {
     fun extract(n: Notification): Triple<String, String, Boolean>? {
         val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
         if (style != null && style.messages.isNotEmpty()) {
-            val incoming = style.messages.filter { it.person != null }
-            val last = incoming.lastOrNull() ?: style.messages.last()
+            // Берём последнее ВХОДЯЩЕЕ сообщение С ТЕКСТОМ. Пустой текст (картинка/стикер) и
+            // отсутствие person (часть клиентов их не заполняет) не должны обнулять разбор —
+            // иначе уведомление молча отбрасывается ещё до журнала.
+            val last = style.messages.lastOrNull { it.person != null && !it.text.isNullOrBlank() }
+                ?: style.messages.lastOrNull { !it.text.isNullOrBlank() }
+                ?: style.messages.last()
             val who = last.person?.name?.toString() ?: style.conversationTitle?.toString() ?: "?"
             val body = last.text?.toString()?.trim() ?: ""
             return Triple(who, body, style.isGroupConversation)

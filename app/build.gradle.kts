@@ -12,8 +12,8 @@ android {
         applicationId = "com.davnozdu.autoresponder"
         minSdk = 29
         targetSdk = 35
-        versionCode = 46
-        versionName = "0.8.9"
+        versionCode = 47
+        versionName = "0.8.10"
     }
 
     signingConfigs {
@@ -65,5 +65,6 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.json:json:20240303")
+    // org.json НЕ подключаем: он есть в android.jar. Внешняя копия дублирует классы
+    // фреймворка и даёт расхождение поведения/VerifyError на устройстве.
 }

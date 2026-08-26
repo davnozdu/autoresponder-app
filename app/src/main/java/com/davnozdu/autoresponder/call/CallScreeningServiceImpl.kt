@@ -28,6 +28,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val number = callDetails.handle?.schemeSpecificPart // tel:+420... -> +420...
         if (number != null) HistoryLogger.record(this, number, "call", "in", "входящий звонок")
         val callSubId = SimUtil.subIdFromCall(this, callDetails)  // SIM, на которую пришёл звонок
+        EventLog(this).add("CALL вход: handle=${callDetails.accountHandle?.id} -> subId=$callSubId | ${SimUtil.describe(this)}")
         val s = Settings(this)
         // Главный тумблер и «отвечать на звонки» гейтят ВСЮ работу со звонками, включая чёрный
         // список. Иначе при выключенном автоответчике звонок из ЧС всё равно отклонялся, а SMS

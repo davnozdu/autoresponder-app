@@ -182,13 +182,19 @@ object Responder {
         return SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
     }
 
-    /** LLM активна только при включённом тумблере, онлайн и готовом провайдере (модель + ключ, кроме ollama). */
-    private fun llmUsable(context: Context, s: Settings): Boolean {
+    /**
+     * Почему LLM НЕ будет использована, или null — если будет.
+     * Возвращаем причину строкой: без неё в журнале был необъяснимый офлайн-шаблон
+     * («Сейчас нерабочее время…») вместо ответа по промпту.
+     */
+    private fun llmSkipReason(context: Context, s: Settings): String? {
         fun ready(prov: String, model: String, key: String) =
             model.isNotBlank() && (prov == "ollama" || key.isNotBlank())
-        if (!s.llmEnabled || !NetworkUtil.isOnline(context)) return false
-        return ready(s.llmProvider, s.llmModel, s.llmApiKey) ||
-               (s.llm2Enabled && ready(s.llm2Provider, s.llm2Model, s.llm2ApiKey))
+        if (!s.llmEnabled) return "LLM выключена в настройках"
+        if (!NetworkUtil.isOnline(context)) return "нет интернета"
+        val ok = ready(s.llmProvider, s.llmModel, s.llmApiKey) ||
+                 (s.llm2Enabled && ready(s.llm2Provider, s.llm2Model, s.llm2ApiKey))
+        return if (ok) null else "не задана модель или API-ключ"
     }
 
     private fun buildReply(
@@ -197,7 +203,10 @@ object Responder {
     ): String {
         val lang = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
             LangDetect.detect(incomingText, s.defaultLang) else s.defaultLang
-        if (llmUsable(context, s)) {
+        val skip = llmSkipReason(context, s)
+        if (skip != null) {
+            EventLog(context).add("Ответ шаблоном (офлайн-заглушка): $skip")
+        } else {
             try {
                 // Бюджет с учётом префикса «Ответ от AI:» (консервативно как UCS-2).
                 val prefixLen = if (s.aiPrefix.isBlank()) 0 else s.aiPrefix.length + 1

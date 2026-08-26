@@ -175,16 +175,21 @@ class Settings(context: Context) {
         get() = sp.getString(K_PROMPT_WARN, DEF_PROMPT_WARN) ?: DEF_PROMPT_WARN
         set(v) = sp.edit().putString(K_PROMPT_WARN, v).apply()
 
-    /** Офлайн-шаблон предупреждения по языку; {hours} заменяется на часы таймаута. */
-    fun warnTemplate(lang: String, hours: Int): String {
-        val def = when (lang) {
-            "ru" -> "Это автоматический ответ (AI). Ваши сообщения увидит живой сотрудник в ближайшее рабочее время или они будут обработаны примерно через {hours} ч. Можете продолжать писать — мы всё получим."
-            "cs" -> "Toto je automatická odpověď (AI). Vaše zprávy uvidí náš pracovník v nejbližší pracovní době, případně budou zpracovány přibližně za {hours} h. Klidně pište dál — vše dostaneme."
-            else -> "This is an automated (AI) reply. A human will see your messages during our next working hours, or they will be handled in about {hours} h. Feel free to keep writing — we'll receive everything."
-        }
-        val t = sp.getString(K_TPL_WARN_PREFIX + lang, def) ?: def
-        return t.replace("{hours}", hours.toString())
+    /** Сырой шаблон предупреждения (с плейсхолдером {hours}) — для редактирования в UI. */
+    fun warnTemplateRaw(lang: String): String {
+        val def = defWarnTemplate(lang)
+        return sp.getString(K_TPL_WARN_PREFIX + lang, def) ?: def
     }
+
+    private fun defWarnTemplate(lang: String): String = when (lang) {
+        "ru" -> "Это автоматический ответ (AI). Ваши сообщения увидит живой сотрудник в ближайшее рабочее время или они будут обработаны примерно через {hours} ч. Можете продолжать писать — мы всё получим."
+        "cs" -> "Toto je automatická odpověď (AI). Vaše zprávy uvidí náš pracovník v nejbližší pracovní době, případně budou zpracovány přibližně za {hours} h. Klidně pište dál — vše dostaneme."
+        else -> "This is an automated (AI) reply. A human will see your messages during our next working hours, or they will be handled in about {hours} h. Feel free to keep writing — we'll receive everything."
+    }
+
+    /** Офлайн-шаблон предупреждения по языку; {hours} заменяется на часы таймаута. */
+    fun warnTemplate(lang: String, hours: Int): String =
+        warnTemplateRaw(lang).replace("{hours}", hours.toString())
     fun setWarnTemplate(lang: String, text: String) =
         sp.edit().putString(K_TPL_WARN_PREFIX + lang, text).apply()
 

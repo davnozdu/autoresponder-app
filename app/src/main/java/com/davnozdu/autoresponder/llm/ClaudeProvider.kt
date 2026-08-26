@@ -19,7 +19,7 @@ class ClaudeProvider(private val cfg: LlmConfig) : LlmProvider {
         Http.client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) return emptyList()
             val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("data") ?: return emptyList()
-            return (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optString("id") }
+            return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("id")?.ifBlank { null } }
         }
     }
 
@@ -39,8 +39,15 @@ class ClaudeProvider(private val cfg: LlmConfig) : LlmProvider {
         Http.client(think).newCall(req).execute().use { r ->
             if (!r.isSuccessful) return null
             val content = JSONObject(r.body?.string() ?: "{}").optJSONArray("content") ?: return null
-            if (content.length() == 0) return null
-            return content.getJSONObject(0).optString("text").trim().ifBlank { null }
+            // При reasoning первым блоком идёт "thinking" — берём первый блок с type="text",
+            // иначе ответ выглядел пустым и срабатывал фолбэк на шаблон.
+            for (i in 0 until content.length()) {
+                val b = content.optJSONObject(i) ?: continue
+                if (b.optString("type") == "text") {
+                    b.optString("text").trim().ifBlank { null }?.let { return it }
+                }
+            }
+            return null
         }
     }
 }

@@ -12,29 +12,53 @@ import java.util.concurrent.TimeUnit
 
 data class UpdateInfo(val version: String, val apkUrl: String, val notes: String)
 
+/** Результат проверки: «есть новая» / «уже актуально» / «проверить не удалось». */
+sealed class UpdateCheck {
+    data class Available(val info: UpdateInfo) : UpdateCheck()
+    /** @param latest версия в последнем релизе (может совпадать с установленной или быть старее). */
+    data class UpToDate(val latest: String) : UpdateCheck()
+    data class Failed(val reason: String) : UpdateCheck()
+}
+
 object Updater {
     private const val REPO = "davnozdu/autoresponder-app"
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 
-    /** Возвращает UpdateInfo, если на GitHub есть версия новее текущей. */
-    fun check(): UpdateInfo? {
-        val req = Request.Builder()
-            .url("https://api.github.com/repos/$REPO/releases/latest")
-            .header("Accept", "application/vnd.github+json").get().build()
-        http.newCall(req).execute().use { r ->
-            if (!r.isSuccessful) return null
-            val o = JSONObject(r.body?.string() ?: return null)
-            val tag = o.optString("tag_name").trimStart('v', 'V')
-            if (tag.isBlank() || !isNewer(tag, BuildConfig.VERSION_NAME)) return null
-            val assets = o.optJSONArray("assets") ?: return null
-            var apk: String? = null
-            for (i in 0 until assets.length()) {
-                val a = assets.getJSONObject(i)
-                if (a.optString("name").endsWith(".apk")) { apk = a.optString("browser_download_url"); break }
+    val currentVersion: String get() = BuildConfig.VERSION_NAME
+
+    /**
+     * Проверка релиза на GitHub. Раньше любая ошибка (сеть, лимит API, отсутствие asset'а)
+     * возвращала null и в UI выглядела как «установлена последняя версия» — отличить было нельзя.
+     */
+    fun check(): UpdateCheck {
+        return try {
+            val req = Request.Builder()
+                .url("https://api.github.com/repos/$REPO/releases/latest")
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "AutoResponder/${BuildConfig.VERSION_NAME}")
+                .get().build()
+            http.newCall(req).execute().use { r ->
+                val body = r.body?.string()
+                if (!r.isSuccessful) return UpdateCheck.Failed("GitHub ответил ${r.code}")
+                if (body.isNullOrBlank()) return UpdateCheck.Failed("пустой ответ GitHub")
+                val o = JSONObject(body)
+                val tag = o.optString("tag_name").trimStart('v', 'V')
+                if (tag.isBlank()) return UpdateCheck.Failed("в релизе нет tag_name")
+                if (!isNewer(tag, BuildConfig.VERSION_NAME)) return UpdateCheck.UpToDate(tag)
+                val assets = o.optJSONArray("assets")
+                    ?: return UpdateCheck.Failed("в релизе $tag нет файлов")
+                var apk: String? = null
+                for (i in 0 until assets.length()) {
+                    val a = assets.optJSONObject(i) ?: continue
+                    if (a.optString("name").endsWith(".apk")) { apk = a.optString("browser_download_url"); break }
+                }
+                val url = apk?.ifBlank { null }
+                    ?: return UpdateCheck.Failed("в релизе $tag нет APK")
+                UpdateCheck.Available(UpdateInfo(tag, url, o.optString("body").take(400)))
             }
-            apk ?: return null
-            return UpdateInfo(tag, apk, o.optString("body").take(400))
+        } catch (e: Exception) {
+            UpdateCheck.Failed("${e.javaClass.simpleName}: ${e.message ?: "нет сети"}")
         }
     }
 

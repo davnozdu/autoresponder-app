@@ -13,11 +13,17 @@ import com.davnozdu.autoresponder.data.Settings
 object Llm {
     private val quotaLock = Any()
 
+    /** Номер локальных суток (не UTC): иначе счётчик сбрасывался ночью по UTC, а не в полночь. */
+    private fun localDay(): Int {
+        val c = java.util.Calendar.getInstance()
+        return c.get(java.util.Calendar.YEAR) * 1000 + c.get(java.util.Calendar.DAY_OF_YEAR)
+    }
+
     /** Атомарно проверяет и расходует дневной лимит. true — можно обращаться к LLM. */
     private fun consumeQuota(s: Settings): Boolean {
         if (s.llmDailyCap <= 0) return true  // 0 — без лимита и без счётчика
         synchronized(quotaLock) {
-            val today = (System.currentTimeMillis() / 86_400_000L).toInt()
+            val today = localDay()
             if (s.llmDay != today) { s.llmDay = today; s.llmCount = 0 }
             if (s.llmCount >= s.llmDailyCap) return false
             s.llmCount = s.llmCount + 1
@@ -25,12 +31,22 @@ object Llm {
         }
     }
 
+    /** Настроен ли хоть один канал (основной или резервный) — для экранов пересказа/чата. */
+    fun isConfigured(context: Context): Boolean {
+        val s = Settings(context)
+        return s.llmEnabled && (s.llmModel.isNotBlank() || (s.llm2Enabled && s.llm2Model.isNotBlank()))
+    }
+
     fun generate(context: Context, prompt: String, maxChars: Int): String? {
         val s = Settings(context)
+        val primary = s.llmModel.isNotBlank()
+        val backup = s.llm2Enabled && s.llm2Model.isNotBlank()
+        // Нечего спрашивать — не трогаем счётчик вообще.
+        if (!primary && !backup) return null
         if (!consumeQuota(s)) return null
 
         // Основной канал.
-        if (s.llmModel.isNotBlank()) {
+        if (primary) {
             try {
                 val out = LlmFactory.create(
                     LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
@@ -43,7 +59,7 @@ object Llm {
         }
 
         // Резервный канал.
-        if (s.llm2Enabled && s.llm2Model.isNotBlank()) {
+        if (backup) {
             try {
                 val out = LlmFactory.create(
                     LlmConfig(s.llm2Provider, s.llm2BaseUrl, s.llm2ApiKey, s.llm2Model)

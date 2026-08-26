@@ -64,19 +64,31 @@ class NotifListenerService : NotificationListenerService() {
             val s = Settings(this)
             if (pkg !in s.monitoredApps) return
             val n = sbn.notification ?: return
+            // Дальше уведомление НАШЕ (пакет отслеживается) — каждый отказ логируем,
+            // иначе «в журнале пусто» невозможно отличить от «уведомление не пришло».
+            val tag0 = tagFor(pkg)
+            fun drop(why: String) { EventLog(this).add("NOTIF[$tag0] пропуск: $why") }
+
             // Игнорируем старые/восстановленные уведомления (после перезагрузки система
             // восстанавливает непрочитанные — на них отвечать нельзя). Только свежие.
-            if (System.currentTimeMillis() - sbn.postTime > s.notifMaxAgeMin * 60_000L) return
+            val ageMin = (System.currentTimeMillis() - sbn.postTime) / 60_000L
+            if (System.currentTimeMillis() - sbn.postTime > s.notifMaxAgeMin * 60_000L) {
+                drop("старое уведомление ($ageMin мин > ${s.notifMaxAgeMin})"); return
+            }
             // Telegram: только личные чаты — не каналы, не группы (по id канала уведомления).
             if (pkg == "org.telegram.messenger" &&
-                !(n.channelId ?: "").contains("private", ignoreCase = true)) return
-            if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
-            if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return
+                !(n.channelId ?: "").contains("private", ignoreCase = true)) {
+                drop("Telegram: не личный чат (channel=${n.channelId})"); return
+            }
+            if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) { drop("сводка группы уведомлений"); return }
+            if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) { drop("постоянное уведомление"); return }
             val history = n.extras.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY)
-            if (history != null && history.isNotEmpty()) return
+            if (history != null && history.isNotEmpty()) { drop("уже отвечено из уведомления"); return }
 
-            val (sender, text, isGroup) = NotifResponder.extract(n) ?: return
-            if (text.isBlank()) return
+            val extracted = NotifResponder.extract(n)
+            if (extracted == null) { drop("не удалось разобрать (нет MessagingStyle/title/text)"); return }
+            val (sender, text, isGroup) = extracted
+            if (text.isBlank()) { drop("пустой текст (вложение/стикер?)"); return }
             // Отсекаем Telegram-ботов (имя оканчивается на "bot").
             if (pkg == "org.telegram.messenger" && sender.trim().lowercase().endsWith("bot")) return
 

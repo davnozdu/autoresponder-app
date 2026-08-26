@@ -15,15 +15,38 @@ object SimUtil {
     fun subIdFromCall(context: Context, details: android.telecom.Call.Details): Int {
         val handle = details.accountHandle ?: return -1
         return try {
-            val tm = context.getSystemService(TelephonyManager::class.java) ?: return -1
+            val tm = context.getSystemService(TelephonyManager::class.java)
             // API 30+: прямое сопоставление PhoneAccountHandle -> subscriptionId.
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
+            if (tm != null && android.os.Build.VERSION.SDK_INT >= 30) {
                 val id = tm.getSubscriptionId(handle)
                 if (id >= 0) return id
             }
-            // Фолбэк: id хэндла нередко равен строковому subId.
-            handle.id?.toIntOrNull()?.takeIf { it >= 0 } ?: -1
+            val hid = handle.id
+            // Фолбэк 1: id хэндла нередко равен строковому subId.
+            hid?.toIntOrNull()?.takeIf { it >= 0 }?.let { return it }
+            // Фолбэк 2: на части прошивок (в т.ч. OxygenOS) id хэндла — это ICCID карты.
+            if (!hid.isNullOrBlank()) {
+                subByIccId(context, hid)?.let { return it }
+            }
+            -1
         } catch (_: Exception) { -1 }
+    }
+
+    /** subId по ICCID (id PhoneAccountHandle на некоторых прошивках). */
+    private fun subByIccId(context: Context, iccId: String): Int? = try {
+        val sm = context.getSystemService(SubscriptionManager::class.java)
+        @Suppress("MissingPermission")
+        sm?.activeSubscriptionInfoList?.firstOrNull {
+            val icc = it.iccId ?: ""
+            icc.isNotBlank() && (icc == iccId || icc.startsWith(iccId) || iccId.startsWith(icc))
+        }?.subscriptionId
+    } catch (_: Exception) { null }
+
+    /** Строка для журнала: какие SIM активны и что известно про них. */
+    fun describe(context: Context): String {
+        val sims = activeSims(context)
+        if (sims.isEmpty()) return "SIM не определены"
+        return sims.joinToString("; ") { "slot=${it.slot} subId=${it.subId} ${it.label}" }
     }
 
     /** Активные SIM. Требует READ_PHONE_STATE. */

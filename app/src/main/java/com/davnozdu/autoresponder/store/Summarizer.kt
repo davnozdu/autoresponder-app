@@ -1,17 +1,13 @@
 package com.davnozdu.autoresponder.store
 
 import android.content.Context
-import com.davnozdu.autoresponder.data.Settings
-import com.davnozdu.autoresponder.llm.LlmConfig
-import com.davnozdu.autoresponder.llm.LlmFactory
 
 /** Краткий пересказ ветки переписки через настроенную LLM. */
 object Summarizer {
 
     fun summarize(context: Context, items: List<HistItem>): String {
         if (items.isEmpty()) return "Нет сообщений за выбранный период."
-        val s = Settings(context)
-        if (!s.llmEnabled || s.llmModel.isBlank())
+        if (!com.davnozdu.autoresponder.llm.Llm.isConfigured(context))
             return "LLM не настроена — пересказ недоступен."
 
         val who = items.firstOrNull { !it.name.isNullOrBlank() }?.name ?: items.first().number
