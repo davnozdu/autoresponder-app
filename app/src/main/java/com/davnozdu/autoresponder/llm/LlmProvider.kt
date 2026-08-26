@@ -4,8 +4,12 @@ package com.davnozdu.autoresponder.llm
 interface LlmProvider {
     /** Список доступных моделей (для кнопки «запросить все модели»). */
     fun listModels(): List<String>
-    /** Короткий ответ модели; null при ошибке. */
-    fun generate(prompt: String, maxChars: Int): String?
+    /**
+     * Короткий ответ модели; null при ошибке.
+     * @param think разрешить режим размышления (reasoning). Если true — даём большой бюджет
+     *   токенов на «мысли», сам ответ всё равно обрезается под лимит SMS вызывающим кодом.
+     */
+    fun generate(prompt: String, maxChars: Int, think: Boolean = false): String?
 }
 
 data class LlmConfig(

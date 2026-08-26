@@ -34,7 +34,7 @@ object Llm {
             try {
                 val out = LlmFactory.create(
                     LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
-                ).generate(prompt, maxChars)
+                ).generate(prompt, maxChars, s.llmThink)
                 if (!out.isNullOrBlank()) return out
                 EventLog(context).add("LLM основной пуст/таймаут → резервный")
             } catch (e: Exception) {
@@ -47,7 +47,7 @@ object Llm {
             try {
                 val out = LlmFactory.create(
                     LlmConfig(s.llm2Provider, s.llm2BaseUrl, s.llm2ApiKey, s.llm2Model)
-                ).generate(prompt, maxChars)
+                ).generate(prompt, maxChars, s.llmThink)
                 if (!out.isNullOrBlank()) return out
                 EventLog(context).add("LLM резервный пуст/таймаут → заглушка")
             } catch (e: Exception) {

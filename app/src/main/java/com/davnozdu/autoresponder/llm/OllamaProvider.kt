@@ -28,18 +28,22 @@ class OllamaProvider(private val cfg: LlmConfig) : LlmProvider {
         }
     }
 
-    override fun generate(prompt: String, maxChars: Int): String? {
+    override fun generate(prompt: String, maxChars: Int, think: Boolean): String? {
         val messages = JSONArray().put(
             JSONObject().put("role", "user").put("content", prompt)
         )
+        // think=true: даём большой бюджет токенов (пусть reasoning-модель думает); ответ обрежется под SMS.
+        // think=false: явно отключаем размышление и держим короткий бюджет.
+        val numPredict = if (think) 8192 else (maxChars / 2).coerceAtLeast(64)
         val body = JSONObject()
             .put("model", cfg.model.ifBlank { "gemma3" })
             .put("messages", messages)
             .put("stream", false)
-            .put("options", JSONObject().put("num_predict", (maxChars / 2).coerceAtLeast(64)))
+            .put("think", think)
+            .put("options", JSONObject().put("num_predict", numPredict))
             .toString().toRequestBody(Http.JSON.toMediaType())
         val req = Request.Builder().url("${base()}/api/chat").auth().post(body).build()
-        Http.client.newCall(req).execute().use { r ->
+        Http.client(think).newCall(req).execute().use { r ->
             if (!r.isSuccessful) return null
             return JSONObject(r.body?.string() ?: "{}")
                 .optJSONObject("message")?.optString("content")?.trim()?.ifBlank { null }

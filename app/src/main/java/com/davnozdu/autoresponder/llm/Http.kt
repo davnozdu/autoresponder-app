@@ -12,5 +12,16 @@ internal object Http {
         .readTimeout(12, TimeUnit.SECONDS)
         .callTimeout(13, TimeUnit.SECONDS)
         .build()
+
+    // Режим размышления (reasoning): модель думает дольше — даём большой таймаут.
+    // Общий пул соединений с основным клиентом.
+    val clientThink: OkHttpClient = client.newBuilder()
+        .readTimeout(90, TimeUnit.SECONDS)
+        .callTimeout(95, TimeUnit.SECONDS)
+        .build()
+
+    /** Клиент под режим: обычный (быстрый фолбэк) или «думающий» (длинный таймаут). */
+    fun client(think: Boolean): OkHttpClient = if (think) clientThink else client
+
     const val JSON = "application/json"
 }

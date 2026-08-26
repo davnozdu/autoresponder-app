@@ -21,18 +21,20 @@ class OpenAiProvider(private val cfg: LlmConfig) : LlmProvider {
         }
     }
 
-    override fun generate(prompt: String, maxChars: Int): String? {
+    override fun generate(prompt: String, maxChars: Int, think: Boolean): String? {
         val messages = JSONArray().put(
             JSONObject().put("role", "user").put("content", prompt)
         )
+        // think=true — большой бюджет токенов на размышление (ответ обрежется под SMS вызывающим кодом).
+        val maxTokens = if (think) 8192 else (maxChars / 2).coerceAtLeast(64)
         val body = JSONObject()
             .put("model", cfg.model.ifBlank { "gpt-4o-mini" })
             .put("messages", messages)
-            .put("max_tokens", (maxChars / 2).coerceAtLeast(64))
+            .put("max_tokens", maxTokens)
             .toString().toRequestBody(Http.JSON.toMediaType())
         val req = Request.Builder().url("${base()}/v1/chat/completions")
             .header("Authorization", "Bearer ${cfg.apiKey}").post(body).build()
-        Http.client.newCall(req).execute().use { r ->
+        Http.client(think).newCall(req).execute().use { r ->
             if (!r.isSuccessful) return null
             val choices = JSONObject(r.body?.string() ?: "{}").optJSONArray("choices") ?: return null
             if (choices.length() == 0) return null

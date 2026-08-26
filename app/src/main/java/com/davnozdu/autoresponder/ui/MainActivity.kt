@@ -97,6 +97,7 @@ fun AppScreen() {
     var tplEn by remember { mutableStateOf(s.template("en")) }
 
     var llmOn by remember { mutableStateOf(s.llmEnabled) }
+    var llmThink by remember { mutableStateOf(s.llmThink) }
     var provider by remember { mutableStateOf(s.llmProvider) }
     var baseUrl by remember { mutableStateOf(s.llmBaseUrl) }
     var apiKey by remember { mutableStateOf(s.llmApiKey) }
@@ -363,6 +364,11 @@ fun AppScreen() {
             HorizontalDivider()
             Text("LLM (при интернете)", style = MaterialTheme.typography.titleMedium)
             SwitchRow("Использовать LLM", llmOn) { llmOn = it; s.llmEnabled = it }
+            SwitchRow("Режим размышления (reasoning)", llmThink) { llmThink = it; s.llmThink = it }
+            Text(if (llmThink)
+                "Вкл: модель думает (большой бюджет токенов, таймаут до 95с), ответ обрезается под лимит SMS. Для reasoning-моделей (deepseek и т.п.)."
+                else "Выкл: прямой краткий ответ, быстрый фолбэк ~13с. Подходит всем моделям (рекомендуется, напр. gemma).",
+                style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("ollama", "openai", "gemini", "deepseek").forEach { p ->
                     FilterChip(selected = provider == p, onClick = {

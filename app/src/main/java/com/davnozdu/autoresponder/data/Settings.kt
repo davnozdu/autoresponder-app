@@ -305,6 +305,12 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_LLM_ON, false)
         set(v) = sp.edit().putBoolean(K_LLM_ON, v).apply()
 
+    /** Режим размышления (reasoning). false — прямой краткий ответ (подходит всем моделям);
+     *  true — модель думает (большой бюджет токенов), ответ всё равно обрезается под лимит SMS. */
+    var llmThink: Boolean
+        get() = sp.getBoolean(K_LLM_THINK, false)
+        set(v) = sp.edit().putBoolean(K_LLM_THINK, v).apply()
+
     /** "ollama" | "openai" | "claude" */
     var llmProvider: String
         get() = sp.getString(K_LLM_PROV, "ollama") ?: "ollama"
@@ -412,6 +418,7 @@ class Settings(context: Context) {
         private const val K_LLM_DAY = "llm_day"
         private const val K_LLM_COUNT = "llm_count"
         private const val K_LLM_ON = "llm_on"
+        private const val K_LLM_THINK = "llm_think"
         private const val K_LLM_PROV = "llm_prov"
         private const val K_LLM_URL = "llm_url"
         private const val K_LLM_KEY = "llm_key"
