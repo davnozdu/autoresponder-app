@@ -58,6 +58,8 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <receiver android:name=".notif.NotifActionReceiver" android:exported="false" />
+
         <!-- Приём входящих SMS -->
         <receiver
             android:name=".sms.SmsReceiver"

@@ -52,6 +52,7 @@ fun AppScreen() {
     var enabled by remember { mutableStateOf(s.enabled) }
     var respCalls by remember { mutableStateOf(s.respondCalls) }
     var respSms by remember { mutableStateOf(s.respondSms) }
+    var notifOn by remember { mutableStateOf(s.notificationsEnabled) }
     var trigDnd by remember { mutableStateOf(s.triggerOnDnd) }
     var trigSched by remember { mutableStateOf(s.triggerOnSchedule) }
     var prefixes by remember { mutableStateOf(s.allowedPrefixes.joinToString(",")) }
@@ -176,6 +177,10 @@ fun AppScreen() {
             SwitchRow("Включён", enabled) { enabled = it; s.enabled = it }
             SwitchRow("Отвечать на звонки", respCalls) { respCalls = it; s.respondCalls = it }
             SwitchRow("Отвечать на SMS", respSms) { respSms = it; s.respondSms = it }
+            SwitchRow("Уведомления (сводка, статус DND)", notifOn) {
+                notifOn = it; s.notificationsEnabled = it
+                if (!it) com.davnozdu.autoresponder.notif.AutoNotifications.cancelDnd(ctx)
+            }
 
             HorizontalDivider()
             Text("Когда «закрыто»", style = MaterialTheme.typography.titleMedium)

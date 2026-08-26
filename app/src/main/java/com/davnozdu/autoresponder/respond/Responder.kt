@@ -9,6 +9,7 @@ import com.davnozdu.autoresponder.llm.LlmFactory
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.LangDetect
 import com.davnozdu.autoresponder.rules.PhoneMask
+import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.SkipPolicy
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
@@ -92,6 +93,7 @@ object Responder {
         val from = number ?: "?"
 
         if (!s.enabled) return
+        if (AutoReplyState.isPaused(context)) { log.add("$tag — пауза, пропуск"); return }
         // Звонок сюда попадает только после отклонения скринингом — делаем его видимым как MISSED.
         if (kind == Kind.CALL) com.davnozdu.autoresponder.call.CallLogWriter.writeMissed(context, number)
         if (kind == Kind.CALL && !s.respondCalls) return

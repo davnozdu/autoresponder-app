@@ -11,6 +11,25 @@ class Settings(context: Context) {
     private val sp: SharedPreferences =
         context.applicationContext.getSharedPreferences("autoresp", Context.MODE_PRIVATE)
 
+    // --- уведомления ---
+    var notificationsEnabled: Boolean
+        get() = sp.getBoolean(K_NOTIF_ON, true)
+        set(v) = sp.edit().putBoolean(K_NOTIF_ON, v).apply()
+
+    // пауза авто-ответа: 0=нет, 1=до следующего DND, 2=до перезагрузки
+    var pauseMode: Int
+        get() = sp.getInt(K_PAUSE_MODE, 0)
+        set(v) = sp.edit().putInt(K_PAUSE_MODE, v).apply()
+    var pauseBootMarker: Long
+        get() = sp.getLong(K_PAUSE_BOOT, 0L)
+        set(v) = sp.edit().putLong(K_PAUSE_BOOT, v).apply()
+    var dndWasOn: Boolean
+        get() = sp.getBoolean(K_DND_WAS_ON, false)
+        set(v) = sp.edit().putBoolean(K_DND_WAS_ON, v).apply()
+    var lastDndOnTime: Long
+        get() = sp.getLong(K_DND_ON_TS, 0L)
+        set(v) = sp.edit().putLong(K_DND_ON_TS, v).apply()
+
     // --- общий вкл/выкл ---
     var enabled: Boolean
         get() = sp.getBoolean(K_ENABLED, true)
@@ -240,6 +259,11 @@ class Settings(context: Context) {
 
     companion object {
         private const val K_ENABLED = "enabled"
+        private const val K_NOTIF_ON = "notif_on"
+        private const val K_PAUSE_MODE = "pause_mode"
+        private const val K_PAUSE_BOOT = "pause_boot"
+        private const val K_DND_ON_TS = "dnd_on_ts"
+        private const val K_DND_WAS_ON = "dnd_was_on"
         private const val K_TRIG_DND = "trig_dnd"
         private const val K_TRIG_SCHED = "trig_sched"
         private const val K_SCHED_START = "sched_start"

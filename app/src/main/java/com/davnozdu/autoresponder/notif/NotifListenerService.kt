@@ -12,8 +12,24 @@ class NotifListenerService : NotificationListenerService() {
 
     private val messagesPkg = "com.google.android.apps.messaging"
 
-    override fun onListenerConnected() { instance = this }
-    override fun onListenerDisconnected() { instance = null }
+    private val dndReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, i: android.content.Intent) { AutoNotifications.onDndChanged(c) }
+    }
+
+    override fun onListenerConnected() {
+        instance = this
+        AutoNotifications.ensureChannels(this)
+        try {
+            registerReceiver(dndReceiver, android.content.IntentFilter(
+                android.app.NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED),
+                android.content.Context.RECEIVER_NOT_EXPORTED)
+        } catch (_: Exception) {}
+        AutoNotifications.onDndChanged(this)  // синхронизировать текущее состояние
+    }
+    override fun onListenerDisconnected() {
+        instance = null
+        try { unregisterReceiver(dndReceiver) } catch (_: Exception) {}
+    }
 
     companion object {
         @Volatile private var instance: NotifListenerService? = null

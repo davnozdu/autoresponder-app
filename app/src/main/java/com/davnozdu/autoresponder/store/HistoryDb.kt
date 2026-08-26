@@ -79,6 +79,15 @@ class HistoryDb private constructor(context: Context) :
         writableDatabase.insert("events", null, cv)
     }
 
+    /** Кол-во авто-ответов (out, auto=1) по каналам с момента from. */
+    fun countAuto(from: Long, channels: List<String> = emptyList()): Int {
+        val chSql = if (channels.isEmpty()) "" else
+            " AND channel IN (${channels.joinToString(",") { "'" + it + "'" }})"
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM events WHERE direction='out' AND auto=1 AND ts>=?$chSql",
+            arrayOf(from.toString())).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+
     fun clearEvents() { writableDatabase.delete("events", null, null) }
 
     fun existsAt(number: String, ts: Long, direction: String): Boolean {

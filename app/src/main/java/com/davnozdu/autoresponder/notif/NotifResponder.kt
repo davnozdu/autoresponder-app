@@ -17,6 +17,7 @@ import com.davnozdu.autoresponder.respond.EventQueue
 import com.davnozdu.autoresponder.respond.SmsSender
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
+import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SimUtil
@@ -45,6 +46,7 @@ object NotifResponder {
         val s = Settings(context)
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
+        if (AutoReplyState.isPaused(context)) return
         if (text.isBlank() || isPlaceholder(text)) { return }
         if (isGroup) { log.add("NOTIF ${sender.take(16)} — группа, пропуск"); return }
         // WhatsApp/Telegram без кнопки ответа = канал/рассылка/не-сообщение → пропуск.
