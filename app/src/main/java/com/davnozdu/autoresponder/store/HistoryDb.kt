@@ -20,7 +20,7 @@ data class HistItem(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 5) {
+    SQLiteOpenHelper(context.applicationContext, "history.db", null, 6) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -38,6 +38,11 @@ class HistoryDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX idx_ts ON events(ts)")
         createBlacklist(db)
         createQa(db)
+        createBlPending(db)
+    }
+
+    private fun createBlPending(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE bl_pending(_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, name TEXT, channel TEXT, ts INTEGER)")
     }
 
     private fun createQa(db: SQLiteDatabase) {
@@ -62,6 +67,7 @@ class HistoryDb private constructor(context: Context) :
     override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
         if (oldV < 2) createBlacklist(db)
         if (oldV < 3) createQa(db)
+        if (oldV < 6) createBlPending(db)
         if (oldV < 5) db.execSQL("ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
         if (oldV < 4) {
             db.execSQL("ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
@@ -198,6 +204,23 @@ class HistoryDb private constructor(context: Context) :
         }
         return null
     }
+
+    // --- Ожидающие уведомления о чёрном списке ---
+    fun blPendingAdd(number: String?, name: String?, channel: String) {
+        val cv = ContentValues().apply { put("number", number); put("name", name); put("channel", channel); put("ts", System.currentTimeMillis()) }
+        writableDatabase.insert("bl_pending", null, cv)
+    }
+    fun blPendingNames(): List<String> {
+        val res = ArrayList<String>()
+        readableDatabase.rawQuery("SELECT DISTINCT COALESCE(name, number) FROM bl_pending ORDER BY ts DESC", null).use { c ->
+            while (c.moveToNext()) c.getString(0)?.let { res.add(it) }
+        }
+        return res
+    }
+    fun blPendingCount(): Int {
+        readableDatabase.rawQuery("SELECT COUNT(*) FROM bl_pending", null).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+    fun blPendingClear() { writableDatabase.delete("bl_pending", null, null) }
 
     companion object {
         @Volatile private var inst: HistoryDb? = null

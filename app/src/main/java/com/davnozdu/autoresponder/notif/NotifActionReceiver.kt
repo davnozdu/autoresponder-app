@@ -15,6 +15,7 @@ class NotifActionReceiver : BroadcastReceiver() {
             AutoNotifications.ACT_DISABLE -> {
                 Settings(context).enabled = false; AutoReplyState.resume(context); AutoNotifications.cancelDnd(context)
             }
+            AutoNotifications.ACT_BL_NOTIFY -> BlacklistNotifier.onAlarm(context)
         }
     }
 }

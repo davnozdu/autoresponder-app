@@ -26,6 +26,19 @@ class Settings(context: Context) {
     var dndWasOn: Boolean
         get() = sp.getBoolean(K_DND_WAS_ON, false)
         set(v) = sp.edit().putBoolean(K_DND_WAS_ON, v).apply()
+    // уведомления ЧС: 0=выкл, 1=через N мин, 2=сводка за день
+    var blNotifMode: Int
+        get() = sp.getInt(K_BLN_MODE, 1)
+        set(v) = sp.edit().putInt(K_BLN_MODE, v).apply()
+    var blNotifDelayMin: Int
+        get() = sp.getInt(K_BLN_DELAY, 60)
+        set(v) = sp.edit().putInt(K_BLN_DELAY, v).apply()
+    var blDailyTimeMin: Int
+        get() = sp.getInt(K_BLN_DAILY, 9 * 60)
+        set(v) = sp.edit().putInt(K_BLN_DAILY, v).apply()
+    var blAlarmSet: Boolean
+        get() = sp.getBoolean(K_BLN_ALARM, false)
+        set(v) = sp.edit().putBoolean(K_BLN_ALARM, v).apply()
     var lastDndOnTime: Long
         get() = sp.getLong(K_DND_ON_TS, 0L)
         set(v) = sp.edit().putLong(K_DND_ON_TS, v).apply()
@@ -264,6 +277,10 @@ class Settings(context: Context) {
         private const val K_PAUSE_BOOT = "pause_boot"
         private const val K_DND_ON_TS = "dnd_on_ts"
         private const val K_DND_WAS_ON = "dnd_was_on"
+        private const val K_BLN_MODE = "bln_mode"
+        private const val K_BLN_DELAY = "bln_delay"
+        private const val K_BLN_DAILY = "bln_daily"
+        private const val K_BLN_ALARM = "bln_alarm"
         private const val K_TRIG_DND = "trig_dnd"
         private const val K_TRIG_SCHED = "trig_sched"
         private const val K_SCHED_START = "sched_start"

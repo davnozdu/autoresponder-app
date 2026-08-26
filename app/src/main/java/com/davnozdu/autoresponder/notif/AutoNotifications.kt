@@ -22,6 +22,8 @@ object AutoNotifications {
     const val ACT_PAUSE_NEXT = "com.davnozdu.autoresponder.PAUSE_NEXT_DND"
     const val ACT_PAUSE_REBOOT = "com.davnozdu.autoresponder.PAUSE_REBOOT"
     const val ACT_DISABLE = "com.davnozdu.autoresponder.DISABLE"
+    const val ACT_BL_NOTIFY = "com.davnozdu.autoresponder.BL_NOTIFY"
+    const val ID_BLACKLIST = 1003
 
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)
 
@@ -73,6 +75,20 @@ object AutoNotifications {
     }
 
     fun cancelDnd(context: Context) { nm(context)?.cancel(ID_DND) }
+
+    fun showBlacklist(context: Context, count: Int, names: String) {
+        ensureChannels(context)
+        val tap = PendingIntent.getActivity(context, 11,
+            Intent(context, HistoryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n = androidx.core.app.NotificationCompat.Builder(context, CH_BLACKLIST)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Чёрный список: пытались связаться ($count)")
+            .setContentText(names.ifBlank { "Контакты из чёрного списка" })
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(names))
+            .setContentIntent(tap).setAutoCancel(true).build()
+        nm(context)?.notify(ID_BLACKLIST, n)
+    }
 
     private fun showSummary(context: Context, from: Long) {
         val db = HistoryDb.get(context)

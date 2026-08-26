@@ -53,6 +53,9 @@ fun AppScreen() {
     var respCalls by remember { mutableStateOf(s.respondCalls) }
     var respSms by remember { mutableStateOf(s.respondSms) }
     var notifOn by remember { mutableStateOf(s.notificationsEnabled) }
+    var blnMode by remember { mutableStateOf(s.blNotifMode) }
+    var blnDelay by remember { mutableStateOf(s.blNotifDelayMin.toString()) }
+    var blnDaily by remember { mutableStateOf(s.blDailyTimeMin) }
     var trigDnd by remember { mutableStateOf(s.triggerOnDnd) }
     var trigSched by remember { mutableStateOf(s.triggerOnSchedule) }
     var prefixes by remember { mutableStateOf(s.allowedPrefixes.joinToString(",")) }
@@ -180,6 +183,19 @@ fun AppScreen() {
             SwitchRow("Уведомления (сводка, статус DND)", notifOn) {
                 notifOn = it; s.notificationsEnabled = it
                 if (!it) com.davnozdu.autoresponder.notif.AutoNotifications.cancelDnd(ctx)
+            }
+            Text("Уведомления о чёрном списке", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(blnMode == 0, { blnMode = 0; s.blNotifMode = 0 }, { Text("Выкл") })
+                FilterChip(blnMode == 1, { blnMode = 1; s.blNotifMode = 1 }, { Text("Через N мин") })
+                FilterChip(blnMode == 2, { blnMode = 2; s.blNotifMode = 2 }, { Text("Сводка за день") })
+            }
+            if (blnMode == 1) OutlinedTextField(blnDelay, { blnDelay = it; it.toIntOrNull()?.let { v -> s.blNotifDelayMin = v } },
+                label = { Text("Через сколько минут уведомить") }, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            if (blnMode == 2) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Время сводки:")
+                OutlinedButton(onClick = { pickTime(ctx, blnDaily) { blnDaily = it; s.blDailyTimeMin = it } }) { Text(fmtMin(blnDaily)) }
             }
 
             HorizontalDivider()

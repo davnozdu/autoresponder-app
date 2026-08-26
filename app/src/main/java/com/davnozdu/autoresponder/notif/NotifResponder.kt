@@ -73,6 +73,7 @@ object NotifResponder {
         // Чёрный список отвечает ВСЕГДА; обычные — только когда «закрыто».
         val bl = HistoryDb.get(context).blacklistMatch(
             if (channel == Channel.MESSAGES) number else null, sender)
+        if (bl != null) BlacklistNotifier.record(context, number, sender, tag)
         val closedReason = ClosedState.reason(context, s)
         if (bl != null) {
             val chOk = if (channel == Channel.MESSAGES) bl.onSms else bl.onMsgr

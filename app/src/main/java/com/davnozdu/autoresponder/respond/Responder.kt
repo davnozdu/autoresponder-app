@@ -117,6 +117,8 @@ object Responder {
 
         // Чёрный список: каналы, звонки, персональный промпт.
         val bl = HistoryDb.get(context).blacklistMatch(norm, null)
+        if (bl != null) com.davnozdu.autoresponder.notif.BlacklistNotifier.record(
+            context, norm, bl.name, if (kind == Kind.CALL) "call" else "sms")
         val closedReason = ClosedState.reason(context, s)
         var override: String? = null
         var forceReply = false
