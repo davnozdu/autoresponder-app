@@ -7,11 +7,13 @@ import com.davnozdu.autoresponder.data.Settings
 object Llm {
     fun generate(context: Context, prompt: String, maxChars: Int): String? {
         val s = Settings(context)
-        // Дневной лимит обращений (защита от расходов) — при превышении уходим на шаблон.
-        val today = (System.currentTimeMillis() / 86_400_000L).toInt()
-        if (s.llmDay != today) { s.llmDay = today; s.llmCount = 0 }
-        if (s.llmDailyCap > 0 && s.llmCount >= s.llmDailyCap) return null
-        s.llmCount = s.llmCount + 1
+        // Дневной лимит обращений (защита от расходов). При 0 — без лимита и без записи счётчика.
+        if (s.llmDailyCap > 0) {
+            val today = (System.currentTimeMillis() / 86_400_000L).toInt()
+            if (s.llmDay != today) { s.llmDay = today; s.llmCount = 0 }
+            if (s.llmCount >= s.llmDailyCap) return null
+            s.llmCount = s.llmCount + 1
+        }
         if (s.llmModel.isNotBlank()) {
             try {
                 val out = LlmFactory.create(

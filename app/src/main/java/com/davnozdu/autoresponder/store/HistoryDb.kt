@@ -24,7 +24,7 @@ class HistoryDb private constructor(context: Context) :
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
-            "CREATE TABLE events(" +
+            "CREATE TABLE IF NOT EXISTS events(" +
                 "_id INTEGER PRIMARY KEY AUTOINCREMENT," +
                 "number TEXT NOT NULL," +
                 "name TEXT," +
@@ -42,16 +42,16 @@ class HistoryDb private constructor(context: Context) :
     }
 
     private fun createBlPending(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE bl_pending(_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, name TEXT, channel TEXT, ts INTEGER)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS bl_pending(_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, name TEXT, channel TEXT, ts INTEGER)")
     }
 
     private fun createQa(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE qa(_id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT, text TEXT, ts INTEGER)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS qa(_id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT, text TEXT, ts INTEGER)")
     }
 
     private fun createBlacklist(db: SQLiteDatabase) {
         db.execSQL(
-            "CREATE TABLE blacklist(" +
+            "CREATE TABLE IF NOT EXISTS blacklist(" +
                 "_id INTEGER PRIMARY KEY AUTOINCREMENT," +
                 "identity TEXT NOT NULL," +   // номер или имя
                 "name TEXT," +
