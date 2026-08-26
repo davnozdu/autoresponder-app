@@ -30,6 +30,7 @@
         <activity android:name=".ui.HistoryChatActivity" android:exported="false" />
         <activity android:name=".ui.AppPickerActivity" android:exported="false" />
         <activity android:name=".ui.StatsActivity" android:exported="false" />
+        <activity android:name=".ui.StatusActivity" android:exported="false" />
 
         <activity
             android:name=".ui.MainActivity"
@@ -60,6 +61,7 @@
         </provider>
 
         <receiver android:name=".notif.NotifActionReceiver" android:exported="false" />
+        <receiver android:name=".sms.SmsSentReceiver" android:exported="false" />
 
         <!-- Приём входящих SMS -->
         <receiver

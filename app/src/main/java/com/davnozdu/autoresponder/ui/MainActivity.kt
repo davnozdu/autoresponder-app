@@ -435,6 +435,8 @@ fun AppScreen() {
             }) { Text("Проверить обновление") }
 
             HorizontalDivider()
+            Button(onClick = { ctx.startActivity(Intent(ctx, StatusActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth()) { Text("✅ Состояние (проверка готовности)") }
             Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth()) { Text("💬 История общения") }
             Button(onClick = { ctx.startActivity(Intent(ctx, HistoryChatActivity::class.java)) },

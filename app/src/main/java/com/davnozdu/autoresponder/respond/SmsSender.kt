@@ -1,21 +1,36 @@
 package com.davnozdu.autoresponder.respond
 
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.telephony.SmsManager
+import com.davnozdu.autoresponder.sms.SmsSentReceiver
 
-/** Отправка ответного SMS многосегментно (никогда не конвертируется в MMS). */
+/** Отправка ответного SMS многосегментно + отслеживание доставки (повтор при сбое). */
 object SmsSender {
 
-    /** @return число сегментов, либо -1 при ошибке. */
-    fun send(context: Context, number: String, text: String, subId: Int = -1): Int {
+    fun send(context: Context, number: String, text: String, subId: Int = -1, attempt: Int = 0): Int {
         return try {
             val sm = smsManager(context, subId)
             val parts = sm.divideMessage(text)
-            sm.sendMultipartTextMessage(number, null, parts, null, null)
+            val sent = ArrayList<PendingIntent?>()
+            for (i in parts.indices) {
+                sent.add(if (i == 0) sentPi(context, number, text, subId, attempt) else null)
+            }
+            sm.sendMultipartTextMessage(number, null, parts, sent, null)
             parts.size
-        } catch (e: Exception) {
-            -1
+        } catch (e: Exception) { -1 }
+    }
+
+    private fun sentPi(context: Context, number: String, text: String, subId: Int, attempt: Int): PendingIntent {
+        val i = Intent(context, SmsSentReceiver::class.java).apply {
+            action = "com.davnozdu.autoresponder.SMS_SENT"
+            putExtra("number", number); putExtra("text", text)
+            putExtra("subId", subId); putExtra("attempt", attempt)
         }
+        val rc = (number + text + attempt).hashCode()
+        return PendingIntent.getBroadcast(context, rc, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     fun segmentCount(context: Context, text: String, subId: Int = -1): Int =
