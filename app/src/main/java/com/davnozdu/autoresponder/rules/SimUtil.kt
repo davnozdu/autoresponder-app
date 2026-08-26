@@ -56,11 +56,25 @@ object SimUtil {
             @Suppress("MissingPermission")
             val list = sm.activeSubscriptionInfoList ?: return emptyList()
             list.map {
-                val name = it.displayName?.toString()?.ifBlank { null }
-                    ?: it.carrierName?.toString()?.ifBlank { null } ?: "SIM"
-                SimInfo(it.subscriptionId, it.simSlotIndex, "SIM ${it.simSlotIndex + 1}: $name")
+                val display = it.displayName?.toString()?.trim()?.ifBlank { null }
+                val carrier = it.carrierName?.toString()?.trim()?.ifBlank { null }
+                SimInfo(it.subscriptionId, it.simSlotIndex,
+                    "SIM ${it.simSlotIndex + 1}: ${simName(display, carrier)}")
             }.sortedBy { it.slot }
         } catch (e: Exception) { emptyList() }
+    }
+
+    // Прошивки часто оставляют displayName заглушкой вида «SIM1»/«Card 2» — она ничего не
+    // говорит о карте, поэтому в таком случае показываем оператора.
+    private val PLACEHOLDER = Regex("^(sim|card|слот|slot)\\s*[0-9]?$", RegexOption.IGNORE_CASE)
+
+    private fun simName(display: String?, carrier: String?): String {
+        val meaningful = display?.takeUnless { PLACEHOLDER.matches(it) }
+        return when {
+            meaningful == null -> carrier ?: display ?: "SIM"
+            carrier == null || carrier.equals(meaningful, true) -> meaningful
+            else -> "$meaningful ($carrier)"
+        }
     }
 
     /** subId для слота (0=SIM1,1=SIM2); -1 если не найден. */
