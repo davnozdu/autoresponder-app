@@ -199,13 +199,24 @@ class Settings(context: Context) {
     fun removeExcludedName(name: String) {
         excludedNames = excludedNames.filterNot { it.equals(name.trim(), true) }
     }
-    /** Отправитель-мессенджер в списке избранных (сравнение без учёта регистра и префикса @). */
+    /**
+     * Отправитель-мессенджер в списке избранных.
+     *
+     * Сравнение без учёта регистра и префикса @. В список можно вписать и НОМЕР: Telegram
+     * показывает телефон вместо имени, если у контакта не задано имя/@username, причём
+     * форматирование у него своё («+31 615 092 866»). Поэтому если обе стороны похожи на
+     * номер — сравниваем по цифрам, а не посимвольно.
+     */
     fun isExcludedName(sender: String?): Boolean {
-        val raw = sender?.trim()?.lowercase()?.removePrefix("@") ?: return false
+        val raw = sender?.trim()?.removePrefix("@") ?: return false
         if (raw.isEmpty()) return false
         return excludedNames.any { e ->
-            val ee = e.trim().lowercase().removePrefix("@")
-            ee.isNotEmpty() && raw == ee
+            val ee = e.trim().removePrefix("@")
+            when {
+                ee.isEmpty() -> false
+                raw.equals(ee, ignoreCase = true) -> true
+                else -> com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(raw, ee)
+            }
         }
     }
 

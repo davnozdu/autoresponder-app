@@ -76,7 +76,13 @@ object NotifResponder {
             number = null
             // Избранное для мессенджеров: имя/@username, которому НЕ отвечаем автоматически.
             if (s.isExcludedName(sender)) { log.add("NOTIF[$tag] ${sender.take(16)} — в Избранных, пропуск"); return }
-            key = "$tag:${sender.trim().lowercase()}"
+            // Если отправитель показан телефоном (Telegram так делает без имени/@username),
+            // приводим его к цифрам: иначе «+31 615 092 866» и «+31615092866» считались бы
+            // разными собеседниками и лимит ответов для каждого шёл бы отдельно.
+            val ident = sender.trim()
+            key = if (PhoneMask.looksLikeNumber(ident))
+                "$tag:${ident.filter { it.isDigit() }.takeLast(9)}"
+            else "$tag:${ident.lowercase()}"
         }
 
         val inCh = if (channel == Channel.MESSAGES) "rcs" else tag

@@ -361,12 +361,15 @@ fun AppScreen() {
                         TextButton(onClick = { s.removeExcluded(num); excluded = s.excludedNumbers }) { Text("Удалить") }
                     }
                 }
-                Text("Мессенджеры: имя / @username", style = MaterialTheme.typography.titleSmall)
-                Text("Telegram отдаёт только имена/@username — им не отвечаем автоматически (без учёта регистра и @).",
+                Text("Мессенджеры: имя, @username или номер", style = MaterialTheme.typography.titleSmall)
+                Text("Кому в мессенджерах не отвечаем автоматически. Telegram показывает имя или "
+                    + "@username, а если они не заданы — телефон. Номер можно вписать в любом "
+                    + "формате: +31615092866 или +31 615 092 866 — сравнение идёт по цифрам.",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(newExclName, { newExclName = it }, label = { Text("Имя или @username") },
+                    OutlinedTextField(newExclName, { newExclName = it },
+                        label = { Text("Имя, @username или номер") },
                         modifier = Modifier.weight(1f))
                     Button(onClick = {
                         if (newExclName.isNotBlank()) { s.addExcludedName(newExclName); exclNames = s.excludedNames; newExclName = "" }

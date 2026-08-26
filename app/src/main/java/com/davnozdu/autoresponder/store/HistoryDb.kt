@@ -236,7 +236,11 @@ class HistoryDb private constructor(context: Context) :
     private fun blacklistCached(): List<BlackEntry> =
         blCache ?: blacklistAll().also { blCache = it }
 
-    /** Совпадение по номеру (хвост цифр) или имени. */
+    /**
+     * Совпадение по номеру (хвост цифр) или имени.
+     * Имя тоже может оказаться номером — Telegram показывает телефон, если у контакта не
+     * задано имя. В этом случае сравниваем по цифрам, а не посимвольно.
+     */
     fun blacklistMatch(number: String?, name: String?): BlackEntry? {
         val numTail = number?.filter { it.isDigit() }?.takeLast(9)
         val nm = name?.trim()?.lowercase()
@@ -245,6 +249,7 @@ class HistoryDb private constructor(context: Context) :
             if (numTail != null && eDigits.length >= 8 && eDigits.takeLast(9) == numTail) return e
             if (nm != null && e.identity.trim().lowercase() == nm) return e
             if (nm != null && e.name?.trim()?.lowercase() == nm) return e
+            if (nm != null && com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(nm, e.identity)) return e
         }
         return null
     }

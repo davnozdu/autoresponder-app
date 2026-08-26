@@ -41,6 +41,26 @@ object PhoneMask {
         return if (d.length <= 9) d else d.takeLast(9)  // хвост номера, без учёта кода/формата
     }
 
+    /** Похоже ли на телефонный номер: только цифры и разделители, минимум 8 цифр. */
+    fun looksLikeNumber(raw: String?): Boolean {
+        val t = raw?.trim() ?: return false
+        if (t.isEmpty()) return false
+        if (!t.all { it.isDigit() || it in "+()- ." }) return false
+        return t.count { it.isDigit() } >= 8
+    }
+
+    /**
+     * Один ли это номер, записанный по-разному («+31 615 092 866» и «+31615092866»).
+     * Сравниваем по последним 9 цифрам — код страны и форматирование отличаются у разных
+     * источников (мессенджер, книга контактов, ручной ввод).
+     */
+    fun sameNumber(a: String?, b: String?): Boolean {
+        if (!looksLikeNumber(a) || !looksLikeNumber(b)) return false
+        val ta = digitsTail(a) ?: return false
+        val tb = digitsTail(b) ?: return false
+        return ta == tb
+    }
+
     /** Буквенный отправитель (Sberbank, Google...) — отвечать нельзя. */
     fun isAlphanumericSender(raw: String?): Boolean {
         if (raw.isNullOrBlank()) return true
