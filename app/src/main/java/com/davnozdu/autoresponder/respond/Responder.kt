@@ -80,7 +80,8 @@ object Responder {
             val returning = store.count(norm) > 0
             val reply = buildReply(app, s, incomingText, kind, returning)
             val clamped = SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
-            val segs = if (send) SmsSender.send(app, norm, clamped, SimUtil.resolveSubId(app, s.smsSlot)) else SmsSender.segmentCount(app, clamped)
+            val segs = if (send) SmsSender.send(app, norm, clamped, SimUtil.resolveSubId(app, s.slotForNumber(norm)))
+                       else SmsSender.segmentCount(app, clamped)
             store.markReplied(norm, s.timeoutHours)
             val mode = if (send) "SENT" else "dry"
             log.add("TEST[$kind] $norm $mode #${store.count(norm)}/${s.maxReplies} seg=$segs len=${clamped.length}")
@@ -129,11 +130,14 @@ object Responder {
                 context, norm, bl.name, if (kind == Kind.CALL) "call" else "sms")
             val closedReason = ClosedState.reason(context, s)
             var override: String? = null
+            var fallbackText: String? = null
             var forceReply = false
             if (bl != null) {
                 if (kind == Kind.CALL) {
                     if (bl.onCalls) { log.add("CALL $norm — ЧС: пропускаем звонок"); return@withKey }
                     override = bl.callPrompt?.ifBlank { null } ?: DEFAULT_CALL_DROP
+                    // Без LLM отправляем этот же текст как есть, а не общий шаблон.
+                    fallbackText = override
                     forceReply = true
                 } else {
                     if (!bl.viaLlm || !bl.onSms) { log.add("$tag $norm — ЧС: без ответа на SMS"); return@withKey }
@@ -150,18 +154,17 @@ object Responder {
 
             val warn = mode == ReplyMode.WARN
             val returning = store.count(norm) > 0
-            val reply = buildReply(context, s, incomingText, kind, returning, override, closedReason != null, norm, warn)
+            val reply = buildReply(context, s, incomingText, kind, returning, override, closedReason != null, norm, warn, fallbackText)
             val prefixed = applyPrefix(s.aiPrefix, reply)
             val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
 
-            // Железно: отвечаем SMS с ТОЙ SIM, на которую пришёл вызов/SMS (incomingSubId).
-            // Только если она неизвестна — берём явно выбранный слот, иначе системную.
-            val subId = when {
-                incomingSubId >= 0 -> incomingSubId
-                s.smsSlot >= 0 -> SimUtil.resolveSubId(context, s.smsSlot)
-                else -> -1
-            }
-            log.add("$tag $norm — SIM отправки subId=$subId (входящая=$incomingSubId, слот=${s.smsSlot})")
+            // Ручной режим: карту выбирает правило по префиксу номера, иначе — SIM по умолчанию.
+            // Входящая SIM (incomingSubId) на этой прошивке определяется ненадёжно, поэтому
+            // служит только для журнала.
+            val slot = s.slotForNumber(norm)
+            val subId = SimUtil.resolveSubId(context, slot)
+            log.add("$tag $norm — SIM отправки: слот${slot + 1} subId=$subId " +
+                    "(правило префикса; входящая subId=$incomingSubId; по умолчанию слот${s.smsSlot + 1})")
             val segs = SmsSender.send(context, norm, clamped, subId)
             if (segs >= 0) {
                 store.markReplied(norm, s.timeoutHours)
@@ -177,8 +180,8 @@ object Responder {
     /** Публичная сборка финального ответа (LLM/шаблон + префикс + обрезка сегментов). */
     fun composeReply(context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean,
                      promptOverride: String? = null, closedNow: Boolean = true,
-                     historyKey: String? = null, warn: Boolean = false): String {
-        val reply = buildReply(context, s, incomingText, kind, returning, promptOverride, closedNow, historyKey, warn)
+                     historyKey: String? = null, warn: Boolean = false, fallbackText: String? = null): String {
+        val reply = buildReply(context, s, incomingText, kind, returning, promptOverride, closedNow, historyKey, warn, fallbackText)
         return SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, reply), s.maxSegments)
     }
 
@@ -199,7 +202,8 @@ object Responder {
 
     private fun buildReply(
         context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean,
-        promptOverride: String? = null, closedNow: Boolean = true, historyKey: String? = null, warn: Boolean = false
+        promptOverride: String? = null, closedNow: Boolean = true, historyKey: String? = null,
+        warn: Boolean = false, fallbackText: String? = null
     ): String {
         val lang = if (kind == Kind.SMS && !incomingText.isNullOrBlank())
             LangDetect.detect(incomingText, s.defaultLang) else s.defaultLang
@@ -219,7 +223,9 @@ object Responder {
                 EventLog(context).add("LLM ошибка: ${e.message}, шаблон")
             }
         }
-        // Нет LLM / отвалилась / нет сети → шаблон (для warn — предупреждающий шаблон).
+        // Нет LLM / отвалилась / нет сети → заранее заданный текст (промпт звонка из чёрного
+        // списка задумывался и как готовое сообщение) либо общий шаблон.
+        if (!warn && !fallbackText.isNullOrBlank()) return fallbackText
         return if (warn) s.warnTemplate(lang, s.timeoutHours) else s.template(lang)
     }
 

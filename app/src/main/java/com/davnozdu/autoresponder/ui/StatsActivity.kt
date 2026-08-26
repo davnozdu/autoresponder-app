@@ -18,6 +18,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.davnozdu.autoresponder.store.HistItem
 import com.davnozdu.autoresponder.store.HistoryDb
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,7 +38,11 @@ private val sFmt = SimpleDateFormat("MM-dd HH:mm", Locale.US)
 @Composable
 fun StatsScreen(from: Long) {
     val ctx = LocalContext.current
-    val items = remember { HistoryDb.get(ctx).autoReplies(from) }
+    // Запрос в IO: на большой истории чтение в композиции подвешивало экран.
+    var items by remember { mutableStateOf(listOf<HistItem>()) }
+    LaunchedEffect(from) {
+        items = withContext(Dispatchers.IO) { HistoryDb.get(ctx).autoReplies(from) }
+    }
     val sms = items.count { it.channel == "sms" }
     val calls = items.count { it.channel == "call" }
     val msgr = items.size - sms - calls

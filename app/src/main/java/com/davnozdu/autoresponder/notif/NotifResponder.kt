@@ -57,6 +57,12 @@ object NotifResponder {
         if (channel != Channel.MESSAGES && !hasReply) {
             log.add("NOTIF[$tag] ${sender.take(16)} — нет кнопки «Ответить» в уведомлении, пропуск"); return
         }
+        // История входящего мессенджера — ВСЕГДА (в том числе в рабочее время и для «избранных»),
+        // но ровно один раз: одно сообщение WhatsApp приходит несколькими уведомлениями.
+        if (channel == Channel.MESSENGER &&
+            Dedup.claim("hist:$tag:${sender.trim().lowercase()}:${text.trim()}")) {
+            HistoryLogger.record(context, sender, tag, "in", text)
+        }
         // Ключ для лимита/анти-петли и правила по номеру (только для Messages).
         val key: String
         val number: String?
@@ -105,8 +111,9 @@ object NotifResponder {
                            else "$tag:$key:${text.trim()}"
             if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — дубль/повтор уведомления, пропуск"); return@withKey }
 
-            // История входящего RCS — после дедупа (чтобы не дублировать SMS), но ДО гейта лимита:
-            // во время таймаута клиент пишет дальше — сообщения копим для контекста LLM.
+            // История входящего — после дедупа (чтобы не дублировать SMS и повторные уведомления
+            // мессенджеров), но ДО гейта лимита: во время таймаута клиент пишет дальше —
+            // сообщения копим для контекста LLM. Группы не пишем.
             if (channel == Channel.MESSAGES) HistoryLogger.record(context, number, "rcs", "in", text)
 
             val mode = store.replyMode(key, s.maxReplies, s.timeoutHours, s.warnEnabled)
@@ -127,7 +134,7 @@ object NotifResponder {
             }
             // Запасной SMS только для Messages (есть номер).
             if (channel == Channel.MESSAGES && number != null) {
-                val subId = SimUtil.resolveSubId(context, s.smsSlot)
+                val subId = SimUtil.resolveSubId(context, s.slotForNumber(number))
                 val segs = SmsSender.send(context, key, reply, subId)
                 if (segs >= 0) { store.markReplied(key, s.timeoutHours); HistoryLogger.record(context, key, "sms", "out", reply, auto = true); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return@withKey }
             }

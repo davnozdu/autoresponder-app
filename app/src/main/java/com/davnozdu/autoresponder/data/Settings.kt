@@ -84,11 +84,42 @@ class Settings(context: Context) {
         get() = sp.getInt(K_SCHED_END, 9 * 60)
         set(v) = sp.edit().putInt(K_SCHED_END, v).apply()
 
-    // --- маска стран (список префиксов E.164, напр. "+420") ---
-    var allowedPrefixes: List<String>
-        get() = sp.getString(K_PREFIXES, "+420")!!
-            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        set(v) = sp.edit().putString(K_PREFIXES, v.joinToString(",")).apply()
+    // --- маска стран, раздельно по SIM ---
+    // Номер обслуживается, если попал в список ЛЮБОЙ из карт; с какой карты отвечаем —
+    // определяет то, в чей список он попал (см. slotForNumber).
+    private fun prefixList(key: String, def: String): List<String> =
+        (sp.getString(key, def) ?: def).split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** Префиксы, которые обслуживает SIM1. По умолчанию — старая общая маска. */
+    var prefixesSim1: List<String>
+        get() = prefixList(K_PREFIXES_S1, sp.getString(K_PREFIXES, "+420") ?: "+420")
+        set(v) = sp.edit().putString(K_PREFIXES_S1, v.joinToString(",")).apply()
+
+    /** Префиксы, которые обслуживает SIM2. */
+    var prefixesSim2: List<String>
+        get() = prefixList(K_PREFIXES_S2, "")
+        set(v) = sp.edit().putString(K_PREFIXES_S2, v.joinToString(",")).apply()
+
+    /** Общая маска: объединение правил обеих карт (кому вообще отвечаем). */
+    val allowedPrefixes: List<String>
+        get() = (prefixesSim1 + prefixesSim2).distinct()
+
+    /**
+     * Слот SIM для ответа этому номеру: 0 = SIM1, 1 = SIM2.
+     * Сначала правило по префиксу, иначе — SIM по умолчанию из настроек.
+     */
+    fun slotForNumber(number: String?): Int {
+        val n = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number) ?: return smsSlot
+        fun hit(list: List<String>) = list.any { p ->
+            val pp = if (p.startsWith("+")) p else "+$p"
+            n.startsWith(pp)
+        }
+        // SIM2 проверяем первой: её список обычно уже (одна страна), а у SIM1 может остаться
+        // широкий «унаследованный» набор префиксов.
+        if (hit(prefixesSim2)) return 1
+        if (hit(prefixesSim1)) return 0
+        return smsSlot
+    }
 
     // --- Избранные: номера-исключения (автоответ НЕ применять) ---
     var excludedNumbers: List<String>
@@ -212,11 +243,6 @@ class Settings(context: Context) {
     var lastBackup: Long
         get() = sp.getLong(K_BK_LAST, 0L)
         set(v) = sp.edit().putLong(K_BK_LAST, v).apply()
-    /** Пользовательская папка бэкапа (SAF tree uri) — пусто = /sdcard/AutoResponder/backups. */
-    var backupFolderUri: String
-        get() = sp.getString(K_BK_URI, "") ?: ""
-        set(v) = sp.edit().putString(K_BK_URI, v).apply()
-
     /** Включать API-ключи LLM в экспорт настроек (буфер/файл). По умолчанию выкл. */
     var exportSecrets: Boolean
         get() = sp.getBoolean(K_EXP_SECRETS, false)
@@ -237,10 +263,11 @@ class Settings(context: Context) {
         get() = sp.getStringSet(K_MON_APPS, DEFAULT_APPS)!!.toSet()
         set(v) = sp.edit().putStringSet(K_MON_APPS, v).apply()
 
-    // --- выбор SIM для отправки: -1 системная, 0=SIM1, 1=SIM2 (по умолчанию SIM2) ---
+    // --- SIM по умолчанию: 0=SIM1, 1=SIM2. «Системная» убрана: она отдавала отправку
+    // системному выбору по умолчанию, и ответ уходил не с той карты. ---
     var smsSlot: Int
-        get() = sp.getInt(K_SMS_SLOT, 1)
-        set(v) = sp.edit().putInt(K_SMS_SLOT, v).apply()
+        get() = sp.getInt(K_SMS_SLOT, 1).coerceIn(0, 1)
+        set(v) = sp.edit().putInt(K_SMS_SLOT, v.coerceIn(0, 1)).apply()
 
     // --- задержка перед авто-ответом (мс), для звонков и SMS ---
     var replyDelayMs: Long
@@ -417,7 +444,9 @@ class Settings(context: Context) {
         private const val K_WORK_DAYS = "work_days"
         private const val K_SCHED_START = "sched_start"
         private const val K_SCHED_END = "sched_end"
-        private const val K_PREFIXES = "prefixes"
+        private const val K_PREFIXES = "prefixes"        // старая общая маска (миграция)
+        private const val K_PREFIXES_S1 = "prefixes_sim1"
+        private const val K_PREFIXES_S2 = "prefixes_sim2"
         private const val K_EXCLUDED = "excluded"
         private const val K_EXCL_NAMES = "excluded_names"
         private const val K_EXCL_STARRED = "excl_starred"
@@ -437,7 +466,6 @@ class Settings(context: Context) {
         private const val K_BK_KEEP = "backup_keep"
         private const val K_BK_HOUR = "backup_hour"
         private const val K_BK_LAST = "backup_last"
-        private const val K_BK_URI = "backup_uri"
         private const val K_HOL_ON = "holidays_on"
         private const val K_EXP_SECRETS = "export_secrets"
         val DEFAULT_APPS = setOf(

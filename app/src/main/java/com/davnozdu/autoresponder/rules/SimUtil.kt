@@ -68,13 +68,12 @@ object SimUtil {
         activeSims(context).firstOrNull { it.slot == slot }?.subId ?: -1
 
     /**
-     * Итоговый subId для отправки по настройке слота.
-     * slotPref: -1 = системная по умолчанию; 0/1 = SIM1/SIM2.
-     * Если выбранной SIM нет — откат на системную (-1).
+     * Итоговый subId для отправки по номеру слота (0 = SIM1, 1 = SIM2).
+     * Если такой карты нет (вынута/выключена) — -1, отправка уйдёт системной по умолчанию.
      */
-    fun resolveSubId(context: Context, slotPref: Int): Int {
-        if (slotPref < 0) return -1
-        val sub = subIdForSlot(context, slotPref)
+    fun resolveSubId(context: Context, slot: Int): Int {
+        if (slot < 0) return -1
+        val sub = subIdForSlot(context, slot)
         return if (sub >= 0) sub else -1
     }
 }

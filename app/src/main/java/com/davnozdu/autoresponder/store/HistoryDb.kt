@@ -91,6 +91,17 @@ class HistoryDb private constructor(context: Context) :
         createBlacklist(db); createQa(db); createBlPending(db)
     }
 
+    /** Выполнить блок в одной транзакции (массовые вставки на порядок быстрее). */
+    fun <T> inTransaction(block: () -> T): T {
+        val db = writableDatabase
+        db.beginTransaction()
+        return try {
+            val r = block()
+            db.setTransactionSuccessful()
+            r
+        } finally { db.endTransaction() }
+    }
+
     fun insert(number: String, name: String?, channel: String, direction: String, body: String, ts: Long = System.currentTimeMillis(), auto: Boolean = false) {
         val cv = ContentValues().apply {
             put("number", number); put("name", name); put("channel", channel)
@@ -204,6 +215,7 @@ class HistoryDb private constructor(context: Context) :
         return res
     }
     fun blacklistUpsert(e: BlackEntry) {
+        blCache = null
         val cv = ContentValues().apply {
             put("identity", e.identity); put("name", e.name)
             put("via_llm", if (e.viaLlm) 1 else 0); put("prompt", e.prompt)
@@ -213,13 +225,22 @@ class HistoryDb private constructor(context: Context) :
         if (e.id > 0) writableDatabase.update("blacklist", cv, "_id=?", arrayOf(e.id.toString()))
         else writableDatabase.insert("blacklist", null, cv)
     }
-    fun blacklistDelete(id: Long) { writableDatabase.delete("blacklist", "_id=?", arrayOf(id.toString())) }
+    fun blacklistDelete(id: Long) {
+        blCache = null
+        writableDatabase.delete("blacklist", "_id=?", arrayOf(id.toString()))
+    }
+
+    // Чёрный список читается на КАЖДЫЙ входящий звонок — в т.ч. из onScreenCall, у которого
+    // жёсткий таймаут. Держим его в памяти и сбрасываем при изменении.
+    @Volatile private var blCache: List<BlackEntry>? = null
+    private fun blacklistCached(): List<BlackEntry> =
+        blCache ?: blacklistAll().also { blCache = it }
 
     /** Совпадение по номеру (хвост цифр) или имени. */
     fun blacklistMatch(number: String?, name: String?): BlackEntry? {
         val numTail = number?.filter { it.isDigit() }?.takeLast(9)
         val nm = name?.trim()?.lowercase()
-        for (e in blacklistAll()) {
+        for (e in blacklistCached()) {
             val eDigits = e.identity.filter { it.isDigit() }
             if (numTail != null && eDigits.length >= 8 && eDigits.takeLast(9) == numTail) return e
             if (nm != null && e.identity.trim().lowercase() == nm) return e

@@ -60,7 +60,8 @@ fun AppScreen() {
     var blnDaily by remember { mutableStateOf(s.blDailyTimeMin) }
     var trigDnd by remember { mutableStateOf(s.triggerOnDnd) }
     var trigSched by remember { mutableStateOf(s.triggerOnSchedule) }
-    var prefixes by remember { mutableStateOf(s.allowedPrefixes.joinToString(",")) }
+    var prefixes1 by remember { mutableStateOf(s.prefixesSim1.joinToString(",")) }
+    var prefixes2 by remember { mutableStateOf(s.prefixesSim2.joinToString(",")) }
     var schedMode by remember { mutableStateOf(s.scheduleMode) }
     var workStart by remember { mutableStateOf(s.workStartMin) }
     var workEnd by remember { mutableStateOf(s.workEndMin) }
@@ -294,9 +295,19 @@ fun AppScreen() {
                 )
             }
 
-            ExpandableSection("Маска стран") {
-                OutlinedTextField(prefixes, { prefixes = it; s.allowedPrefixes = it.split(",").map { p -> p.trim() } },
-                    label = { Text("Префиксы через запятую, напр. +420,+7") }, modifier = Modifier.fillMaxWidth())
+            ExpandableSection("Маска стран и выбор SIM") {
+                Text("Номеру отвечаем, если он попал в список любой из карт. С какой карты уйдёт "
+                    + "ответ — определяет то, в чей список попал префикс. Если ни в один — берётся "
+                    + "SIM по умолчанию (ниже, в разделе «SIM и язык»).",
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(prefixes1, { prefixes1 = it; s.prefixesSim1 = it.split(",").map { p -> p.trim() } },
+                    label = { Text("SIM 1 — префиксы, напр. +420") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(prefixes2, { prefixes2 = it; s.prefixesSim2 = it.split(",").map { p -> p.trim() } },
+                    label = { Text("SIM 2 — префиксы, напр. +7,+380") }, modifier = Modifier.fillMaxWidth())
+                if (prefixes1.isBlank() && prefixes2.isBlank())
+                    Text("Оба списка пусты — автоответ не сработает ни для одного номера.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
             }
 
             ExpandableSection("Избранные (не отвечать)") {
@@ -368,19 +379,17 @@ fun AppScreen() {
             }
 
             ExpandableSection("SIM и язык") {
+                Text("SIM по умолчанию — для номеров, не попавших ни в одно правило выше.",
+                    style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = smsSlot == 1, onClick = { smsSlot = 1; s.smsSlot = 1 },
-                        label = { Text("SIM 2") })
                     FilterChip(selected = smsSlot == 0, onClick = { smsSlot = 0; s.smsSlot = 0 },
                         label = { Text("SIM 1") })
-                    FilterChip(selected = smsSlot < 0, onClick = { smsSlot = -1; s.smsSlot = -1 },
-                        label = { Text("Системное") })
+                    FilterChip(selected = smsSlot == 1, onClick = { smsSlot = 1; s.smsSlot = 1 },
+                        label = { Text("SIM 2") })
                 }
                 if (sims.isEmpty()) Text("SIM не определены (нужно READ_PHONE_STATE)",
                     style = MaterialTheme.typography.bodySmall)
                 else sims.forEach { Text(it.label, style = MaterialTheme.typography.bodySmall) }
-                Text("«Системное» — ответ уходит с той SIM, на которую пришло SMS/вызов.",
-                    style = MaterialTheme.typography.labelSmall)
                 OutlinedTextField(defLang, { defLang = it.trim(); s.defaultLang = it.trim() },
                     label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
             }

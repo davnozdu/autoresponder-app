@@ -18,6 +18,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.davnozdu.autoresponder.store.BlackEntry
 import com.davnozdu.autoresponder.store.HistoryDb
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class BlacklistActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,7 +50,10 @@ fun BlacklistScreen() {
     var editing by remember { mutableStateOf<BlackEntry?>(null) }
     var editingCall by remember { mutableStateOf<BlackEntry?>(null) }
 
-    fun reload() { items = db.blacklistAll() }
+    val scope = rememberCoroutineScope()
+    fun reload() {
+        scope.launch { items = withContext(Dispatchers.IO) { db.blacklistAll() } }
+    }
     LaunchedEffect(Unit) { reload() }
 
     val contactLauncher = rememberLauncherForActivityResult(

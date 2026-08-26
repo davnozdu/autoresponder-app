@@ -14,14 +14,21 @@ object Importer {
         return PhoneMask.normalize(raw) ?: raw
     }
 
+    /** Имя контакта кэшируем на время импорта: запрос к книге на каждую строку делал импорт
+     *  нескольких тысяч SMS многоминутным. */
+    private val nameCache = HashMap<String, String?>()
+    private fun nameFor(context: Context, num: String): String? =
+        nameCache.getOrPut(num) { ContactUtil.nameFor(context, num) }
+
     /** @return число импортированных записей. */
     fun importAll(context: Context): Int {
         val app = context.applicationContext
         val db = HistoryDb.get(app)
-        var n = 0
-        n += importSms(app, db)
-        n += importCalls(app, db)
-        return n
+        nameCache.clear()
+        // Одна транзакция на весь импорт вместо отдельной на каждую вставку.
+        return db.inTransaction {
+            importSms(app, db) + importCalls(app, db)
+        }.also { nameCache.clear() }
     }
 
     private fun importSms(context: Context, db: HistoryDb): Int {
@@ -36,7 +43,7 @@ object Importer {
                 val ts = c.getLong(iD)
                 val dir = if (c.getInt(iT) == 2) "out" else "in"
                 if (db.existsAt(num, ts, dir)) continue
-                val name = ContactUtil.nameFor(context, num)
+                val name = nameFor(context, num)
                 db.insert(num, name, "sms", dir, c.getString(iB) ?: "", ts)
                 n++
             }
@@ -61,7 +68,7 @@ object Importer {
                     1 -> "входящий звонок"; 2 -> "исходящий звонок"; 3 -> "пропущенный звонок"
                     5 -> "отклонённый звонок"; 6 -> "заблокированный звонок"; else -> "звонок"
                 } + " (${c.getLong(iDur)}с)"
-                val name = ContactUtil.nameFor(context, num)
+                val name = nameFor(context, num)
                 db.insert(num, name, "call", dir, label, ts)
                 n++
             }

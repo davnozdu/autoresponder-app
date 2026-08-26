@@ -37,12 +37,35 @@ object SegmentBudget {
         return if (maxSegments <= 1) single else per * maxSegments
     }
 
+    /** «Вес» символа в единицах кодировки: в GSM-7 расширенные символы занимают ДВЕ позиции. */
+    private fun weight(c: Char, ucs2: Boolean): Int =
+        if (!ucs2 && c in GSM7_EXT) 2 else 1
+
+    /** Длина текста в единицах кодировки (а не в символах Kotlin). */
+    fun encodedLength(text: String): Int {
+        val ucs2 = !isGsm7(text)
+        return text.sumOf { weight(it, ucs2) }
+    }
+
     /** Жёсткая обрезка по границе слова под бюджет (кодировка определяется по тексту). */
     fun clampToBudget(text: String, maxSegments: Int): String {
         val budget = budgetForText(text, maxSegments)
-        if (text.length <= budget) return text
-        val cut = text.substring(0, budget)
+        val ucs2 = !isGsm7(text)
+        if (encodedLength(text) <= budget) return text
+        // Идём по символам и считаем реальный вес; заодно не рвём суррогатную пару (эмодзи),
+        // из-за чего в сообщении появлялся «битый» символ.
+        var used = 0
+        var end = 0
+        while (end < text.length) {
+            val c = text[end]
+            val pairLen = if (Character.isHighSurrogate(c) && end + 1 < text.length) 2 else 1
+            val w = if (pairLen == 2) (if (ucs2) 2 else 1) else weight(c, ucs2)
+            if (used + w > budget) break
+            used += w
+            end += pairLen
+        }
+        val cut = text.substring(0, end)
         val lastSpace = cut.lastIndexOf(' ')
-        return if (lastSpace > budget * 3 / 4) cut.substring(0, lastSpace) else cut
+        return if (lastSpace > end * 3 / 4) cut.substring(0, lastSpace) else cut
     }
 }

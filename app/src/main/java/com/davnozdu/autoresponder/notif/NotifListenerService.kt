@@ -5,7 +5,6 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.davnozdu.autoresponder.data.EventLog
 import com.davnozdu.autoresponder.data.Settings
-import com.davnozdu.autoresponder.store.HistoryLogger
 
 /** Ловит входящие сообщения выбранных мессенджеров через уведомления. */
 class NotifListenerService : NotificationListenerService() {
@@ -96,9 +95,9 @@ class NotifListenerService : NotificationListenerService() {
             val tag = tagFor(pkg)
             val hasReply = n.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true
             EventLog(this).add("NOTIF[$tag] from='${sender.take(20)}' group=$isGroup reply=$hasReply text='${text.take(36)}'")
-            // История входящего мессенджера — всегда (не только когда «закрыто»); группы не пишем.
-            if (channel == Channel.MESSENGER && !isGroup)
-                HistoryLogger.record(this, sender, tag, "in", text)
+            // Историю входящего пишет NotifResponder ПОСЛЕ дедупа: WhatsApp постит одно
+            // сообщение несколькими уведомлениями, и запись здесь дублировала его в БД
+            // (а значит и в контексте LLM).
             NotifResponder.handle(this, sbn, sender, text, channel, tag, isGroup, hasReply)
         } catch (e: Exception) {
             EventLog(this).add("NOTIF error: ${e.message}")

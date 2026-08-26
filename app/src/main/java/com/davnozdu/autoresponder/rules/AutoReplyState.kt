@@ -6,19 +6,20 @@ import com.davnozdu.autoresponder.data.Settings
 
 /** Состояние паузы авто-ответа (тумблеры из уведомления DND). */
 object AutoReplyState {
-    private fun bootWall() = System.currentTimeMillis() - SystemClock.elapsedRealtime()
-
     fun isPaused(context: Context): Boolean {
         val s = Settings(context)
         return when (s.pauseMode) {
             1 -> true                              // до следующего DND (снимется при выключении DND)
-            2 -> kotlin.math.abs(s.pauseBootMarker - bootWall()) < 5000  // до перезагрузки (та же загрузка)
+            // До перезагрузки: аптайм монотонно растёт внутри одной загрузки и обнуляется при
+            // рестарте. Сравнение «стеночных» часов (wallclock − uptime) с окном 5 с срывалось
+            // от обычной синхронизации времени по NTP и снимало паузу само собой.
+            2 -> SystemClock.elapsedRealtime() >= s.pauseBootMarker
             else -> false
         }
     }
     fun pauseUntilNextDnd(context: Context) { Settings(context).pauseMode = 1 }
     fun pauseUntilReboot(context: Context) {
-        val s = Settings(context); s.pauseMode = 2; s.pauseBootMarker = bootWall()
+        val s = Settings(context); s.pauseMode = 2; s.pauseBootMarker = SystemClock.elapsedRealtime()
     }
     fun resume(context: Context) { Settings(context).pauseMode = 0 }
     /** Вызывать при ВЫКЛючении DND — снимает «до следующего DND». */
