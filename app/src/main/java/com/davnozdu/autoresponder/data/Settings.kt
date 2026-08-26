@@ -212,6 +212,11 @@ class Settings(context: Context) {
         get() = sp.getString(K_BK_URI, "") ?: ""
         set(v) = sp.edit().putString(K_BK_URI, v).apply()
 
+    /** Учитывать список праздников (когда офис закрыт) в ответах LLM. По умолчанию выкл. */
+    var holidaysEnabled: Boolean
+        get() = sp.getBoolean(K_HOL_ON, false)
+        set(v) = sp.edit().putBoolean(K_HOL_ON, v).apply()
+
     // --- макс. возраст уведомления для ответа (мин) — защита от старых/восстановленных ---
     var notifMaxAgeMin: Int
         get() = sp.getInt(K_NOTIF_AGE, 5)
@@ -410,6 +415,7 @@ class Settings(context: Context) {
         private const val K_BK_HOUR = "backup_hour"
         private const val K_BK_LAST = "backup_last"
         private const val K_BK_URI = "backup_uri"
+        private const val K_HOL_ON = "holidays_on"
         val DEFAULT_APPS = setOf(
             "com.google.android.apps.messaging", "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
         private const val K_TPL_PREFIX = "tpl_"

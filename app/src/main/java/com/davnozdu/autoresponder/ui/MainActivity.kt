@@ -85,6 +85,8 @@ fun AppScreen() {
     var exclNames by remember { mutableStateOf(s.excludedNames) }
     var newExclName by remember { mutableStateOf("") }
     var aboutSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.AboutInfo.source(ctx)) }
+    var holOn by remember { mutableStateOf(s.holidaysEnabled) }
+    var holSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.Holidays.source(ctx)) }
     var backupOn by remember { mutableStateOf(s.backupEnabled) }
     var backupKeep by remember { mutableStateOf(s.backupKeep.toString()) }
     var backupHour by remember { mutableStateOf(s.backupHour.toString()) }
@@ -163,6 +165,18 @@ fun AppScreen() {
                 aboutSrc = com.davnozdu.autoresponder.store.AboutInfo.source(ctx)
                 Toast.makeText(ctx, "Файл «О компании» загружен", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) { Toast.makeText(ctx, "Ошибка загрузки .md", Toast.LENGTH_SHORT).show() }
+        }
+    }
+    val holLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val txt = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: ""
+                com.davnozdu.autoresponder.store.Holidays.saveAppCopy(ctx, txt)
+                holSrc = com.davnozdu.autoresponder.store.Holidays.source(ctx)
+                Toast.makeText(ctx, "Список праздников загружен", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) { Toast.makeText(ctx, "Ошибка загрузки списка", Toast.LENGTH_SHORT).show() }
         }
     }
     val contactLauncher = rememberLauncherForActivityResult(
@@ -468,6 +482,24 @@ fun AppScreen() {
                     com.davnozdu.autoresponder.store.AboutInfo.saveAppCopy(ctx, null)
                     aboutSrc = com.davnozdu.autoresponder.store.AboutInfo.source(ctx)
                     Toast.makeText(ctx, "Загруженный файл удалён", Toast.LENGTH_SHORT).show()
+                }) { Text("Убрать загруженный") }
+            }
+            Text("Список праздников (гос. выходные)", style = MaterialTheme.typography.titleSmall)
+            SwitchRow("Учитывать праздники", holOn) { holOn = it; s.holidaysEnabled = it }
+            Text(when {
+                !holOn -> "Выключено. Включите и загрузите список — LLM будет знать, когда офис закрыт (только по договорённости)."
+                holSrc == null -> "Включено, но список не загружен. Загрузите .txt или положите /sdcard/AutoResponder/holidays.txt"
+                holSrc!!.contains("/files/") -> "Активен загруженный список (в приложении)."
+                else -> "Активен файл: $holSrc"
+            }, style = MaterialTheme.typography.bodySmall)
+            Text("Формат: одна дата в строке. MM-DD — ежегодно (01-01 Новый год); YYYY-MM-DD — конкретная дата (2026-04-06 Пасха). # — комментарий.",
+                style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { holLauncher.launch(arrayOf("text/plain", "*/*")) }) { Text("Загрузить список") }
+                OutlinedButton(onClick = {
+                    com.davnozdu.autoresponder.store.Holidays.saveAppCopy(ctx, null)
+                    holSrc = com.davnozdu.autoresponder.store.Holidays.source(ctx)
+                    Toast.makeText(ctx, "Загруженный список удалён", Toast.LENGTH_SHORT).show()
                 }) { Text("Убрать загруженный") }
             }
             TextButton(onClick = {

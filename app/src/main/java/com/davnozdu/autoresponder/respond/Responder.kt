@@ -240,6 +240,22 @@ object Responder {
     ): String {
         val defName = when (s.defaultLang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
         val history = historyBlock(context, historyKey)
+        // Текущие дата/время/день недели с устройства — чтобы LLM накладывала праздники на текущий год
+        // и понимала «сегодня/завтра/в субботу».
+        val now = java.time.LocalDateTime.now()
+        val dow = now.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
+        val nowStr = now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+        val nowBlock = "Current device date and time: $nowStr, $dow (timezone ${java.util.TimeZone.getDefault().id}). " +
+            "Use it to reason about today/tomorrow/weekday and to apply holiday dates to the CURRENT year."
+        // Праздники (если включены): даты, когда офис закрыт / только по договорённости.
+        val holBlock = if (s.holidaysEnabled) {
+            val h = com.davnozdu.autoresponder.store.Holidays.text(context)
+            if (h.isBlank()) "" else
+                "\nPublic holidays / days off (office closed, only by prior arrangement). " +
+                "Format: MM-DD = every year (apply to the current year using the date above), YYYY-MM-DD = that exact date. " +
+                "If the client asks about a specific day that is a weekend or one of these holidays, say we work only by " +
+                "prior arrangement and offer the holiday booking link:\n$h\n"
+        } else ""
         // Системное предупреждение (№ maxReplies+1): отдельный промпт, но с контекстом и фактами.
         if (warn) {
             val warnPrompt = s.promptWarn.replace("{hours}", s.timeoutHours.toString())
@@ -248,6 +264,8 @@ object Responder {
 
             Facts about the business (use if relevant):
             ${AboutInfo.text(context, s.businessInfo)}
+            $holBlock
+            $nowBlock
             $history
             ${if (!incomingText.isNullOrBlank()) "Customer's last message: \"$incomingText\"" else ""}
             Reply in the customer's language; if unknown, reply in $defName.
@@ -262,6 +280,8 @@ object Responder {
 
             Facts about the business (use them to answer):
             ${AboutInfo.text(context, s.businessInfo)}
+            $holBlock
+            $nowBlock
             $history
             Текущий режим: ${if (closedNow) "нерабочее время (Не беспокоить включён)" else "рабочее время"}.
             Customer's SMS: "$incomingText"
