@@ -13,7 +13,7 @@ class NotifListenerService : NotificationListenerService() {
     private val messagesPkg = "com.google.android.apps.messaging"
 
     private val dndReceiver = object : android.content.BroadcastReceiver() {
-        override fun onReceive(c: Context, i: android.content.Intent) { AutoNotifications.onDndChanged(c) }
+        override fun onReceive(c: android.content.Context, i: android.content.Intent) { AutoNotifications.onDndChanged(c) }
     }
 
     override fun onListenerConnected() {
