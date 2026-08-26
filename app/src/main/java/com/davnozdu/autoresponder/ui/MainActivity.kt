@@ -302,9 +302,10 @@ fun AppScreen() {
                     + "SIM по умолчанию из раздела «SIM и язык».",
                     style = MaterialTheme.typography.bodySmall)
 
-                // Карта, которой нет в телефоне, — сразу видно, что правило работать не будет.
+                // Имя по системе, без номера слота — он уже в подписи тумблера.
+                // Карты, которой нет в телефоне, сразу видно: правило для неё работать не будет.
                 fun simHint(slot: Int): String =
-                    sims.firstOrNull { it.slot == slot }?.label ?: "нет в телефоне"
+                    sims.firstOrNull { it.slot == slot }?.name ?: "нет в телефоне"
 
                 SwitchRow("SIM 1 — ${simHint(0)}", sim1On) { sim1On = it; s.sim1Enabled = it }
                 if (sim1On) OutlinedTextField(prefixes1,

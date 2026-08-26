@@ -4,7 +4,13 @@ import android.content.Context
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 
-data class SimInfo(val subId: Int, val slot: Int, val label: String)
+/**
+ * @param name   имя карты по системе («T-Mobile», «Vodafone»), без номера слота
+ * @param label  готовая подпись со слотом («SIM 1: T-Mobile») — для списков и журнала
+ */
+data class SimInfo(val subId: Int, val slot: Int, val name: String) {
+    val label: String get() = "SIM ${slot + 1}: $name"
+}
 
 object SimUtil {
 
@@ -58,8 +64,7 @@ object SimUtil {
             list.map {
                 val display = it.displayName?.toString()?.trim()?.ifBlank { null }
                 val carrier = it.carrierName?.toString()?.trim()?.ifBlank { null }
-                SimInfo(it.subscriptionId, it.simSlotIndex,
-                    "SIM ${it.simSlotIndex + 1}: ${simName(display, carrier)}")
+                SimInfo(it.subscriptionId, it.simSlotIndex, simName(display, carrier))
             }.sortedBy { it.slot }
         } catch (e: Exception) { emptyList() }
     }
