@@ -81,6 +81,14 @@ fun AppScreen() {
     var replyDelay by remember { mutableStateOf(s.replyDelayMs.toString()) }
     var notifAge by remember { mutableStateOf(s.notifMaxAgeMin.toString()) }
     var smsSlot by remember { mutableStateOf(s.smsSlot) }
+    var warnOn by remember { mutableStateOf(s.warnEnabled) }
+    var exclNames by remember { mutableStateOf(s.excludedNames) }
+    var newExclName by remember { mutableStateOf("") }
+    var aboutSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.AboutInfo.source(ctx)) }
+    var backupOn by remember { mutableStateOf(s.backupEnabled) }
+    var backupKeep by remember { mutableStateOf(s.backupKeep.toString()) }
+    var backupHour by remember { mutableStateOf(s.backupHour.toString()) }
+    var backups by remember { mutableStateOf(com.davnozdu.autoresponder.store.Backup.list()) }
     val sims = remember { SimUtil.activeSims(ctx) }
     var defLang by remember { mutableStateOf(s.defaultLang) }
 
@@ -142,6 +150,18 @@ fun AppScreen() {
             } catch (e: Exception) {
                 Toast.makeText(ctx, "Ошибка загрузки", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+    val mdLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val txt = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: ""
+                com.davnozdu.autoresponder.store.AboutInfo.saveAppCopy(ctx, txt)
+                aboutSrc = com.davnozdu.autoresponder.store.AboutInfo.source(ctx)
+                Toast.makeText(ctx, "Файл «О компании» загружен", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) { Toast.makeText(ctx, "Ошибка загрузки .md", Toast.LENGTH_SHORT).show() }
         }
     }
     val contactLauncher = rememberLauncherForActivityResult(
@@ -275,6 +295,28 @@ fun AppScreen() {
                 }
             }
 
+            Text("Избранные мессенджеров (имя / @username)", style = MaterialTheme.typography.titleSmall)
+            Text("Telegram отдаёт только имена/@username — им не отвечаем автоматически (без учёта регистра и @).",
+                style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(newExclName, { newExclName = it }, label = { Text("Имя или @username") },
+                    modifier = Modifier.weight(1f))
+                Button(onClick = {
+                    if (newExclName.isNotBlank()) { s.addExcludedName(newExclName); exclNames = s.excludedNames; newExclName = "" }
+                }) { Text("+") }
+            }
+            exclNames.forEach { nm ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(nm)
+                    TextButton(onClick = { s.removeExcludedName(nm); exclNames = s.excludedNames }) { Text("Удалить") }
+                }
+            }
+
+            SwitchRow("Предупреждение перед тишиной (7-е сообщение)", warnOn) { warnOn = it; s.warnEnabled = it }
+            Text("После лимита ответов отправить одно системное сообщение: отвечает AI, человек ответит в рабочее время / через N ч. Дальше — тишина до таймаута.",
+                style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(maxReplies, { maxReplies = it; it.toIntOrNull()?.let { v -> s.maxReplies = v } },
                     label = { Text("Макс. ответов") }, modifier = Modifier.weight(1f),
@@ -408,6 +450,20 @@ fun AppScreen() {
             OutlinedTextField(bizInfo, { bizInfo = it; s.businessInfo = it },
                 label = { Text("Факты о компании (база знаний)") }, modifier = Modifier.fillMaxWidth(),
                 minLines = 3)
+            Text("Файл «О компании» (.md) для LLM", style = MaterialTheme.typography.titleSmall)
+            Text(when {
+                aboutSrc == null -> "Не задан. Приоритет: загруженный .md → /sdcard/AutoResponder/about.md → поле выше."
+                aboutSrc!!.contains("/files/") -> "Активен загруженный файл (в приложении). Он важнее полей выше."
+                else -> "Активен файл: $aboutSrc"
+            }, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { mdLauncher.launch(arrayOf("text/markdown", "text/plain", "*/*")) }) { Text("Загрузить .md") }
+                OutlinedButton(onClick = {
+                    com.davnozdu.autoresponder.store.AboutInfo.saveAppCopy(ctx, null)
+                    aboutSrc = com.davnozdu.autoresponder.store.AboutInfo.source(ctx)
+                    Toast.makeText(ctx, "Загруженный файл удалён", Toast.LENGTH_SHORT).show()
+                }) { Text("Убрать загруженный") }
+            }
             TextButton(onClick = {
                 promptSms = com.davnozdu.autoresponder.data.Settings.DEF_PROMPT_SMS
                 promptCall = com.davnozdu.autoresponder.data.Settings.DEF_PROMPT_CALL
@@ -474,6 +530,45 @@ fun AppScreen() {
                 modifier = Modifier.fillMaxWidth()) { Text("🚫 Чёрный список") }
             Button(onClick = { ctx.startActivity(Intent(ctx, AppPickerActivity::class.java)) },
                 modifier = Modifier.fillMaxWidth()) { Text("📱 Приложения для автоответа") }
+
+            HorizontalDivider()
+            Text("Бэкап базы истории (контекст для LLM)", style = MaterialTheme.typography.titleMedium)
+            Text("Ежедневная копия в /sdcard/AutoResponder/backups с ротацией.",
+                style = MaterialTheme.typography.bodySmall)
+            SwitchRow("Ежедневный бэкап", backupOn) {
+                backupOn = it; s.backupEnabled = it
+                if (it) com.davnozdu.autoresponder.store.Backup.schedule(ctx)
+                else com.davnozdu.autoresponder.store.Backup.cancel(ctx)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(backupKeep, { backupKeep = it; it.toIntOrNull()?.let { v -> s.backupKeep = v } },
+                    label = { Text("Хранить копий") }, modifier = Modifier.weight(1f),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                OutlinedTextField(backupHour, { backupHour = it; it.toIntOrNull()?.let { v -> s.backupHour = v.coerceIn(0,23); com.davnozdu.autoresponder.store.Backup.schedule(ctx) } },
+                    label = { Text("Час (0-23)") }, modifier = Modifier.weight(1f),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            }
+            Button(onClick = {
+                scope.launch {
+                    val f = withContext(Dispatchers.IO) { com.davnozdu.autoresponder.store.Backup.run(ctx) }
+                    backups = com.davnozdu.autoresponder.store.Backup.list()
+                    Toast.makeText(ctx, if (f != null) "Бэкап сохранён: ${f.name}" else "Ошибка бэкапа (нужен доступ к файлам)", Toast.LENGTH_SHORT).show()
+                }
+            }) { Text("Сделать бэкап сейчас") }
+            if (backups.isEmpty()) Text("Копий пока нет", style = MaterialTheme.typography.bodySmall)
+            backups.take(12).forEach { bk ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("${bk.name} (${bk.length()/1024} КБ)", style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) { com.davnozdu.autoresponder.store.Backup.restore(ctx, bk) }
+                            Toast.makeText(ctx, if (ok) "Восстановлено ✓" else "Ошибка восстановления", Toast.LENGTH_SHORT).show()
+                        }
+                    }) { Text("Восстановить") }
+                }
+            }
 
             HorizontalDivider()
             Text("Импорт / экспорт настроек", style = MaterialTheme.typography.titleMedium)
