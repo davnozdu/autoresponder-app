@@ -418,8 +418,15 @@ fun AppScreen() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("ollama", "openai", "gemini", "deepseek").forEach { p ->
                         FilterChip(selected = provider == p, onClick = {
-                            provider = p; s.llmProvider = p
-                            baseUrl = LlmFactory.defaultBaseUrl(p); s.llmBaseUrl = baseUrl
+                            if (provider != p) {
+                                provider = p; s.llmProvider = p
+                                baseUrl = LlmFactory.defaultBaseUrl(p); s.llmBaseUrl = baseUrl
+                                // Модель принадлежит провайдеру: имя от прежнего (например
+                                // gemma4:31b из Ollama) на новом API не существует, запрос падает
+                                // и ответ молча уходит офлайн-шаблоном. Чистим выбор.
+                                model = ""; s.llmModel = ""; models = emptyList()
+                                status = "Провайдер изменён — выберите модель заново"
+                            }
                         }, label = { Text(if (p == "deepseek") "DSeek" else p) })
                     }
                 }
@@ -431,8 +438,12 @@ fun AppScreen() {
                     label = { Text("Модель") }, modifier = Modifier.fillMaxWidth())
                 // Частая ошибка: имя модели из Ollama («gemma3:27b») оставлено при облачном
                 // провайдере — запрос падает, и ответ уходит офлайн-шаблоном.
-                if (provider != "ollama" && model.contains(":"))
-                    Text("Похоже на имя модели Ollama, а провайдер — $provider. "
+                if (model.isBlank())
+                    Text("Модель не выбрана — этот канал работать не будет.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                else if (provider != "ollama" && model.contains(":"))
+                    Text("«$model» выглядит как имя модели Ollama, а провайдер — $provider. "
                         + "Нажмите «Запросить все модели» и выберите из списка.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error)
@@ -468,8 +479,12 @@ fun AppScreen() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("ollama", "openai", "gemini", "deepseek").forEach { p ->
                         FilterChip(selected = provider2 == p, onClick = {
-                            provider2 = p; s.llm2Provider = p
-                            baseUrl2 = LlmFactory.defaultBaseUrl(p); s.llm2BaseUrl = baseUrl2
+                            if (provider2 != p) {
+                                provider2 = p; s.llm2Provider = p
+                                baseUrl2 = LlmFactory.defaultBaseUrl(p); s.llm2BaseUrl = baseUrl2
+                                model2 = ""; s.llm2Model = ""; models2 = emptyList()
+                                status2 = "Провайдер изменён — выберите модель заново"
+                            }
                         }, label = { Text(if (p == "deepseek") "DSeek" else p) })
                     }
                 }
