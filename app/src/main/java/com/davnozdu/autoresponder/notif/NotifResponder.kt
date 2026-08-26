@@ -64,6 +64,8 @@ object NotifResponder {
             key = PhoneMask.normalize(number)!!
         } else {
             number = null
+            // Избранное для мессенджеров: имя/@username, которому НЕ отвечаем автоматически.
+            if (s.isExcludedName(sender)) { log.add("NOTIF[$tag] ${sender.take(16)} — в Избранных, пропуск"); return }
             key = "$tag:${sender.trim().lowercase()}"
         }
 
@@ -89,8 +91,13 @@ object NotifResponder {
         NumberLock.withKey(key) {
             // Для Messages пауза: обычное SMS застолбит SmsReceiver, до сюда дойдёт только RCS.
             if (channel == Channel.MESSAGES) delay(2000)
-            val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
-            if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return@withKey }
+            // Дедуп. Для RCS(MESSAGES) — по номеру+тексту (совпадает с SMS-путём, гасит дубль SMS↔RCS).
+            // Для мессенджеров — по ОТПРАВИТЕЛЬ+ТЕКСТ (не по sbn.key!): WhatsApp постит одно сообщение
+            // НЕСКОЛЬКИМИ уведомлениями с разными tag/key (напр. tag=hash и tag=null) и повторно обновляет
+            // одно и то же — на одно сообщение отвечаем РОВНО раз.
+            val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text"
+                           else "$tag:$key:${text.trim()}"
+            if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — дубль/повтор уведомления, пропуск"); return@withKey }
 
             // История входящего RCS — после дедупа (чтобы не дублировать SMS), но ДО гейта лимита:
             // во время таймаута клиент пишет дальше — сообщения копим для контекста LLM.

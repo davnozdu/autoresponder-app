@@ -9,6 +9,7 @@ import com.davnozdu.autoresponder.respond.Responder
 import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
+import com.davnozdu.autoresponder.rules.SimUtil
 import com.davnozdu.autoresponder.rules.SkipPolicy
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
@@ -26,6 +27,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
 
         val number = callDetails.handle?.schemeSpecificPart // tel:+420... -> +420...
         if (number != null) HistoryLogger.record(this, number, "call", "in", "входящий звонок")
+        val callSubId = SimUtil.subIdFromCall(this, callDetails)  // SIM, на которую пришёл звонок
         val s = Settings(this)
         if (AutoReplyState.isPaused(this)) { respondAllow(callDetails); return }
         // Чёрный список: онCalls=да -> пропускаем; нет -> отклоняем + SMS.
@@ -35,7 +37,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
             val resp = CallResponse.Builder().setDisallowCall(true).setRejectCall(true).build()
             respondToCall(callDetails, resp)
             EventLog(this).add("CALL ${number ?: "?"} — ЧС отклонён, SMS")
-            Responder.handle(this, number, null, Kind.CALL)
+            Responder.handle(this, number, null, Kind.CALL, callSubId)
             return
         }
 
@@ -53,7 +55,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
                 .build()
             respondToCall(callDetails, response)
             EventLog(this).add("CALL ${number ?: "?"} — отклонён (закрыто), SMS через ${s.replyDelayMs} мс")
-            Responder.handle(this, number, null, Kind.CALL)
+            Responder.handle(this, number, null, Kind.CALL, callSubId)
         } else {
             respondAllow(callDetails)
         }

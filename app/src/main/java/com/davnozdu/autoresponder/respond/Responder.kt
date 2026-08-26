@@ -153,7 +153,14 @@ object Responder {
             val prefixed = applyPrefix(s.aiPrefix, reply)
             val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
 
-            val subId = if (s.smsSlot >= 0) SimUtil.resolveSubId(context, s.smsSlot) else incomingSubId
+            // Железно: отвечаем SMS с ТОЙ SIM, на которую пришёл вызов/SMS (incomingSubId).
+            // Только если она неизвестна — берём явно выбранный слот, иначе системную.
+            val subId = when {
+                incomingSubId >= 0 -> incomingSubId
+                s.smsSlot >= 0 -> SimUtil.resolveSubId(context, s.smsSlot)
+                else -> -1
+            }
+            log.add("$tag $norm — SIM отправки subId=$subId (входящая=$incomingSubId, слот=${s.smsSlot})")
             val segs = SmsSender.send(context, norm, clamped, subId)
             if (segs >= 0) {
                 store.markReplied(norm, s.timeoutHours)

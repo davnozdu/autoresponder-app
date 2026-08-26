@@ -2,10 +2,29 @@ package com.davnozdu.autoresponder.rules
 
 import android.content.Context
 import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
 
 data class SimInfo(val subId: Int, val slot: Int, val label: String)
 
 object SimUtil {
+
+    /**
+     * subId SIM-карты, на которую пришёл входящий звонок (из PhoneAccountHandle звонка).
+     * Нужен, чтобы отвечать SMS С ТОЙ ЖЕ карты. -1, если определить не удалось.
+     */
+    fun subIdFromCall(context: Context, details: android.telecom.Call.Details): Int {
+        val handle = details.accountHandle ?: return -1
+        return try {
+            val tm = context.getSystemService(TelephonyManager::class.java) ?: return -1
+            // API 30+: прямое сопоставление PhoneAccountHandle -> subscriptionId.
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val id = tm.getSubscriptionId(handle)
+                if (id >= 0) return id
+            }
+            // Фолбэк: id хэндла нередко равен строковому subId.
+            handle.id?.toIntOrNull()?.takeIf { it >= 0 } ?: -1
+        } catch (_: Exception) { -1 }
+    }
 
     /** Активные SIM. Требует READ_PHONE_STATE. */
     fun activeSims(context: Context): List<SimInfo> {

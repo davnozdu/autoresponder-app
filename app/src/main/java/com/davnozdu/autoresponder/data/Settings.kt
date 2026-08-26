@@ -106,6 +106,31 @@ class Settings(context: Context) {
         excludedNumbers = excludedNumbers.filterNot { it.equals(number.trim(), true) }
     }
 
+    // --- Избранные для мессенджеров: имена/@-юзернеймы (Telegram отдаёт только имена/@username) ---
+    var excludedNames: List<String>
+        get() = sp.getString(K_EXCL_NAMES, "")!!
+            .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        set(v) = sp.edit().putString(K_EXCL_NAMES, v.joinToString("\n")).apply()
+
+    fun addExcludedName(name: String) {
+        val n = name.trim()
+        if (n.isEmpty()) return
+        val cur = excludedNames.toMutableList()
+        if (cur.none { it.equals(n, true) }) { cur.add(n); excludedNames = cur }
+    }
+    fun removeExcludedName(name: String) {
+        excludedNames = excludedNames.filterNot { it.equals(name.trim(), true) }
+    }
+    /** Отправитель-мессенджер в списке избранных (сравнение без учёта регистра и префикса @). */
+    fun isExcludedName(sender: String?): Boolean {
+        val raw = sender?.trim()?.lowercase()?.removePrefix("@") ?: return false
+        if (raw.isEmpty()) return false
+        return excludedNames.any { e ->
+            val ee = e.trim().lowercase().removePrefix("@")
+            ee.isNotEmpty() && raw == ee
+        }
+    }
+
     /** не отвечать звёздным (избранным) контактам телефона */
     var excludeStarred: Boolean
         get() = sp.getBoolean(K_EXCL_STARRED, true)
@@ -340,6 +365,7 @@ class Settings(context: Context) {
         private const val K_SCHED_END = "sched_end"
         private const val K_PREFIXES = "prefixes"
         private const val K_EXCLUDED = "excluded"
+        private const val K_EXCL_NAMES = "excluded_names"
         private const val K_EXCL_STARRED = "excl_starred"
         private const val K_EXCL_CONTACTS = "excl_contacts"
         private const val K_RESPECT_DND = "respect_dnd"
