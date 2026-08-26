@@ -65,6 +65,13 @@
         <receiver android:name=".notif.NotifActionReceiver" android:exported="false" />
         <receiver android:name=".sms.SmsSentReceiver" android:exported="false" />
 
+        <!-- Ежедневный бэкап БД истории (+ перепланирование после перезагрузки) -->
+        <receiver android:name=".store.BackupReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Приём входящих SMS -->
         <receiver
             android:name=".sms.SmsReceiver"

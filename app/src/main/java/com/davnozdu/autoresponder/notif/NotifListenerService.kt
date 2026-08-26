@@ -25,6 +25,7 @@ class NotifListenerService : NotificationListenerService() {
                 android.content.Context.RECEIVER_NOT_EXPORTED)
         } catch (_: Exception) {}
         AutoNotifications.onDndChanged(this)  // синхронизировать текущее состояние
+        com.davnozdu.autoresponder.store.Backup.schedule(this)  // ежедневный бэкап БД
         // Восстановление после простоя: слушатель мог быть отвязан (падение процесса, ре-бинд
         // watchdog'ом, перезагрузка) — на переподключении система НЕ переигрывает onNotificationPosted,
         // поэтому активно подхватываем ещё свежие непрочитанные. Возрастной фильтр (5 мин) внутри

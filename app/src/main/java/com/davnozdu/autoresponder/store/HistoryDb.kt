@@ -231,9 +231,20 @@ class HistoryDb private constructor(context: Context) :
     }
     fun blPendingClear() { writableDatabase.delete("bl_pending", null, null) }
 
+    /** Принудительный WAL-checkpoint перед копированием файла БД (для бэкапа). */
+    fun checkpoint() {
+        try { writableDatabase.rawQuery("PRAGMA wal_checkpoint(FULL)", null).use { it.moveToFirst() } } catch (_: Exception) {}
+    }
+
     companion object {
         @Volatile private var inst: HistoryDb? = null
         fun get(context: Context): HistoryDb =
-            inst ?: synchronized(this) { inst ?: HistoryDb(context).also { inst = it } }
+            inst ?: synchronized(this) { inst ?: HistoryDb(context.applicationContext).also { inst = it } }
+
+        /** Закрыть и обнулить синглтон — следующий get() пересоздаст (нужно при восстановлении из бэкапа). */
+        @Synchronized fun reset() {
+            try { inst?.close() } catch (_: Exception) {}
+            inst = null
+        }
     }
 }

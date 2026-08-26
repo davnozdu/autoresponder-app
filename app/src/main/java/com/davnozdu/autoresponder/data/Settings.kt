@@ -192,6 +192,26 @@ class Settings(context: Context) {
         get() = sp.getLong(K_UPD_CHECK, 0L)
         set(v) = sp.edit().putLong(K_UPD_CHECK, v).apply()
 
+    // --- Ежедневный бэкап БД истории ---
+    var backupEnabled: Boolean
+        get() = sp.getBoolean(K_BK_ON, true)
+        set(v) = sp.edit().putBoolean(K_BK_ON, v).apply()
+    /** сколько копий хранить (ротация) */
+    var backupKeep: Int
+        get() = sp.getInt(K_BK_KEEP, 10)
+        set(v) = sp.edit().putInt(K_BK_KEEP, v).apply()
+    /** час суток для бэкапа (0-23) */
+    var backupHour: Int
+        get() = sp.getInt(K_BK_HOUR, 3)
+        set(v) = sp.edit().putInt(K_BK_HOUR, v).apply()
+    var lastBackup: Long
+        get() = sp.getLong(K_BK_LAST, 0L)
+        set(v) = sp.edit().putLong(K_BK_LAST, v).apply()
+    /** Пользовательская папка бэкапа (SAF tree uri) — пусто = /sdcard/AutoResponder/backups. */
+    var backupFolderUri: String
+        get() = sp.getString(K_BK_URI, "") ?: ""
+        set(v) = sp.edit().putString(K_BK_URI, v).apply()
+
     // --- макс. возраст уведомления для ответа (мин) — защита от старых/восстановленных ---
     var notifMaxAgeMin: Int
         get() = sp.getInt(K_NOTIF_AGE, 5)
@@ -379,6 +399,11 @@ class Settings(context: Context) {
         private const val K_MON_APPS = "monitored_apps"
         private const val K_NOTIF_AGE = "notif_age_min"
         private const val K_UPD_CHECK = "last_upd_check"
+        private const val K_BK_ON = "backup_on"
+        private const val K_BK_KEEP = "backup_keep"
+        private const val K_BK_HOUR = "backup_hour"
+        private const val K_BK_LAST = "backup_last"
+        private const val K_BK_URI = "backup_uri"
         val DEFAULT_APPS = setOf(
             "com.google.android.apps.messaging", "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
         private const val K_TPL_PREFIX = "tpl_"
