@@ -90,14 +90,18 @@ class Settings(context: Context) {
     private fun prefixList(key: String, def: String): List<String> =
         (sp.getString(key, def) ?: def).split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
-    /** Префиксы, которые обслуживает SIM1. По умолчанию — старая общая маска. */
+    // Миграция со старой ОБЩЕЙ маски: она достаётся той карте, которая уже была выбрана для
+    // отправки. Иначе у всех, у кого стояла SIM2, ответы после обновления ушли бы с SIM1.
+    private fun legacyMask() = sp.getString(K_PREFIXES, "+420") ?: "+420"
+
+    /** Префиксы, которые обслуживает SIM1. */
     var prefixesSim1: List<String>
-        get() = prefixList(K_PREFIXES_S1, sp.getString(K_PREFIXES, "+420") ?: "+420")
+        get() = prefixList(K_PREFIXES_S1, if (smsSlot == 0) legacyMask() else "")
         set(v) = sp.edit().putString(K_PREFIXES_S1, v.joinToString(",")).apply()
 
     /** Префиксы, которые обслуживает SIM2. */
     var prefixesSim2: List<String>
-        get() = prefixList(K_PREFIXES_S2, "")
+        get() = prefixList(K_PREFIXES_S2, if (smsSlot == 1) legacyMask() else "")
         set(v) = sp.edit().putString(K_PREFIXES_S2, v.joinToString(",")).apply()
 
     /** Общая маска: объединение правил обеих карт (кому вообще отвечаем). */

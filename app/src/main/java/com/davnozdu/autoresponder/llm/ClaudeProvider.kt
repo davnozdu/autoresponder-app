@@ -17,7 +17,7 @@ class ClaudeProvider(private val cfg: LlmConfig) : LlmProvider {
             .header("x-api-key", cfg.apiKey)
             .header("anthropic-version", version).get().build()
         Http.client.newCall(req).execute().use { r ->
-            if (!r.isSuccessful) return emptyList()
+            if (!r.isSuccessful) error("HTTP ${r.code}: ${r.body?.string()?.take(200)}")
             val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("data") ?: return emptyList()
             return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("id")?.ifBlank { null } }
         }
@@ -37,8 +37,9 @@ class ClaudeProvider(private val cfg: LlmConfig) : LlmProvider {
             .header("x-api-key", cfg.apiKey)
             .header("anthropic-version", version).post(body).build()
         Http.client(think).newCall(req).execute().use { r ->
-            if (!r.isSuccessful) return null
-            val content = JSONObject(r.body?.string() ?: "{}").optJSONArray("content") ?: return null
+            val raw = r.body?.string()
+            if (!r.isSuccessful) error("HTTP ${r.code}: ${raw?.take(200)?.replace('\n', ' ')}")
+            val content = JSONObject(raw ?: "{}").optJSONArray("content") ?: error("нет content в ответе")
             // При reasoning первым блоком идёт "thinking" — берём первый блок с type="text",
             // иначе ответ выглядел пустым и срабатывал фолбэк на шаблон.
             for (i in 0 until content.length()) {
@@ -47,7 +48,7 @@ class ClaudeProvider(private val cfg: LlmConfig) : LlmProvider {
                     b.optString("text").trim().ifBlank { null }?.let { return it }
                 }
             }
-            return null
+            error("в ответе нет блока text")
         }
     }
 }

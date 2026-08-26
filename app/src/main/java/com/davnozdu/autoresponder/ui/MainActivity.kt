@@ -429,6 +429,13 @@ fun AppScreen() {
                     label = { Text("API key (для облака)") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(model, { model = it; s.llmModel = it },
                     label = { Text("Модель") }, modifier = Modifier.fillMaxWidth())
+                // Частая ошибка: имя модели из Ollama («gemma3:27b») оставлено при облачном
+                // провайдере — запрос падает, и ответ уходит офлайн-шаблоном.
+                if (provider != "ollama" && model.contains(":"))
+                    Text("Похоже на имя модели Ollama, а провайдер — $provider. "
+                        + "Нажмите «Запросить все модели» и выберите из списка.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
                 OutlinedTextField(llmCap, { llmCap = it; it.toIntOrNull()?.let { v -> s.llmDailyCap = v } },
                     label = { Text("Лимит LLM в день (0 = без лимита)") }, modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))

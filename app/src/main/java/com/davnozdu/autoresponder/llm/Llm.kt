@@ -52,9 +52,9 @@ object Llm {
                     LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
                 ).generate(prompt, maxChars, s.llmThink)
                 if (!out.isNullOrBlank()) return out
-                EventLog(context).add("LLM основной пуст/таймаут → резервный")
+                EventLog(context).add("LLM основной [${s.llmProvider}/${s.llmModel}] пуст/таймаут → резервный")
             } catch (e: Exception) {
-                EventLog(context).add("LLM основной ошибка (${e.javaClass.simpleName}) → резервный")
+                EventLog(context).add("LLM основной [${s.llmProvider}/${s.llmModel}] ошибка: ${e.message} → резервный")
             }
         }
 
@@ -65,9 +65,9 @@ object Llm {
                     LlmConfig(s.llm2Provider, s.llm2BaseUrl, s.llm2ApiKey, s.llm2Model)
                 ).generate(prompt, maxChars, s.llmThink)
                 if (!out.isNullOrBlank()) return out
-                EventLog(context).add("LLM резервный пуст/таймаут → заглушка")
+                EventLog(context).add("LLM резервный [${s.llm2Provider}/${s.llm2Model}] пуст/таймаут → заглушка")
             } catch (e: Exception) {
-                EventLog(context).add("LLM резервный ошибка (${e.javaClass.simpleName}) → заглушка")
+                EventLog(context).add("LLM резервный [${s.llm2Provider}/${s.llm2Model}] ошибка: ${e.message} → заглушка")
             }
         }
         return null  // оба канала молчат → вызывающий код отдаёт шаблон-заглушку

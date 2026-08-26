@@ -22,7 +22,7 @@ class OllamaProvider(private val cfg: LlmConfig) : LlmProvider {
     override fun listModels(): List<String> {
         val req = Request.Builder().url("${base()}/api/tags").auth().get().build()
         Http.client.newCall(req).execute().use { r ->
-            if (!r.isSuccessful) return emptyList()
+            if (!r.isSuccessful) error("HTTP ${r.code}: ${r.body?.string()?.take(200)}")
             val arr = JSONObject(r.body?.string() ?: "{}").optJSONArray("models") ?: return emptyList()
             return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("name")?.ifBlank { null } }
         }
@@ -44,9 +44,11 @@ class OllamaProvider(private val cfg: LlmConfig) : LlmProvider {
             .toString().toRequestBody(Http.JSON.toMediaType())
         val req = Request.Builder().url("${base()}/api/chat").auth().post(body).build()
         Http.client(think).newCall(req).execute().use { r ->
-            if (!r.isSuccessful) return null
-            return JSONObject(r.body?.string() ?: "{}")
+            val raw = r.body?.string()
+            if (!r.isSuccessful) error("HTTP ${r.code}: ${raw?.take(200)?.replace('\n', ' ')}")
+            return JSONObject(raw ?: "{}")
                 .optJSONObject("message")?.optString("content")?.trim()?.ifBlank { null }
+                ?: error("пустой ответ модели")
         }
     }
 }
