@@ -55,8 +55,27 @@ object SimUtil {
         return sims.joinToString("; ") { "slot=${it.slot} subId=${it.subId} ${it.label}" }
     }
 
+    // Список карт меняется редко (вставили карту, переключили eSIM), а спрашивается на каждое
+    // событие: при выборе SIM для ответа, в диагностике и при разборе PhoneAccountHandle.
+    // Держим короткий кэш; при сбое отправки он сбрасывается принудительно (invalidate).
+    private const val SIM_TTL_MS = 60_000L
+    @Volatile private var simCache: Pair<Long, List<SimInfo>>? = null
+
+    /** Сбросить кэш карт — например, если отправка не удалась и subId мог устареть. */
+    fun invalidate() { simCache = null }
+
     /** Активные SIM. Требует READ_PHONE_STATE. */
     fun activeSims(context: Context): List<SimInfo> {
+        simCache?.let { (ts, v) ->
+            if (System.currentTimeMillis() - ts < SIM_TTL_MS && v.isNotEmpty()) return v
+        }
+        val fresh = readSims(context)
+        // Пустой список не кэшируем: это чаще «нет разрешения / провайдер не готов», чем факт.
+        if (fresh.isNotEmpty()) simCache = System.currentTimeMillis() to fresh
+        return fresh
+    }
+
+    private fun readSims(context: Context): List<SimInfo> {
         return try {
             val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
             @Suppress("MissingPermission")

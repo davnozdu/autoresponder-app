@@ -21,7 +21,12 @@ object SmsSender {
             }
             sm.sendMultipartTextMessage(number, null, parts, sent, null)
             parts.size
-        } catch (e: Exception) { -1 }
+        } catch (e: Exception) {
+            // Частая причина — устаревший subId (карту вынули, переключили eSIM):
+            // сбрасываем кэш, чтобы следующая попытка увидела реальный список карт.
+            com.davnozdu.autoresponder.rules.SimUtil.invalidate()
+            -1
+        }
     }
 
     private fun sentPi(context: Context, number: String, text: String, subId: Int, attempt: Int): PendingIntent {
