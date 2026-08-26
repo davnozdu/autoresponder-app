@@ -108,6 +108,7 @@ fun AppScreen() {
     var model by remember { mutableStateOf(s.llmModel) }
     var models by remember { mutableStateOf(listOf<String>()) }
     var status by remember { mutableStateOf("") }
+    var exportKeys by remember { mutableStateOf(s.exportSecrets) }
     var update by remember { mutableStateOf<com.davnozdu.autoresponder.update.UpdateInfo?>(null) }
     var updBusy by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -135,7 +136,7 @@ fun AppScreen() {
     ) { uri ->
         if (uri != null) {
             try {
-                ctx.contentResolver.openOutputStream(uri)?.use { it.write(s.exportJson().toByteArray()) }
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(s.exportJson(exportKeys).toByteArray()) }
                 Toast.makeText(ctx, "Настройки сохранены", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(ctx, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
@@ -622,10 +623,15 @@ fun AppScreen() {
             }
 
             ExpandableSection("Импорт / экспорт настроек") {
+                SwitchRow("Выгружать API-ключи LLM", exportKeys) { exportKeys = it; s.exportSecrets = it }
+                Text(if (exportKeys)
+                    "Ключи попадут в буфер обмена / файл в открытом виде — включайте только для переноса на своё устройство."
+                    else "Ключи LLM не выгружаются (безопасно). На новом устройстве введите их вручную.",
+                    style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("autoresp", s.exportJson()))
+                        cm.setPrimaryClip(ClipData.newPlainText("autoresp", s.exportJson(exportKeys)))
                         Toast.makeText(ctx, "Скопировано в буфер", Toast.LENGTH_SHORT).show()
                     }) { Text("Копировать") }
                     OutlinedButton(onClick = {

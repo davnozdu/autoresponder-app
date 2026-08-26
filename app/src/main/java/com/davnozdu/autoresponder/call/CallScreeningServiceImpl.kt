@@ -29,6 +29,10 @@ class CallScreeningServiceImpl : CallScreeningService() {
         if (number != null) HistoryLogger.record(this, number, "call", "in", "входящий звонок")
         val callSubId = SimUtil.subIdFromCall(this, callDetails)  // SIM, на которую пришёл звонок
         val s = Settings(this)
+        // Главный тумблер и «отвечать на звонки» гейтят ВСЮ работу со звонками, включая чёрный
+        // список. Иначе при выключенном автоответчике звонок из ЧС всё равно отклонялся, а SMS
+        // не уходила (Responder.process выходит на !s.enabled) — звонки пропадали молча.
+        if (!s.enabled || !s.respondCalls) { respondAllow(callDetails); return }
         if (AutoReplyState.isPaused(this)) { respondAllow(callDetails); return }
         // Чёрный список: онCalls=да -> пропускаем; нет -> отклоняем + SMS.
         val bl = HistoryDb.get(this).blacklistMatch(number, null)
@@ -45,7 +49,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
         val skip = SkipPolicy.reason(this, number, s, isCall = true) != null
 
-        if (s.enabled && s.respondCalls && closedReason != null && matches && !skip) {
+        if (closedReason != null && matches && !skip) {
             // Отклоняем звонок без записи в журнал пропущенных/уведомления.
             val response = CallResponse.Builder()
                 .setDisallowCall(true)

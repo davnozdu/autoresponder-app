@@ -161,16 +161,23 @@ object NotifResponder {
         return if (looksNumber) PhoneMask.normalize(c) else null
     }
 
-    /** (отправитель, текст, группа?) из уведомления. */
+    /**
+     * (отправитель, текст, группа?) из уведомления.
+     *
+     * Текст — РОВНО последнее ВХОДЯЩЕЕ сообщение, без склейки соседних. Склейка ломала две вещи:
+     *  1) дедуп SMS↔RCS (ключ «номер+текст» переставал совпадать с SMS-путём, и на одно входящее
+     *     уходило два ответа), и
+     *  2) промпт LLM — в «Customer's SMS» попадали и наши собственные ответы.
+     * Контекст переписки берётся не отсюда, а из БД истории (см. Responder.historyBlock).
+     * В MessagingStyle исходящие («от себя») идут с person == null — по ним и отсеиваем.
+     */
     fun extract(n: Notification): Triple<String, String, Boolean>? {
         val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
         if (style != null && style.messages.isNotEmpty()) {
-            val last = style.messages.last()
+            val incoming = style.messages.filter { it.person != null }
+            val last = incoming.lastOrNull() ?: style.messages.last()
             val who = last.person?.name?.toString() ?: style.conversationTitle?.toString() ?: "?"
-            // Контекст: последние сообщения (входящие от клиента), новейшее — последним.
-            val recent = style.messages.takeLast(4)
-                .mapNotNull { it.text?.toString()?.trim()?.ifBlank { null } }
-            val body = if (recent.size > 1) recent.joinToString("\n") else (last.text?.toString() ?: "")
+            val body = last.text?.toString()?.trim() ?: ""
             return Triple(who, body, style.isGroupConversation)
         }
         val ex = n.extras

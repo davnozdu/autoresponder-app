@@ -212,6 +212,11 @@ class Settings(context: Context) {
         get() = sp.getString(K_BK_URI, "") ?: ""
         set(v) = sp.edit().putString(K_BK_URI, v).apply()
 
+    /** Включать API-ключи LLM в экспорт настроек (буфер/файл). По умолчанию выкл. */
+    var exportSecrets: Boolean
+        get() = sp.getBoolean(K_EXP_SECRETS, false)
+        set(v) = sp.edit().putBoolean(K_EXP_SECRETS, v).apply()
+
     /** Учитывать список праздников (когда офис закрыт) в ответах LLM. По умолчанию выкл. */
     var holidaysEnabled: Boolean
         get() = sp.getBoolean(K_HOL_ON, false)
@@ -334,9 +339,14 @@ class Settings(context: Context) {
         set(v) = sp.edit().putString(K_LLM_MODEL, v).apply()
 
     // --- Импорт/экспорт всех настроек (с сохранением типов) ---
-    fun exportJson(): String {
+    /**
+     * @param withKeys включать ли API-ключи LLM. По умолчанию НЕТ: выгрузка уходит в буфер обмена
+     *   и в файл на общем хранилище, где ключи доступны другим приложениям.
+     */
+    fun exportJson(withKeys: Boolean = false): String {
         val root = JSONObject()
         for ((k, v) in sp.all) {
+            if (!withKeys && k in SECRET_KEYS) continue
             val o = JSONObject()
             when (v) {
                 is Boolean -> { o.put("t", "b"); o.put("v", v) }
@@ -351,11 +361,19 @@ class Settings(context: Context) {
         return root.toString(2)
     }
 
-    /** Возвращает true при успехе. Полностью заменяет текущие настройки. */
+    /**
+     * Возвращает true при успехе. Полностью заменяет текущие настройки.
+     * Секреты, которых нет в файле (экспорт без ключей), СОХРАНЯЮТСЯ — иначе импорт
+     * настроек молча стирал бы уже введённые API-ключи.
+     */
     fun importJson(json: String): Boolean {
         return try {
             val root = JSONObject(json)
+            val keptSecrets = SECRET_KEYS
+                .filter { !root.has(it) }
+                .mapNotNull { k -> sp.getString(k, null)?.let { k to it } }
             val e = sp.edit().clear()
+            for ((k, v) in keptSecrets) e.putString(k, v)
             val keys = root.keys()
             while (keys.hasNext()) {
                 val k = keys.next()
@@ -416,6 +434,7 @@ class Settings(context: Context) {
         private const val K_BK_LAST = "backup_last"
         private const val K_BK_URI = "backup_uri"
         private const val K_HOL_ON = "holidays_on"
+        private const val K_EXP_SECRETS = "export_secrets"
         val DEFAULT_APPS = setOf(
             "com.google.android.apps.messaging", "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
         private const val K_TPL_PREFIX = "tpl_"
@@ -441,6 +460,9 @@ class Settings(context: Context) {
         private const val K_TPL_WARN_PREFIX = "tplwarn_"
         private const val K_AI_PREFIX = "ai_prefix"
         private const val K_BIZ = "business_info"
+
+        /** Ключи, которые не попадают в экспорт настроек без явного согласия. */
+        private val SECRET_KEYS = setOf(K_LLM_KEY, K_LLM2_KEY)
 
         const val DEF_AI_PREFIX = "Ответ от AI:"
         const val DEF_PROMPT_CALL =

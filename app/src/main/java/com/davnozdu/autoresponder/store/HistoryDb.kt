@@ -64,17 +64,31 @@ class HistoryDb private constructor(context: Context) :
         )
     }
 
+    /** ALTER, который не должен ронять апгрейд: колонка могла появиться другим путём. */
+    private fun addColumn(db: SQLiteDatabase, sql: String) {
+        try { db.execSQL(sql) } catch (_: Exception) { /* duplicate column — уже есть */ }
+    }
+
     override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
+        // Шаги строго по возрастанию версий. Важно: createBlacklist() создаёт таблицу СРАЗУ с
+        // колонками v4, поэтому ALTER'ы ниже применимы только к БД, созданным на v2/v3 —
+        // иначе апгрейд с v1 падал на «duplicate column name: on_sms».
         if (oldV < 2) createBlacklist(db)
         if (oldV < 3) createQa(db)
-        if (oldV < 6) createBlPending(db)
-        if (oldV < 5) db.execSQL("ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
-        if (oldV < 4) {
-            db.execSQL("ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
-            db.execSQL("ALTER TABLE blacklist ADD COLUMN on_msgr INTEGER NOT NULL DEFAULT 1")
-            db.execSQL("ALTER TABLE blacklist ADD COLUMN on_calls INTEGER NOT NULL DEFAULT 1")
-            db.execSQL("ALTER TABLE blacklist ADD COLUMN call_prompt TEXT")
+        if (oldV in 2..3) {
+            addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
+            addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_msgr INTEGER NOT NULL DEFAULT 1")
+            addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_calls INTEGER NOT NULL DEFAULT 1")
+            addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt TEXT")
         }
+        if (oldV < 5) addColumn(db, "ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+        if (oldV < 6) createBlPending(db)
+    }
+
+    /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
+     *  По умолчанию SQLiteOpenHelper бросает SQLiteDowngradeFailedException и приложение крашится. */
+    override fun onDowngrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
+        createBlacklist(db); createQa(db); createBlPending(db)
     }
 
     fun insert(number: String, name: String?, channel: String, direction: String, body: String, ts: Long = System.currentTimeMillis(), auto: Boolean = false) {
