@@ -16,7 +16,17 @@ object EventQueue {
     private fun lane(): Channel<suspend () -> Unit> {
         val ch = Channel<suspend () -> Unit>(Channel.UNLIMITED)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        scope.launch { for (job in ch) { try { job() } catch (_: Exception) {} } }
+        // Ловим Throwable (не только Exception): одиночная задача не должна убивать
+        // потребителя полосы — иначе после Error/OOM полоса встанет навсегда, а
+        // trySend будет молча копить события в канале без обработки.
+        scope.launch {
+            for (job in ch) {
+                try { job() }
+                catch (t: Throwable) {
+                    if (t is kotlinx.coroutines.CancellationException) throw t
+                }
+            }
+        }
         return ch
     }
     private val main = lane()

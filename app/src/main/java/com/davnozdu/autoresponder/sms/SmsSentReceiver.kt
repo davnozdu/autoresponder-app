@@ -17,13 +17,18 @@ class SmsSentReceiver : BroadcastReceiver() {
         val text = intent.getStringExtra("text") ?: return
         val subId = intent.getIntExtra("subId", -1)
         val attempt = intent.getIntExtra("attempt", 0)
-        val log = EventLog(context)
+        val app = context.applicationContext          // ресивер после onReceive неактивен — берём app-контекст
+        val log = EventLog(app)
         if (attempt < 2) {
             log.add("SMS $number — сбой отправки (код $resultCode), повтор #${attempt + 1}")
-            // небольшая пауза и повтор
+            // goAsync() удерживает процесс живым на время паузы (иначе его могут убить и повтор не выполнится).
+            val pending = goAsync()
             Thread {
-                try { Thread.sleep(4000) } catch (_: InterruptedException) {}
-                SmsSender.send(context, number, text, subId, attempt + 1)
+                try {
+                    Thread.sleep(4000)
+                    SmsSender.send(app, number, text, subId, attempt + 1)
+                } catch (_: Exception) {
+                } finally { pending.finish() }
             }.start()
         } else {
             log.add("SMS $number — не доставлено после ${attempt + 1} попыток (код $resultCode)")

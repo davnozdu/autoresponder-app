@@ -15,7 +15,10 @@ object BlacklistNotifier {
         val s = Settings(context)
         if (!s.notificationsEnabled || s.blNotifMode == 0) return
         HistoryDb.get(context).blPendingAdd(number, name, channel)
-        if (s.blAlarmSet) return
+        // Пере-планируем, только если alarm РЕАЛЬНО жив. Флаг мог «залипнуть» в true после
+        // force-stop (система чистит запланированные alarms, onAlarm не вызовется) — тогда без
+        // этой проверки новые попытки копились бы в pending, а уведомление не пришло бы никогда.
+        if (s.blAlarmSet && alarmPending(context)) return
         val at = when (s.blNotifMode) {
             2 -> nextDaily(s.blDailyTimeMin)
             else -> System.currentTimeMillis() + s.blNotifDelayMin.coerceAtLeast(1) * 60_000L
@@ -35,10 +38,17 @@ object BlacklistNotifier {
         s.blAlarmSet = false
     }
 
+    private fun blIntent(context: Context) =
+        Intent(context, NotifActionReceiver::class.java).setAction(AutoNotifications.ACT_BL_NOTIFY)
+
+    /** Есть ли уже запланированный alarm (PendingIntent существует). */
+    private fun alarmPending(context: Context): Boolean =
+        PendingIntent.getBroadcast(context, 20, blIntent(context),
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE) != null
+
     private fun setAlarm(context: Context, at: Long) {
         val am = context.getSystemService(AlarmManager::class.java) ?: return
-        val pi = PendingIntent.getBroadcast(context, 20,
-            Intent(context, NotifActionReceiver::class.java).setAction(AutoNotifications.ACT_BL_NOTIFY),
+        val pi = PendingIntent.getBroadcast(context, 20, blIntent(context),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
     }

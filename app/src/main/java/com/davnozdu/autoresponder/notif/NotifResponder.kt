@@ -14,6 +14,7 @@ import com.davnozdu.autoresponder.respond.Dedup
 import com.davnozdu.autoresponder.respond.Kind
 import com.davnozdu.autoresponder.respond.Responder
 import com.davnozdu.autoresponder.respond.EventQueue
+import com.davnozdu.autoresponder.respond.NumberLock
 import com.davnozdu.autoresponder.respond.SmsSender
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
@@ -82,33 +83,37 @@ object NotifResponder {
         val override = if (forceReply) bl.prompt else null
 
         val store = ReplyStore(context)
-        if (!store.canReply(key, s.maxReplies, s.timeoutHours)) { log.add("NOTIF[$tag] $key — лимит, пропуск"); return }
-        // Для Messages пауза: обычное SMS застолбит SmsReceiver, до сюда дойдёт только RCS.
-        if (channel == Channel.MESSAGES) delay(2000)
-        val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
-        if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return }
+        // Пер-адресатная блокировка (общая с main-полосой по нормализованному номеру):
+        // не даём RCS/мессенджеру и SMS/звонку одновременно превысить лимит по одному номеру.
+        NumberLock.withKey(key) {
+            if (!store.canReply(key, s.maxReplies, s.timeoutHours)) { log.add("NOTIF[$tag] $key — лимит, пропуск"); return@withKey }
+            // Для Messages пауза: обычное SMS застолбит SmsReceiver, до сюда дойдёт только RCS.
+            if (channel == Channel.MESSAGES) delay(2000)
+            val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
+            if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return@withKey }
 
-        // История входящего RCS — только здесь (после дедупа), чтобы не дублировать SMS.
-        if (channel == Channel.MESSAGES) HistoryLogger.record(context, number, "rcs", "in", text)
+            // История входящего RCS — только здесь (после дедупа), чтобы не дублировать SMS.
+            if (channel == Channel.MESSAGES) HistoryLogger.record(context, number, "rcs", "in", text)
 
-        val returning = store.count(key) > 0
-        val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null)
+            val returning = store.count(key) > 0
+            val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null)
 
-        // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
-        if (tryRemoteInputReply(context, sbn, reply)) {
-            store.markReplied(key, s.timeoutHours)
-            HistoryLogger.record(context, inId, inCh, "out", reply, auto = true)
-            NotifListenerService.dismiss(sbn.key)
-            log.add("NOTIF[$tag] $key — ответ (#${store.count(key)}/${s.maxReplies}): $reply")
-            return
+            // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
+            if (tryRemoteInputReply(context, sbn, reply)) {
+                store.markReplied(key, s.timeoutHours)
+                HistoryLogger.record(context, inId, inCh, "out", reply, auto = true)
+                NotifListenerService.dismiss(sbn.key)
+                log.add("NOTIF[$tag] $key — ответ (#${store.count(key)}/${s.maxReplies}): $reply")
+                return@withKey
+            }
+            // Запасной SMS только для Messages (есть номер).
+            if (channel == Channel.MESSAGES && number != null) {
+                val subId = SimUtil.resolveSubId(context, s.smsSlot)
+                val segs = SmsSender.send(context, key, reply, subId)
+                if (segs >= 0) { store.markReplied(key, s.timeoutHours); HistoryLogger.record(context, key, "sms", "out", reply, auto = true); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return@withKey }
+            }
+            log.add("NOTIF[$tag] $key — ответить не удалось (нет кнопки Reply)")
         }
-        // Запасной SMS только для Messages (есть номер).
-        if (channel == Channel.MESSAGES && number != null) {
-            val subId = SimUtil.resolveSubId(context, s.smsSlot)
-            val segs = SmsSender.send(context, key, reply, subId)
-            if (segs >= 0) { store.markReplied(key, s.timeoutHours); HistoryLogger.record(context, key, "sms", "out", reply, auto = true); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return }
-        }
-        log.add("NOTIF[$tag] $key — ответить не удалось (нет кнопки Reply)")
     }
 
     private fun tryRemoteInputReply(context: Context, sbn: StatusBarNotification, text: String): Boolean {

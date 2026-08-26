@@ -115,46 +115,50 @@ object Responder {
         }
 
         val store = ReplyStore(context)
-        if (!store.canReply(norm, s.maxReplies, s.timeoutHours)) {
-            log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return
-        }
-
-        if (bl != null) com.davnozdu.autoresponder.notif.BlacklistNotifier.record(
-            context, norm, bl.name, if (kind == Kind.CALL) "call" else "sms")
-        val closedReason = ClosedState.reason(context, s)
-        var override: String? = null
-        var forceReply = false
-        if (bl != null) {
-            if (kind == Kind.CALL) {
-                if (bl.onCalls) { log.add("CALL $norm — ЧС: пропускаем звонок"); return }
-                override = bl.callPrompt?.ifBlank { null } ?: DEFAULT_CALL_DROP
-                forceReply = true
-            } else {
-                if (!bl.viaLlm || !bl.onSms) { log.add("$tag $norm — ЧС: без ответа на SMS"); return }
-                override = bl.prompt; forceReply = true
+        // Пер-номерная блокировка: не даём событию из msg-полосы (RCS/мессенджер) и из main-полосы
+        // (SMS/звонок) для ОДНОГО номера одновременно пройти canReply→…→markReplied и удвоить ответ.
+        NumberLock.withKey(norm) {
+            if (!store.canReply(norm, s.maxReplies, s.timeoutHours)) {
+                log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, пропуск"); return@withKey
             }
-        }
-        if (!forceReply && closedReason == null) { log.add("$tag $from — открыто, пропуск"); return }
 
-        if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {
-            log.add("$tag $norm — дубль (уже обработано уведомлением), пропуск"); return
-        }
+            if (bl != null) com.davnozdu.autoresponder.notif.BlacklistNotifier.record(
+                context, norm, bl.name, if (kind == Kind.CALL) "call" else "sms")
+            val closedReason = ClosedState.reason(context, s)
+            var override: String? = null
+            var forceReply = false
+            if (bl != null) {
+                if (kind == Kind.CALL) {
+                    if (bl.onCalls) { log.add("CALL $norm — ЧС: пропускаем звонок"); return@withKey }
+                    override = bl.callPrompt?.ifBlank { null } ?: DEFAULT_CALL_DROP
+                    forceReply = true
+                } else {
+                    if (!bl.viaLlm || !bl.onSms) { log.add("$tag $norm — ЧС: без ответа на SMS"); return@withKey }
+                    override = bl.prompt; forceReply = true
+                }
+            }
+            if (!forceReply && closedReason == null) { log.add("$tag $from — открыто, пропуск"); return@withKey }
 
-        if (s.replyDelayMs > 0) delay(s.replyDelayMs)
+            if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {
+                log.add("$tag $norm — дубль (уже обработано уведомлением), пропуск"); return@withKey
+            }
 
-        val returning = store.count(norm) > 0
-        val reply = buildReply(context, s, incomingText, kind, returning, override, closedReason != null)
-        val prefixed = applyPrefix(s.aiPrefix, reply)
-        val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
+            if (s.replyDelayMs > 0) delay(s.replyDelayMs)
 
-        val subId = if (s.smsSlot >= 0) SimUtil.resolveSubId(context, s.smsSlot) else incomingSubId
-        val segs = SmsSender.send(context, norm, clamped, subId)
-        if (segs >= 0) {
-            store.markReplied(norm, s.timeoutHours)
-            HistoryLogger.record(context, norm, if (kind == Kind.CALL) "call" else "sms", "out", clamped, auto = true)
-            log.add("$tag $norm — ответ (${closedReason ?: "ЧС"}, $segs сег, #${store.count(norm)}/${s.maxReplies}): $clamped")
-        } else {
-            log.add("$tag $norm — ОШИБКА отправки SMS")
+            val returning = store.count(norm) > 0
+            val reply = buildReply(context, s, incomingText, kind, returning, override, closedReason != null)
+            val prefixed = applyPrefix(s.aiPrefix, reply)
+            val clamped = SegmentBudget.clampToBudget(prefixed, s.maxSegments)
+
+            val subId = if (s.smsSlot >= 0) SimUtil.resolveSubId(context, s.smsSlot) else incomingSubId
+            val segs = SmsSender.send(context, norm, clamped, subId)
+            if (segs >= 0) {
+                store.markReplied(norm, s.timeoutHours)
+                HistoryLogger.record(context, norm, if (kind == Kind.CALL) "call" else "sms", "out", clamped, auto = true)
+                log.add("$tag $norm — ответ (${closedReason ?: "ЧС"}, $segs сег, #${store.count(norm)}/${s.maxReplies}): $clamped")
+            } else {
+                log.add("$tag $norm — ОШИБКА отправки SMS")
+            }
         }
     }
 
