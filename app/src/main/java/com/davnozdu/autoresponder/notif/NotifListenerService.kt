@@ -25,6 +25,11 @@ class NotifListenerService : NotificationListenerService() {
                 android.content.Context.RECEIVER_NOT_EXPORTED)
         } catch (_: Exception) {}
         AutoNotifications.onDndChanged(this)  // синхронизировать текущее состояние
+        // Восстановление после простоя: слушатель мог быть отвязан (падение процесса, ре-бинд
+        // watchdog'ом, перезагрузка) — на переподключении система НЕ переигрывает onNotificationPosted,
+        // поэтому активно подхватываем ещё свежие непрочитанные. Возрастной фильтр (5 мин) внутри
+        // handlePosted отсекает старьё, а персистентный ReplyStore не даёт ответить повторно.
+        try { activeNotifications?.forEach { handlePosted(it) } } catch (_: Exception) {}
     }
     override fun onListenerDisconnected() {
         instance = null
@@ -50,7 +55,9 @@ class NotifListenerService : NotificationListenerService() {
         } catch (e: Exception) { pkg.substringAfterLast('.') }
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) {
+    override fun onNotificationPosted(sbn: StatusBarNotification) = handlePosted(sbn)
+
+    private fun handlePosted(sbn: StatusBarNotification) {
         try {
             val pkg = sbn.packageName ?: return
             val s = Settings(this)
