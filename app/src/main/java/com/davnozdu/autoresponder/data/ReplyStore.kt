@@ -2,24 +2,45 @@ package com.davnozdu.autoresponder.data
 
 import android.content.Context
 
+/** Режим ответа по текущему счётчику: обычный AI-ответ, системное предупреждение, тишина. */
+enum class ReplyMode { NORMAL, WARN, SILENT }
+
 /**
- * Анти-флуд на номер: не более [maxReplies] авто-ответов, затем таймаут [timeoutHours].
- * Окно скользит от последнего ответа: после лимита номер молчит, пока не пройдёт таймаут,
- * после чего счётчик обнуляется.
+ * Анти-флуд на номер: не более [maxReplies] обычных авто-ответов, затем ОДНО системное
+ * предупреждение (№ maxReplies+1) и таймаут [timeoutHours]. Окно скользит от последнего ответа:
+ * после лимита номер молчит, пока не пройдёт таймаут, после чего счётчик обнуляется.
  */
 class ReplyStore(context: Context) {
     private val sp = context.applicationContext
         .getSharedPreferences("autoresp_replies", Context.MODE_PRIVATE)
 
-    /** Можно ли ответить сейчас. */
-    fun canReply(number: String, maxReplies: Int, timeoutHours: Int): Boolean {
+    /** Эффективный счётчик с учётом сброса по таймауту. */
+    private fun effectiveCount(number: String, timeoutHours: Int): Int {
         val k = key(number)
         val count = sp.getInt(k + "_c", 0)
         val last = sp.getLong(k + "_t", 0L)
-        if (count == 0 || last == 0L) return true
+        if (count == 0 || last == 0L) return 0
         val windowMs = timeoutHours * 3600_000L
-        if (System.currentTimeMillis() - last >= windowMs) return true // таймаут прошёл → сброс
-        return count < maxReplies
+        return if (System.currentTimeMillis() - last >= windowMs) 0 else count
+    }
+
+    /** Можно ли ответить сейчас (обычный ответ или предупреждение). */
+    fun canReply(number: String, maxReplies: Int, timeoutHours: Int): Boolean =
+        effectiveCount(number, timeoutHours) < maxReplies
+
+    /**
+     * Режим для очередного ответа:
+     *  - NORMAL, пока отправлено < maxReplies обычных;
+     *  - WARN — ровно один раз на счётчике == maxReplies (если [warnEnabled]);
+     *  - SILENT — дальше (или сразу, если warn выключен).
+     */
+    fun replyMode(number: String, maxReplies: Int, timeoutHours: Int, warnEnabled: Boolean): ReplyMode {
+        val c = effectiveCount(number, timeoutHours)
+        return when {
+            c < maxReplies -> ReplyMode.NORMAL
+            warnEnabled && c == maxReplies -> ReplyMode.WARN
+            else -> ReplyMode.SILENT
+        }
     }
 
     /** Зафиксировать отправленный ответ (учитывает сброс по таймауту). */

@@ -130,15 +130,38 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_RESP_SMS, true)
         set(v) = sp.edit().putBoolean(K_RESP_SMS, v).apply()
 
-    // --- анти-флуд: не более N авто-ответов на номер, затем таймаут ---
+    // --- анти-флуд: не более N обычных авто-ответов на номер, затем 1 предупреждение и таймаут ---
     var maxReplies: Int
-        get() = sp.getInt(K_MAX_REPLIES, 3)
+        get() = sp.getInt(K_MAX_REPLIES, 6)
         set(v) = sp.edit().putInt(K_MAX_REPLIES, v).apply()
 
-    /** таймаут после исчерпания лимита, часы */
+    /** таймаут после исчерпания лимита, часы (по умолчанию 1 ч = 60 мин) */
     var timeoutHours: Int
-        get() = sp.getInt(K_TIMEOUT, 3)
+        get() = sp.getInt(K_TIMEOUT, 1)
         set(v) = sp.edit().putInt(K_TIMEOUT, v).apply()
+
+    /** Отправлять ли одно системное предупреждение (№ maxReplies+1) перед уходом в тишину. */
+    var warnEnabled: Boolean
+        get() = sp.getBoolean(K_WARN_ON, true)
+        set(v) = sp.edit().putBoolean(K_WARN_ON, v).apply()
+
+    /** Промпт для генерации предупреждающего сообщения (LLM); {hours} — часы таймаута. */
+    var promptWarn: String
+        get() = sp.getString(K_PROMPT_WARN, DEF_PROMPT_WARN) ?: DEF_PROMPT_WARN
+        set(v) = sp.edit().putString(K_PROMPT_WARN, v).apply()
+
+    /** Офлайн-шаблон предупреждения по языку; {hours} заменяется на часы таймаута. */
+    fun warnTemplate(lang: String, hours: Int): String {
+        val def = when (lang) {
+            "ru" -> "Это автоматический ответ (AI). Ваши сообщения увидит живой сотрудник в ближайшее рабочее время или они будут обработаны примерно через {hours} ч. Можете продолжать писать — мы всё получим."
+            "cs" -> "Toto je automatická odpověď (AI). Vaše zprávy uvidí náš pracovník v nejbližší pracovní době, případně budou zpracovány přibližně za {hours} h. Klidně pište dál — vše dostaneme."
+            else -> "This is an automated (AI) reply. A human will see your messages during our next working hours, or they will be handled in about {hours} h. Feel free to keep writing — we'll receive everything."
+        }
+        val t = sp.getString(K_TPL_WARN_PREFIX + lang, def) ?: def
+        return t.replace("{hours}", hours.toString())
+    }
+    fun setWarnTemplate(lang: String, text: String) =
+        sp.edit().putString(K_TPL_WARN_PREFIX + lang, text).apply()
 
     var lastUpdateCheck: Long
         get() = sp.getLong(K_UPD_CHECK, 0L)
@@ -349,6 +372,9 @@ class Settings(context: Context) {
         private const val K_LLM2_MODEL = "llm2_model"
         private const val K_PROMPT_CALL = "prompt_call"
         private const val K_PROMPT_SMS = "prompt_sms"
+        private const val K_PROMPT_WARN = "prompt_warn"
+        private const val K_WARN_ON = "warn_on"
+        private const val K_TPL_WARN_PREFIX = "tplwarn_"
         private const val K_AI_PREFIX = "ai_prefix"
         private const val K_BIZ = "business_info"
 
@@ -367,6 +393,12 @@ class Settings(context: Context) {
             "НЕ обещай ответить «как можно скорее» — пиши, что ответим в ближайшее рабочее время / по мере возможности. " +
             "Новому контакту: «Спасибо за сообщение, ответим вам в ближайшее рабочее время». " +
             "Повторному: «Спасибо, ответим в ближайшее рабочее время»."
+
+        const val DEF_PROMPT_WARN =
+            "Ты — автоответчик компании. Клиент исчерпал лимит автоматических ответов. " +
+            "Напиши ОДНО короткое вежливое сообщение на языке клиента: что дальше отвечает автоответчик (AI), " +
+            "а живой сотрудник увидит переписку в ближайшее рабочее время либо сообщения будут обработаны примерно через {hours} ч. " +
+            "Добавь, что клиент может продолжать писать — всё будет получено. Без подписи и эмодзи, строго в рамках лимита символов."
 
         const val DEF_BUSINESS_INFO =
             "Рабочее время: Пн-Пт 08:00-17:00 (Сб-Вс выходной). " +

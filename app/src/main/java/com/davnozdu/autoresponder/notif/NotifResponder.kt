@@ -9,6 +9,7 @@ import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
 import com.davnozdu.autoresponder.data.EventLog
 import com.davnozdu.autoresponder.data.ReplyStore
+import com.davnozdu.autoresponder.data.ReplyMode
 import com.davnozdu.autoresponder.data.Settings
 import com.davnozdu.autoresponder.respond.Dedup
 import com.davnozdu.autoresponder.respond.Kind
@@ -86,17 +87,22 @@ object NotifResponder {
         // Пер-адресатная блокировка (общая с main-полосой по нормализованному номеру):
         // не даём RCS/мессенджеру и SMS/звонку одновременно превысить лимит по одному номеру.
         NumberLock.withKey(key) {
-            if (!store.canReply(key, s.maxReplies, s.timeoutHours)) { log.add("NOTIF[$tag] $key — лимит, пропуск"); return@withKey }
             // Для Messages пауза: обычное SMS застолбит SmsReceiver, до сюда дойдёт только RCS.
             if (channel == Channel.MESSAGES) delay(2000)
             val dedupKey = if (channel == Channel.MESSAGES) "sms:$key:$text" else "$tag:$key"
             if (!Dedup.claim(dedupKey)) { log.add("NOTIF[$tag] $key — обычное SMS/дубль, пропуск"); return@withKey }
 
-            // История входящего RCS — только здесь (после дедупа), чтобы не дублировать SMS.
+            // История входящего RCS — после дедупа (чтобы не дублировать SMS), но ДО гейта лимита:
+            // во время таймаута клиент пишет дальше — сообщения копим для контекста LLM.
             if (channel == Channel.MESSAGES) HistoryLogger.record(context, number, "rcs", "in", text)
 
+            val mode = store.replyMode(key, s.maxReplies, s.timeoutHours, s.warnEnabled)
+            if (mode == ReplyMode.SILENT) { log.add("NOTIF[$tag] $key — лимит/таймаут, копим для контекста"); return@withKey }
+            val warn = mode == ReplyMode.WARN
+            val histKey = if (channel == Channel.MESSAGES) key else sender.trim()
+
             val returning = store.count(key) > 0
-            val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null)
+            val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null, histKey, warn)
 
             // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
             if (tryRemoteInputReply(context, sbn, reply)) {
