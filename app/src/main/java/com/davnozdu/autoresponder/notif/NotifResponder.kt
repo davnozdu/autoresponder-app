@@ -46,6 +46,12 @@ object NotifResponder {
         if (text.isBlank() || isPlaceholder(text)) {
             log.add("NOTIF[$tag] ${sender.take(16)} — заглушка/пустой текст, пропуск"); return
         }
+        // Страховка от петли: мессенджер может вернуть наш собственный ответ как входящее
+        // (в WhatsApp он приходит от отправителя «You»). Наш ответ всегда начинается с префикса.
+        val prefix = s.aiPrefix.trim()
+        if (prefix.isNotEmpty() && text.trimStart().startsWith(prefix, ignoreCase = true)) {
+            log.add("NOTIF[$tag] ${sender.take(16)} — это наш же ответ, пропуск (петля)"); return
+        }
         if (isGroup) { log.add("NOTIF ${sender.take(16)} — группа, пропуск"); return }
         // WhatsApp/Telegram без кнопки ответа = канал/рассылка/не-сообщение → пропуск.
         if (channel != Channel.MESSAGES && !hasReply) {
@@ -176,17 +182,25 @@ object NotifResponder {
      *     уходило два ответа), и
      *  2) промпт LLM — в «Customer's SMS» попадали и наши собственные ответы.
      * Контекст переписки берётся не отсюда, а из БД истории (см. Responder.historyBlock).
-     * В MessagingStyle исходящие («от себя») идут с person == null — по ним и отсеиваем.
+     * Свои сообщения отсеиваются по владельцу стиля (style.user), а не только по пустому
+     * person: WhatsApp помечает наш ответ отправителем «You».
      */
     fun extract(n: Notification): Triple<String, String, Boolean>? {
         val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
         if (style != null && style.messages.isNotEmpty()) {
-            // Берём последнее ВХОДЯЩЕЕ сообщение С ТЕКСТОМ. Пустой текст (картинка/стикер) и
-            // отсутствие person (часть клиентов их не заполняет) не должны обнулять разбор —
-            // иначе уведомление молча отбрасывается ещё до журнала.
-            val last = style.messages.lastOrNull { it.person != null && !it.text.isNullOrBlank() }
-                ?: style.messages.lastOrNull { !it.text.isNullOrBlank() }
-                ?: style.messages.last()
+            // Кто «мы» в этом чате. WhatsApp дописывает наш собственный ответ обратно в
+            // уведомление и помечает его отправителем («You»), а не пустым person, как
+            // предполагает стандарт. Без сравнения с владельцем стиля мы принимали свой же
+            // ответ за сообщение клиента и отвечали на него по кругу.
+            val self = style.user?.name?.toString()?.trim()
+            fun fromSelf(m: NotificationCompat.MessagingStyle.Message): Boolean {
+                val who = m.person?.name?.toString()?.trim() ?: return true  // null = «от себя»
+                return !self.isNullOrBlank() && who.equals(self, ignoreCase = true)
+            }
+            // Последнее сообщение КЛИЕНТА с текстом. Пустой текст (картинка/стикер) не должен
+            // обнулять разбор — иначе уведомление молча отбрасывается ещё до журнала.
+            val last = style.messages.lastOrNull { !fromSelf(it) && !it.text.isNullOrBlank() }
+                ?: return null   // в уведомлении только наши сообщения — отвечать не на что
             val who = last.person?.name?.toString() ?: style.conversationTitle?.toString() ?: "?"
             val body = last.text?.toString()?.trim() ?: ""
             return Triple(who, body, style.isGroupConversation)
