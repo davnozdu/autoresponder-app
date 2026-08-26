@@ -59,6 +59,11 @@ fun AppScreen() {
     var trigDnd by remember { mutableStateOf(s.triggerOnDnd) }
     var trigSched by remember { mutableStateOf(s.triggerOnSchedule) }
     var prefixes by remember { mutableStateOf(s.allowedPrefixes.joinToString(",")) }
+    var schedMode by remember { mutableStateOf(s.scheduleMode) }
+    var workStart by remember { mutableStateOf(s.workStartMin) }
+    var workEnd by remember { mutableStateOf(s.workEndMin) }
+    var workDays by remember { mutableStateOf(s.workDaysMask) }
+    var llmCap by remember { mutableStateOf(s.llmDailyCap.toString()) }
     var startMin by remember { mutableStateOf(s.scheduleStartMin) }
     var endMin by remember { mutableStateOf(s.scheduleEndMin) }
     var excluded by remember { mutableStateOf(s.excludedNumbers) }
@@ -202,14 +207,35 @@ fun AppScreen() {
             Text("Когда «закрыто»", style = MaterialTheme.typography.titleMedium)
             SwitchRow("По системному режиму «Не беспокоить»", trigDnd) { trigDnd = it; s.triggerOnDnd = it }
             SwitchRow("По расписанию", trigSched) { trigSched = it; s.triggerOnSchedule = it }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(schedMode == 0, { schedMode = 0; s.scheduleMode = 0 }, { Text("Окно «закрыто»") })
+                FilterChip(schedMode == 1, { schedMode = 1; s.scheduleMode = 1 }, { Text("Рабочие часы/дни") })
+            }
+            if (schedMode == 1) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Работаем с")
+                    OutlinedButton(onClick = { pickTime(ctx, workStart) { workStart = it; s.workStartMin = it } }) { Text(fmtMin(workStart)) }
+                    Text("до")
+                    OutlinedButton(onClick = { pickTime(ctx, workEnd) { workEnd = it; s.workEndMin = it } }) { Text(fmtMin(workEnd)) }
+                }
+                Text("Рабочие дни:", style = MaterialTheme.typography.labelMedium)
+                val days = listOf(2 to "Пн", 3 to "Вт", 4 to "Ср", 5 to "Чт", 6 to "Пт", 7 to "Сб", 1 to "Вс")
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    days.forEach { (d, lbl) ->
+                        FilterChip(selected = (workDays and (1 shl d)) != 0, onClick = {
+                            workDays = workDays xor (1 shl d); s.workDaysMask = workDays
+                        }, label = { Text(lbl) })
+                    }
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Закрыто с")
+                if (schedMode == 0) Text("Закрыто с")
                 OutlinedButton(onClick = {
                     pickTime(ctx, startMin) { startMin = it; s.scheduleStartMin = it }
                 }) { Text(fmtMin(startMin)) }
-                Text("до")
-                OutlinedButton(onClick = {
+                if (schedMode == 0) Text("до")
+                if (schedMode == 0) OutlinedButton(onClick = {
                     pickTime(ctx, endMin) { endMin = it; s.scheduleEndMin = it }
                 }) { Text(fmtMin(endMin)) }
             }
@@ -309,6 +335,9 @@ fun AppScreen() {
                 label = { Text("API key (для облака)") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(model, { model = it; s.llmModel = it },
                 label = { Text("Модель") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(llmCap, { llmCap = it; it.toIntOrNull()?.let { v -> s.llmDailyCap = v } },
+                label = { Text("Лимит LLM в день (0 = без лимита)") }, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
 
             Button(onClick = {
                 status = "Запрашиваю модели…"

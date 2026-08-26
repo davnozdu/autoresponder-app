@@ -59,6 +59,21 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_TRIG_SCHED, true)
         set(v) = sp.edit().putBoolean(K_TRIG_SCHED, v).apply()
 
+    // режим расписания: 0 = закрытое окно (start..end), 1 = рабочие часы/дни
+    var scheduleMode: Int
+        get() = sp.getInt(K_SCHED_MODE, 0)
+        set(v) = sp.edit().putInt(K_SCHED_MODE, v).apply()
+    var workStartMin: Int
+        get() = sp.getInt(K_WORK_START, 8 * 60)
+        set(v) = sp.edit().putInt(K_WORK_START, v).apply()
+    var workEndMin: Int
+        get() = sp.getInt(K_WORK_END, 17 * 60)
+        set(v) = sp.edit().putInt(K_WORK_END, v).apply()
+    // битовая маска рабочих дней (Calendar.DAY_OF_WEEK 1..7); деф Пн-Пт = 124
+    var workDaysMask: Int
+        get() = sp.getInt(K_WORK_DAYS, 124)
+        set(v) = sp.edit().putInt(K_WORK_DAYS, v).apply()
+
     /** начало окна «закрыто», минуты от полуночи (напр. 21:00 = 1260) */
     var scheduleStartMin: Int
         get() = sp.getInt(K_SCHED_START, 21 * 60)
@@ -206,6 +221,17 @@ class Settings(context: Context) {
         get() = sp.getString(K_AI_PREFIX, DEF_AI_PREFIX) ?: DEF_AI_PREFIX
         set(v) = sp.edit().putString(K_AI_PREFIX, v).apply()
 
+    // --- дневной лимит обращений к LLM (0 = без лимита) ---
+    var llmDailyCap: Int
+        get() = sp.getInt(K_LLM_CAP, 0)
+        set(v) = sp.edit().putInt(K_LLM_CAP, v).apply()
+    var llmDay: Int
+        get() = sp.getInt(K_LLM_DAY, 0)
+        set(v) = sp.edit().putInt(K_LLM_DAY, v).apply()
+    var llmCount: Int
+        get() = sp.getInt(K_LLM_COUNT, 0)
+        set(v) = sp.edit().putInt(K_LLM_COUNT, v).apply()
+
     // --- LLM ---
     var llmEnabled: Boolean
         get() = sp.getBoolean(K_LLM_ON, false)
@@ -283,6 +309,10 @@ class Settings(context: Context) {
         private const val K_BLN_ALARM = "bln_alarm"
         private const val K_TRIG_DND = "trig_dnd"
         private const val K_TRIG_SCHED = "trig_sched"
+        private const val K_SCHED_MODE = "sched_mode"
+        private const val K_WORK_START = "work_start"
+        private const val K_WORK_END = "work_end"
+        private const val K_WORK_DAYS = "work_days"
         private const val K_SCHED_START = "sched_start"
         private const val K_SCHED_END = "sched_end"
         private const val K_PREFIXES = "prefixes"
@@ -304,6 +334,9 @@ class Settings(context: Context) {
             "com.google.android.apps.messaging", "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
         private const val K_TPL_PREFIX = "tpl_"
         private const val K_DEF_LANG = "def_lang"
+        private const val K_LLM_CAP = "llm_cap"
+        private const val K_LLM_DAY = "llm_day"
+        private const val K_LLM_COUNT = "llm_count"
         private const val K_LLM_ON = "llm_on"
         private const val K_LLM_PROV = "llm_prov"
         private const val K_LLM_URL = "llm_url"

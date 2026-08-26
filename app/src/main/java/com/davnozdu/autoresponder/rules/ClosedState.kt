@@ -29,6 +29,13 @@ object ClosedState {
     private fun inSchedule(s: Settings): Boolean {
         val now = Calendar.getInstance()
         val cur = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+        if (s.scheduleMode == 1) {
+            // Рабочие часы/дни: «закрыто», если НЕ рабочий день ИЛИ вне рабочих часов.
+            val dow = now.get(Calendar.DAY_OF_WEEK)
+            val isWorkDay = (s.workDaysMask and (1 shl dow)) != 0
+            val inHours = cur in s.workStartMin until s.workEndMin
+            return !(isWorkDay && inHours)
+        }
         val start = s.scheduleStartMin
         val end = s.scheduleEndMin
         return if (start <= end) cur in start until end
