@@ -94,35 +94,78 @@ class Settings(context: Context) {
     // отправки. Иначе у всех, у кого стояла SIM2, ответы после обновления ушли бы с SIM1.
     private fun legacyMask() = sp.getString(K_PREFIXES, "+420") ?: "+420"
 
-    /** Префиксы, которые обслуживает SIM1. */
+    /** Используется ли SIM1 для автоответа (карту можно выключить целиком). */
+    var sim1Enabled: Boolean
+        get() = sp.getBoolean(K_SIM1_ON, smsSlot == 0 || prefixList(K_PREFIXES_S1, "").isNotEmpty())
+        set(v) = sp.edit().putBoolean(K_SIM1_ON, v).apply()
+
+    /** Используется ли SIM2 для автоответа. */
+    var sim2Enabled: Boolean
+        get() = sp.getBoolean(K_SIM2_ON, smsSlot == 1 || prefixList(K_PREFIXES_S2, "").isNotEmpty())
+        set(v) = sp.edit().putBoolean(K_SIM2_ON, v).apply()
+
+    /** Префиксы, которые обслуживает SIM1 (пусто, если карта выключена). */
     var prefixesSim1: List<String>
-        get() = prefixList(K_PREFIXES_S1, if (smsSlot == 0) legacyMask() else "")
+        get() = if (!sim1Enabled) emptyList()
+                else prefixList(K_PREFIXES_S1, if (smsSlot == 0) legacyMask() else "")
         set(v) = sp.edit().putString(K_PREFIXES_S1, v.joinToString(",")).apply()
 
-    /** Префиксы, которые обслуживает SIM2. */
+    /** Префиксы, которые обслуживает SIM2 (пусто, если карта выключена). */
     var prefixesSim2: List<String>
-        get() = prefixList(K_PREFIXES_S2, if (smsSlot == 1) legacyMask() else "")
+        get() = if (!sim2Enabled) emptyList()
+                else prefixList(K_PREFIXES_S2, if (smsSlot == 1) legacyMask() else "")
         set(v) = sp.edit().putString(K_PREFIXES_S2, v.joinToString(",")).apply()
 
-    /** Общая маска: объединение правил обеих карт (кому вообще отвечаем). */
+    /** Сырые списки для UI: показываем введённое даже у выключенной карты. */
+    fun prefixesRaw(slot: Int): List<String> =
+        if (slot == 0) prefixList(K_PREFIXES_S1, if (smsSlot == 0) legacyMask() else "")
+        else prefixList(K_PREFIXES_S2, if (smsSlot == 1) legacyMask() else "")
+
+    /** Префиксы, попавшие в оба списка сразу — конфликт правил (для предупреждения в UI). */
+    fun conflictingPrefixes(): List<String> {
+        fun norm(p: String) = (if (p.startsWith("+")) p else "+$p").trim()
+        val a = prefixesRaw(0).map(::norm).toSet()
+        val b = prefixesRaw(1).map(::norm).toSet()
+        return (a intersect b).sorted()
+    }
+
+    /** Общая маска: объединение правил ВКЛЮЧЁННЫХ карт (кому вообще отвечаем). */
     val allowedPrefixes: List<String>
         get() = (prefixesSim1 + prefixesSim2).distinct()
 
+    /** SIM по умолчанию с оглядкой на выключенные карты. */
+    private val effectiveDefaultSlot: Int
+        get() = when {
+            smsSlot == 0 && sim1Enabled -> 0
+            smsSlot == 1 && sim2Enabled -> 1
+            sim2Enabled -> 1
+            sim1Enabled -> 0
+            else -> smsSlot          // обе выключены — отвечать всё равно некому
+        }
+
     /**
      * Слот SIM для ответа этому номеру: 0 = SIM1, 1 = SIM2.
-     * Сначала правило по префиксу, иначе — SIM по умолчанию из настроек.
+     *
+     * Выигрывает САМОЕ ДЛИННОЕ подходящее правило: если у SIM1 стоит «+4», а у SIM2 «+420»,
+     * номер +420… уйдёт с SIM2 как с более точного совпадения. При полностью одинаковом
+     * префиксе в обоих списках спор решается в пользу SIM по умолчанию — так поведение
+     * предсказуемо, а не зависит от порядка проверки.
      */
     fun slotForNumber(number: String?): Int {
-        val n = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number) ?: return smsSlot
-        fun hit(list: List<String>) = list.any { p ->
+        val n = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number) ?: return effectiveDefaultSlot
+        fun bestMatch(list: List<String>): Int = list.mapNotNull { p ->
             val pp = if (p.startsWith("+")) p else "+$p"
-            n.startsWith(pp)
+            if (n.startsWith(pp)) pp.length else null
+        }.maxOrNull() ?: -1
+
+        val m1 = bestMatch(prefixesSim1)
+        val m2 = bestMatch(prefixesSim2)
+        return when {
+            m1 < 0 && m2 < 0 -> effectiveDefaultSlot
+            m1 == m2 -> effectiveDefaultSlot      // одинаковые правила — решает карта по умолчанию
+            m2 > m1 -> 1
+            else -> 0
         }
-        // SIM2 проверяем первой: её список обычно уже (одна страна), а у SIM1 может остаться
-        // широкий «унаследованный» набор префиксов.
-        if (hit(prefixesSim2)) return 1
-        if (hit(prefixesSim1)) return 0
-        return smsSlot
     }
 
     // --- Избранные: номера-исключения (автоответ НЕ применять) ---
@@ -451,6 +494,8 @@ class Settings(context: Context) {
         private const val K_PREFIXES = "prefixes"        // старая общая маска (миграция)
         private const val K_PREFIXES_S1 = "prefixes_sim1"
         private const val K_PREFIXES_S2 = "prefixes_sim2"
+        private const val K_SIM1_ON = "sim1_on"
+        private const val K_SIM2_ON = "sim2_on"
         private const val K_EXCLUDED = "excluded"
         private const val K_EXCL_NAMES = "excluded_names"
         private const val K_EXCL_STARRED = "excl_starred"

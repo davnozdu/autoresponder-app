@@ -59,8 +59,10 @@ fun AppScreen() {
     var blnDaily by remember { mutableStateOf(s.blDailyTimeMin) }
     var trigDnd by remember { mutableStateOf(s.triggerOnDnd) }
     var trigSched by remember { mutableStateOf(s.triggerOnSchedule) }
-    var prefixes1 by remember { mutableStateOf(s.prefixesSim1.joinToString(",")) }
-    var prefixes2 by remember { mutableStateOf(s.prefixesSim2.joinToString(",")) }
+    var sim1On by remember { mutableStateOf(s.sim1Enabled) }
+    var sim2On by remember { mutableStateOf(s.sim2Enabled) }
+    var prefixes1 by remember { mutableStateOf(s.prefixesRaw(0).joinToString(",")) }
+    var prefixes2 by remember { mutableStateOf(s.prefixesRaw(1).joinToString(",")) }
     var schedMode by remember { mutableStateOf(s.scheduleMode) }
     var workStart by remember { mutableStateOf(s.workStartMin) }
     var workEnd by remember { mutableStateOf(s.workEndMin) }
@@ -295,16 +297,42 @@ fun AppScreen() {
             }
 
             ExpandableSection("Маска стран и выбор SIM") {
-                Text("Номеру отвечаем, если он попал в список любой из карт. С какой карты уйдёт "
-                    + "ответ — определяет то, в чей список попал префикс. Если ни в один — берётся "
-                    + "SIM по умолчанию (ниже, в разделе «SIM и язык»).",
+                Text("Номеру отвечаем, если он попал в список включённой карты. Отвечает та карта, "
+                    + "чьё правило точнее (самый длинный подходящий префикс). Если правил нет — "
+                    + "SIM по умолчанию из раздела «SIM и язык».",
                     style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(prefixes1, { prefixes1 = it; s.prefixesSim1 = it.split(",").map { p -> p.trim() } },
-                    label = { Text("SIM 1 — префиксы, напр. +420") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(prefixes2, { prefixes2 = it; s.prefixesSim2 = it.split(",").map { p -> p.trim() } },
-                    label = { Text("SIM 2 — префиксы, напр. +7,+380") }, modifier = Modifier.fillMaxWidth())
-                if (prefixes1.isBlank() && prefixes2.isBlank())
-                    Text("Оба списка пусты — автоответ не сработает ни для одного номера.",
+
+                // Карта, которой нет в телефоне, — сразу видно, что правило работать не будет.
+                fun simHint(slot: Int): String =
+                    sims.firstOrNull { it.slot == slot }?.label ?: "нет в телефоне"
+
+                SwitchRow("SIM 1 — ${simHint(0)}", sim1On) { sim1On = it; s.sim1Enabled = it }
+                if (sim1On) OutlinedTextField(prefixes1,
+                    { prefixes1 = it; s.prefixesSim1 = it.split(",").map { p -> p.trim() } },
+                    label = { Text("SIM 1 — префиксы, напр. +31") }, modifier = Modifier.fillMaxWidth())
+
+                SwitchRow("SIM 2 — ${simHint(1)}", sim2On) { sim2On = it; s.sim2Enabled = it }
+                if (sim2On) OutlinedTextField(prefixes2,
+                    { prefixes2 = it; s.prefixesSim2 = it.split(",").map { p -> p.trim() } },
+                    label = { Text("SIM 2 — префиксы, напр. +420") }, modifier = Modifier.fillMaxWidth())
+
+                val conflicts = remember(prefixes1, prefixes2, sim1On, sim2On) {
+                    if (sim1On && sim2On) s.conflictingPrefixes() else emptyList()
+                }
+                if (conflicts.isNotEmpty())
+                    Text("Один префикс задан обеим картам: ${conflicts.joinToString(", ")}. "
+                        + "Такие номера уйдут с SIM по умолчанию. Уберите повтор из одного списка "
+                        + "или сделайте одно правило точнее (например +420 против +4).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+
+                val activeEmpty = (!sim1On || prefixes1.isBlank()) && (!sim2On || prefixes2.isBlank())
+                if (!sim1On && !sim2On)
+                    Text("Обе карты выключены — автоответ не сработает.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                else if (activeEmpty)
+                    Text("У включённых карт нет префиксов — автоответ не сработает ни для одного номера.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error)
             }
@@ -381,11 +409,15 @@ fun AppScreen() {
                 Text("SIM по умолчанию — для номеров, не попавших ни в одно правило выше.",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = smsSlot == 0, onClick = { smsSlot = 0; s.smsSlot = 0 },
-                        label = { Text("SIM 1") })
-                    FilterChip(selected = smsSlot == 1, onClick = { smsSlot = 1; s.smsSlot = 1 },
-                        label = { Text("SIM 2") })
+                    FilterChip(selected = smsSlot == 0, enabled = sim1On,
+                        onClick = { smsSlot = 0; s.smsSlot = 0 }, label = { Text("SIM 1") })
+                    FilterChip(selected = smsSlot == 1, enabled = sim2On,
+                        onClick = { smsSlot = 1; s.smsSlot = 1 }, label = { Text("SIM 2") })
                 }
+                if ((smsSlot == 0 && !sim1On) || (smsSlot == 1 && !sim2On))
+                    Text("Карта по умолчанию выключена выше — ответы уйдут с включённой.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
                 if (sims.isEmpty()) Text("SIM не определены (нужно READ_PHONE_STATE)",
                     style = MaterialTheme.typography.bodySmall)
                 else sims.forEach { Text(it.label, style = MaterialTheme.typography.bodySmall) }
