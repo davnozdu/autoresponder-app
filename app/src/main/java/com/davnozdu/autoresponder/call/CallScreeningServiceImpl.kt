@@ -13,6 +13,7 @@ import com.davnozdu.autoresponder.rules.SimUtil
 import com.davnozdu.autoresponder.rules.SkipPolicy
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
+import kotlinx.coroutines.launch
 
 /**
  * Screening всех входящих звонков (держим роль CALL_SCREENING).
@@ -20,15 +21,24 @@ import com.davnozdu.autoresponder.store.HistoryLogger
  */
 class CallScreeningServiceImpl : CallScreeningService() {
 
+    private val bg = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
     override fun onScreenCall(callDetails: Call.Details) {
         if (callDetails.callDirection != Call.Details.DIRECTION_INCOMING) {
             respondAllow(callDetails); return
         }
 
         val number = callDetails.handle?.schemeSpecificPart // tel:+420... -> +420...
-        if (number != null) HistoryLogger.record(this, number, "call", "in", "входящий звонок")
         val callSubId = SimUtil.subIdFromCall(this, callDetails)  // SIM, на которую пришёл звонок
-        EventLog(this).add("CALL вход: handle=${callDetails.accountHandle?.id} -> subId=$callSubId | ${SimUtil.describe(this)}")
+        // История и диагностика — в фон: onScreenCall выполняется на главном потоке и должен
+        // ответить системе быстро, а запись в SQLite + поиск имени в книге контактов небыстрые.
+        val app = applicationContext
+        val handleId = callDetails.accountHandle?.id
+        bg.launch {
+            if (number != null) HistoryLogger.record(app, number, "call", "in", "входящий звонок")
+            EventLog(app).add("CALL вход: handle=$handleId -> subId=$callSubId | ${SimUtil.describe(app)}")
+        }
         val s = Settings(this)
         // Главный тумблер и «отвечать на звонки» гейтят ВСЮ работу со звонками, включая чёрный
         // список. Иначе при выключенном автоответчике звонок из ЧС всё равно отклонялся, а SMS
