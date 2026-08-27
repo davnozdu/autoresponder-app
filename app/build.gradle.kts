@@ -12,8 +12,8 @@ android {
         applicationId = "com.davnozdu.autoresponder"
         minSdk = 29
         targetSdk = 35
-        versionCode = 59
-        versionName = "0.9.11"
+        versionCode = 60
+        versionName = "0.9.12"
     }
 
     signingConfigs {

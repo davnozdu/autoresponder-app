@@ -386,8 +386,9 @@ fun AppScreen() {
                             Text(nm)
                             Text(when {
                                 isNum -> "номер — сравнение по цифрам, формат не важен"
-                                digits >= 8 -> "сравнивается как ИМЯ (есть лишние символы). "
-                                    + "Для номера оставьте только цифры и +"
+                                digits >= 8 ->
+                                    "сравнивается как ИМЯ (есть лишние символы). " +
+                                    "Для номера оставьте только цифры и +"
                                 else -> "имя / @username — точное совпадение"
                             }, style = MaterialTheme.typography.labelSmall,
                                color = if (!isNum && digits >= 8) MaterialTheme.colorScheme.error
