@@ -15,6 +15,7 @@ import com.davnozdu.autoresponder.rules.SkipPolicy
 import com.davnozdu.autoresponder.store.AboutInfo
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
+import com.davnozdu.autoresponder.store.PersonThreads
 import com.davnozdu.autoresponder.rules.SimUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -237,19 +238,23 @@ object Responder {
     }
 
     /**
-     * Недавняя переписка по адресату из журнала (для контекста LLM).
+     * Недавняя переписка по ЧЕЛОВЕКУ из журнала (для контекста LLM).
      *
      * Берём именно ХВОСТ ветки: `thread(key, limit = 200)` сортировал по возрастанию и резал
      * LIMIT'ом, поэтому у активных номеров (600+ событий) в промпт уходила переписка
      * полугодовой давности, а свежая — никогда. Строки журнала звонков исключены: для ответа
      * они бесполезны, а окно контекста забивали целиком; вместо них — одна строка «звонил N раз».
+     *
+     * Ветки всех каналов одного человека склеиваются (см. [PersonThreads]): звонок, SMS,
+     * WhatsApp и Telegram идут в общий контекст, отсортированный по времени.
      */
     private fun historyBlock(context: Context, key: String?, incomingText: String? = null,
                              limit: Int = 12): String {
         if (key.isNullOrBlank()) return ""
         return try {
             val db = HistoryDb.get(context)
-            var items = db.threadTail(key, limit, skipCalls = true)
+            val keys = PersonThreads.keysFor(context, key)
+            var items = db.threadTail(keys, limit, skipCalls = true)
             // Текущее входящее уже записано в историю — не дублируем его последней строкой:
             // в промпт оно и так уходит отдельным полем «Customer's SMS».
             val last = items.lastOrNull()
@@ -264,11 +269,13 @@ object Responder {
                         .append(": ").append(ev.body.take(200)).append('\n')
                 }
             }
-            val calls = db.incomingCallCount(key, System.currentTimeMillis() - 7L * 86_400_000L)
+            val calls = db.incomingCallCount(keys, System.currentTimeMillis() - 7L * 86_400_000L)
             if (calls > 0) sb.append("\nThe client also called $calls time(s) in the last 7 days.\n")
             // Видно в журнале, ушёл ли контекст в LLM и сколько его было — иначе «отвечает
             // однообразно» невозможно отличить от «контекста не нашлось».
-            EventLog(context).add("Контекст[$key]: ${items.size} сообщ. + звонков за 7д: $calls")
+            EventLog(context).add(
+                "Контекст[$key]: ${items.size} сообщ. + звонков за 7д: $calls; " +
+                "ветки: ${keys.joinToString(" | ") { it.take(24) }}")
             sb.toString()
         } catch (_: Exception) { "" }
     }

@@ -128,7 +128,10 @@ class HistoryDb private constructor(context: Context) :
             arrayOf(from.toString())).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
 
-    fun clearEvents() { writableDatabase.delete("events", null, null) }
+    fun clearEvents() {
+        writableDatabase.delete("events", null, null)
+        PersonThreads.invalidate()   // кэш склейки веток ссылается на ключи, которых больше нет
+    }
 
     fun existsAt(number: String, ts: Long, direction: String): Boolean {
         readableDatabase.rawQuery(
@@ -170,31 +173,49 @@ class HistoryDb private constructor(context: Context) :
         return res
     }
 
+    /** Все ключи веток (значения events.number) — для склейки истории одного человека. */
+    fun distinctKeys(): List<String> {
+        val res = ArrayList<String>()
+        readableDatabase.rawQuery("SELECT DISTINCT number FROM events", null)
+            .use { c -> while (c.moveToNext()) res.add(c.getString(0)) }
+        return res
+    }
+
     /**
-     * ХВОСТ ветки — последние [limit] событий в хронологическом порядке.
+     * ХВОСТ переписки — последние [limit] событий по всем [keys] в хронологическом порядке.
      *
      * [thread] сортирует по возрастанию и режет LIMIT'ом, то есть отдаёт САМЫЕ СТАРЫЕ записи.
      * Для контекста LLM это была дыра: у номера с 600+ событиями в промпт уходила переписка
      * полугодовой давности вместо текущей. Здесь берём с конца и разворачиваем.
      *
+     * Несколько ключей — потому что каналы одного человека хранятся под разными ключами
+     * (номер для звонков/SMS, имя для WhatsApp/Telegram); их собирает
+     * [com.davnozdu.autoresponder.store.PersonThreads].
+     *
      * [skipCalls] выбрасывает строки журнала звонков («входящий звонок», «исходящий звонок
      * (717с)») — смысла для ответа они не несут, а окно контекста вытесняли целиком.
      */
-    fun threadTail(number: String, limit: Int, skipCalls: Boolean = false): List<HistItem> {
+    fun threadTail(keys: List<String>, limit: Int, skipCalls: Boolean = false): List<HistItem> {
+        if (keys.isEmpty()) return emptyList()
         val res = ArrayList<HistItem>()
-        val where = if (skipCalls) "number=? AND channel<>'call'" else "number=?"
+        val ph = keys.joinToString(",") { "?" }
+        val calls = if (skipCalls) " AND channel<>'call'" else ""
         readableDatabase.rawQuery(
-            "SELECT * FROM events WHERE $where ORDER BY ts DESC LIMIT $limit", arrayOf(number)
+            "SELECT * FROM events WHERE number IN ($ph)$calls ORDER BY ts DESC LIMIT $limit",
+            keys.toTypedArray()
         ).use { c -> while (c.moveToNext()) res.add(row(c)) }
         return res.asReversed()
     }
 
     /** Сколько раз этот адресат звонил начиная с [since] (мс). */
-    fun incomingCallCount(number: String, since: Long): Int =
-        readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM events WHERE number=? AND channel='call' AND direction='in' AND ts>=?",
-            arrayOf(number, since.toString())
+    fun incomingCallCount(keys: List<String>, since: Long): Int {
+        if (keys.isEmpty()) return 0
+        val ph = keys.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM events WHERE number IN ($ph) AND channel='call' AND direction='in' AND ts>=?",
+            (keys + since.toString()).toTypedArray()
         ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
 
     /** Последние события (все каналы) для LLM-контекста. */
     fun recentEvents(limit: Int = 400): List<HistItem> {

@@ -15,7 +15,8 @@ import android.provider.ContactsContract
  */
 object ContactUtil {
 
-    private data class Lookup(val known: Boolean, val starred: Boolean, val name: String?)
+    private data class Lookup(val known: Boolean, val starred: Boolean, val name: String?,
+                              val contactId: Long = 0L)
 
     private const val TTL_MS = 60_000L
     private const val MAX_ENTRIES = 256
@@ -32,13 +33,13 @@ object ContactUtil {
                 ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(key))
             context.contentResolver.query(
                 uri,
-                arrayOf(ContactsContract.PhoneLookup._ID,
+                arrayOf(ContactsContract.PhoneLookup.CONTACT_ID,
                         ContactsContract.PhoneLookup.STARRED,
                         ContactsContract.PhoneLookup.DISPLAY_NAME),
                 null, null, null
             )?.use { c ->
                 if (c.moveToFirst())
-                    Lookup(true, c.getInt(1) == 1, c.getString(2)?.ifBlank { null })
+                    Lookup(true, c.getInt(1) == 1, c.getString(2)?.ifBlank { null }, c.getLong(0))
                 else null
             } ?: Lookup(false, false, null)
         } catch (e: Exception) {
@@ -79,7 +80,8 @@ object ContactUtil {
             context.contentResolver.query(
                 uri,
                 arrayOf(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
-                        ContactsContract.Contacts.STARRED),
+                        ContactsContract.Contacts.STARRED,
+                        ContactsContract.Contacts._ID),
                 null, null, null
             )?.use { c ->
                 var found: Lookup? = null
@@ -88,8 +90,8 @@ object ContactUtil {
                     if (!dn.equals(key, ignoreCase = true)) continue
                     val starred = c.getInt(1) == 1
                     // Одно имя может быть у нескольких контактов — звёздный среди них главнее.
-                    if (starred) { found = Lookup(true, true, dn); break }
-                    found = Lookup(true, false, dn)
+                    if (starred) { found = Lookup(true, true, dn, c.getLong(2)); break }
+                    found = Lookup(true, false, dn, c.getLong(2))
                 }
                 found
             } ?: Lookup(false, false, null)
@@ -107,6 +109,36 @@ object ContactUtil {
 
     /** Контакт с таким отображаемым именем помечен звёздочкой. */
     fun isStarredName(context: Context, name: String?): Boolean = lookupByName(context, name).starred
+
+    /**
+     * ВСЕ номера контакта, которому принадлежит [contactId].
+     *
+     * Нужно, чтобы склеить историю одного человека: у контакта бывает несколько номеров,
+     * и SMS с рабочего и звонок с мобильного — это одна переписка.
+     */
+    private fun numbersOf(context: Context, contactId: Long): List<String> {
+        if (contactId <= 0L) return emptyList()
+        return try {
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                arrayOf(contactId.toString()), null
+            )?.use { c ->
+                val out = LinkedHashSet<String>()
+                while (c.moveToNext()) c.getString(0)?.trim()?.takeIf { it.isNotEmpty() }?.let { out.add(it) }
+                out.toList()
+            } ?: emptyList()
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** Все номера контакта, найденного по одному из его номеров. */
+    fun numbersForNumber(context: Context, number: String?): List<String> =
+        numbersOf(context, lookup(context, number).contactId)
+
+    /** Все номера контакта, найденного по отображаемому имени. */
+    fun numbersForName(context: Context, name: String?): List<String> =
+        numbersOf(context, lookupByName(context, name).contactId)
 
     /**
      * Имена звёздных (избранных) контактов — для импорта в список избранного мессенджеров.
