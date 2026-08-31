@@ -288,15 +288,27 @@ class HistoryDb private constructor(context: Context) :
      * Имя тоже может оказаться номером — Telegram показывает телефон, если у контакта не
      * задано имя. В этом случае сравниваем по цифрам, а не посимвольно.
      */
+    /**
+     * Запись ЧС для входящего. Сопоставление такое же, как в «Избранных»: номер — по последним
+     * 9 цифрам (формат не важен), имя — точно и без учёта регистра, плюс маски `*` и `?`
+     * (см. [com.davnozdu.autoresponder.rules.NameMatch]) — иначе одно и то же правило пришлось бы
+     * заводить отдельно для «Избранных» и для ЧС.
+     */
     fun blacklistMatch(number: String?, name: String?): BlackEntry? {
         val numTail = number?.filter { it.isDigit() }?.takeLast(9)
         val nm = name?.trim()?.lowercase()
         for (e in blacklistCached()) {
-            val eDigits = e.identity.filter { it.isDigit() }
+            val id = e.identity.trim()
+            if (com.davnozdu.autoresponder.rules.NameMatch.hasWildcard(id)) {
+                if (com.davnozdu.autoresponder.rules.NameMatch.matches(name, id)) return e
+                if (com.davnozdu.autoresponder.rules.NameMatch.matches(number, id)) return e
+                continue   // маска сравнивается только как маска
+            }
+            val eDigits = id.filter { it.isDigit() }
             if (numTail != null && eDigits.length >= 8 && eDigits.takeLast(9) == numTail) return e
-            if (nm != null && e.identity.trim().lowercase() == nm) return e
+            if (nm != null && id.lowercase() == nm) return e
             if (nm != null && e.name?.trim()?.lowercase() == nm) return e
-            if (nm != null && com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(nm, e.identity)) return e
+            if (nm != null && com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(nm, id)) return e
         }
         return null
     }

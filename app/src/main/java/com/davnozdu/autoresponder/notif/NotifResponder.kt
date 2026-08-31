@@ -69,17 +69,9 @@ object NotifResponder {
         if (channel == Channel.MESSAGES) {
             number = extractNumber(sender)
             if (number == null) { log.add("NOTIF[$tag] ${sender.take(16)} — контакт без номера, пропуск"); return }
-            if (!PhoneMask.matches(number, s.allowedPrefixes)) { log.add("NOTIF[$tag] $number — не под маску, пропуск"); return }
-            SkipPolicy.reason(context, number, s, isCall = false)?.let { log.add("NOTIF[$tag] $number — $it, пропуск"); return }
             key = PhoneMask.normalize(number)!!
         } else {
             number = null
-            // Избранное для мессенджеров: имя из книги, номер или маска. Плюс общие
-            // переключатели «звёздные / все контакты» — контакт ищется по ИМЕНИ, потому что
-            // WhatsApp и Telegram кладут в уведомление имя из телефонной книги, а не номер.
-            SkipPolicy.reasonForSender(context, sender, s)?.let {
-                log.add("NOTIF[$tag] ${sender.take(16)} — $it, пропуск"); return
-            }
             // Если отправитель показан телефоном (Telegram так делает без имени/@username),
             // приводим его к цифрам: иначе «+31 615 092 866» и «+31615092866» считались бы
             // разными собеседниками и лимит ответов для каждого шёл бы отдельно.
@@ -89,12 +81,33 @@ object NotifResponder {
             else "$tag:${ident.lowercase()}"
         }
 
+        // Чёрный список ищем ДО фильтров и так же, как на пути звонков и SMS: контакт выбран
+        // вручную, поэтому маска стран и «Избранные» на него не распространяются. Раньше порядок
+        // был обратным, и человек, оказавшийся и в «Избранных» (или просто звёздный контакт), и в
+        // ЧС, в мессенджере молча пропускался, а в SMS обрабатывался как ЧС.
+        val bl = HistoryDb.get(context).blacklistMatch(number, sender)
+        if (bl == null) {
+            if (channel == Channel.MESSAGES) {
+                if (!PhoneMask.matches(number, s.allowedPrefixes)) {
+                    log.add("NOTIF[$tag] $number — не под маску, пропуск"); return
+                }
+                SkipPolicy.reason(context, number, s, isCall = false)?.let {
+                    log.add("NOTIF[$tag] $number — $it, пропуск"); return
+                }
+            } else {
+                // Избранное для мессенджеров: имя из книги, номер или маска. Плюс общие
+                // переключатели «звёздные / все контакты» — контакт ищется по ИМЕНИ, потому что
+                // WhatsApp и Telegram кладут в уведомление имя из телефонной книги, а не номер.
+                SkipPolicy.reasonForSender(context, sender, s)?.let {
+                    log.add("NOTIF[$tag] ${sender.take(16)} — $it, пропуск"); return
+                }
+            }
+        }
+
         val inCh = if (channel == Channel.MESSAGES) "rcs" else tag
         val inId = if (channel == Channel.MESSAGES) number else sender
 
         // Чёрный список отвечает ВСЕГДА; обычные — только когда «закрыто».
-        val bl = HistoryDb.get(context).blacklistMatch(
-            if (channel == Channel.MESSAGES) number else null, sender)
         if (bl != null) BlacklistNotifier.record(context, number, sender, tag)
         val closedReason = ClosedState.reason(context, s)
         if (bl != null) {

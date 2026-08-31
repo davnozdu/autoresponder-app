@@ -76,9 +76,16 @@ fun BlacklistScreen() {
         Column(Modifier.padding(pad).fillMaxSize().padding(12.dp)) {
             Text("Кому не хотим отвечать. Галочка «через LLM» — вместо тишины отвечать своим промптом.",
                 style = MaterialTheme.typography.bodySmall)
+            Text("Чёрный список не смотрит на рабочее время: он срабатывает и когда открыто. "
+                + "Маску стран и «Избранных» тоже обходит — во всех каналах одинаково. "
+                + "Но подчиняется главному тумблеру, паузе и лимиту ответов.",
+                style = MaterialTheme.typography.bodySmall)
+            Text("Запись — номер, имя из телефонной книги или маска: * — любой текст, "
+                + "? — один символ («+420*», «*спам*»).",
+                style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(newId, { newId = it }, label = { Text("Номер или имя") },
+                OutlinedTextField(newId, { newId = it }, label = { Text("Номер, имя или маска") },
                     modifier = Modifier.weight(1f), singleLine = true)
                 Button(onClick = {
                     if (newId.isNotBlank()) { db.blacklistUpsert(BlackEntry(0, newId.trim(), null, false, null)); newId = ""; reload() }
@@ -95,6 +102,10 @@ fun BlacklistScreen() {
                     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                         Text(e.name ?: e.identity, style = MaterialTheme.typography.titleSmall)
                         if (e.name != null) Text(e.identity, style = MaterialTheme.typography.labelSmall)
+                        // Как запись сопоставляется — так же подписано в «Избранных».
+                        Text(com.davnozdu.autoresponder.rules.NameMatch.describe(e.identity),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = e.viaLlm, onCheckedChange = { on ->
                                 db.blacklistUpsert(e.copy(viaLlm = on,
