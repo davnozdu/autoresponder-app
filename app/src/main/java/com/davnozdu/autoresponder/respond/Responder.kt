@@ -236,17 +236,40 @@ object Responder {
         return if (p.isEmpty()) text else "$p $text"
     }
 
-    /** Недавняя переписка по адресату из журнала (для контекста LLM). */
-    private fun historyBlock(context: Context, key: String?, limit: Int = 8): String {
+    /**
+     * Недавняя переписка по адресату из журнала (для контекста LLM).
+     *
+     * Берём именно ХВОСТ ветки: `thread(key, limit = 200)` сортировал по возрастанию и резал
+     * LIMIT'ом, поэтому у активных номеров (600+ событий) в промпт уходила переписка
+     * полугодовой давности, а свежая — никогда. Строки журнала звонков исключены: для ответа
+     * они бесполезны, а окно контекста забивали целиком; вместо них — одна строка «звонил N раз».
+     */
+    private fun historyBlock(context: Context, key: String?, incomingText: String? = null,
+                             limit: Int = 12): String {
         if (key.isNullOrBlank()) return ""
         return try {
-            val items = HistoryDb.get(context).thread(key, limit = 200)
-            if (items.isEmpty()) return ""
-            val lines = items.takeLast(limit).joinToString("\n") {
-                val who = if (it.direction == "out") "AI" else "Client"
-                "$who: ${it.body.take(200)}"
+            val db = HistoryDb.get(context)
+            var items = db.threadTail(key, limit, skipCalls = true)
+            // Текущее входящее уже записано в историю — не дублируем его последней строкой:
+            // в промпт оно и так уходит отдельным полем «Customer's SMS».
+            val last = items.lastOrNull()
+            if (last != null && last.direction == "in" && !incomingText.isNullOrBlank() &&
+                last.body.trim() == incomingText.trim()) items = items.dropLast(1)
+
+            val sb = StringBuilder()
+            if (items.isNotEmpty()) {
+                sb.append("\nPrevious conversation (oldest first, for context):\n")
+                for (ev in items) {
+                    sb.append(if (ev.direction == "out") "AI" else "Client")
+                        .append(": ").append(ev.body.take(200)).append('\n')
+                }
             }
-            "\nPrevious conversation (oldest first, for context):\n$lines\n"
+            val calls = db.incomingCallCount(key, System.currentTimeMillis() - 7L * 86_400_000L)
+            if (calls > 0) sb.append("\nThe client also called $calls time(s) in the last 7 days.\n")
+            // Видно в журнале, ушёл ли контекст в LLM и сколько его было — иначе «отвечает
+            // однообразно» невозможно отличить от «контекста не нашлось».
+            EventLog(context).add("Контекст[$key]: ${items.size} сообщ. + звонков за 7д: $calls")
+            sb.toString()
         } catch (_: Exception) { "" }
     }
 
@@ -255,7 +278,7 @@ object Responder {
         promptOverride: String? = null, closedNow: Boolean = true, historyKey: String? = null, warn: Boolean = false
     ): String {
         val defName = when (s.defaultLang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
-        val history = historyBlock(context, historyKey)
+        val history = historyBlock(context, historyKey, incomingText)
         // Текущие дата/время/день недели с устройства — чтобы LLM накладывала праздники на текущий год
         // и понимала «сегодня/завтра/в субботу».
         val now = java.time.LocalDateTime.now()

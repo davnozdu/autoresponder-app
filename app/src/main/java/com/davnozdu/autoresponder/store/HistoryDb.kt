@@ -170,6 +170,32 @@ class HistoryDb private constructor(context: Context) :
         return res
     }
 
+    /**
+     * ХВОСТ ветки — последние [limit] событий в хронологическом порядке.
+     *
+     * [thread] сортирует по возрастанию и режет LIMIT'ом, то есть отдаёт САМЫЕ СТАРЫЕ записи.
+     * Для контекста LLM это была дыра: у номера с 600+ событиями в промпт уходила переписка
+     * полугодовой давности вместо текущей. Здесь берём с конца и разворачиваем.
+     *
+     * [skipCalls] выбрасывает строки журнала звонков («входящий звонок», «исходящий звонок
+     * (717с)») — смысла для ответа они не несут, а окно контекста вытесняли целиком.
+     */
+    fun threadTail(number: String, limit: Int, skipCalls: Boolean = false): List<HistItem> {
+        val res = ArrayList<HistItem>()
+        val where = if (skipCalls) "number=? AND channel<>'call'" else "number=?"
+        readableDatabase.rawQuery(
+            "SELECT * FROM events WHERE $where ORDER BY ts DESC LIMIT $limit", arrayOf(number)
+        ).use { c -> while (c.moveToNext()) res.add(row(c)) }
+        return res.asReversed()
+    }
+
+    /** Сколько раз этот адресат звонил начиная с [since] (мс). */
+    fun incomingCallCount(number: String, since: Long): Int =
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM events WHERE number=? AND channel='call' AND direction='in' AND ts>=?",
+            arrayOf(number, since.toString())
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+
     /** Последние события (все каналы) для LLM-контекста. */
     fun recentEvents(limit: Int = 400): List<HistItem> {
         val res = ArrayList<HistItem>()
