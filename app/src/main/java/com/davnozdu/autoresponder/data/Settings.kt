@@ -184,23 +184,36 @@ class Settings(context: Context) {
         excludedNumbers = excludedNumbers.filterNot { it.equals(number.trim(), true) }
     }
 
-    // --- Избранные для мессенджеров: имена/@-юзернеймы (Telegram отдаёт только имена/@username) ---
+    // --- Избранные для мессенджеров: имена из телефонной книги, номера и маски ---
+    // WhatsApp/Telegram подставляют в уведомление имя контакта из книги (не @username
+    // и не никнейм профиля), а для незнакомцев — номер в своём формате.
     var excludedNames: List<String>
         get() = sp.getString(K_EXCL_NAMES, "")!!
             .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
         set(v) = sp.edit().putString(K_EXCL_NAMES, v.joinToString("\n")).apply()
 
-    fun addExcludedName(name: String) {
-        val n = name.trim()
-        if (n.isEmpty()) return
+    fun addExcludedName(name: String) { addExcludedNames(listOf(name)) }
+
+    /**
+     * Добавить сразу несколько записей (импорт из телефонной книги). Возвращает,
+     * сколько реально добавлено — остальные уже были в списке.
+     */
+    fun addExcludedNames(names: List<String>): Int {
         val cur = excludedNames.toMutableList()
-        // Тот же номер в другом формате («+31 615 092 866» и «31615092866») — не дубликат
-        // по тексту, но один и тот же человек. Второй раз не добавляем.
-        val exists = cur.any {
-            it.equals(n, true) ||
-            com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(it, n)
+        var added = 0
+        for (raw in names) {
+            val n = raw.trim().replace("\n", " ").trim()
+            if (n.isEmpty()) continue
+            // Тот же номер в другом формате («+31 615 092 866» и «31615092866») — не дубликат
+            // по тексту, но один и тот же человек. Второй раз не добавляем.
+            val exists = cur.any {
+                it.equals(n, true) ||
+                com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(it, n)
+            }
+            if (!exists) { cur.add(n); added++ }
         }
-        if (!exists) { cur.add(n); excludedNames = cur }
+        if (added > 0) excludedNames = cur
+        return added
     }
     fun removeExcludedName(name: String) {
         excludedNames = excludedNames.filterNot { it.equals(name.trim(), true) }
@@ -208,22 +221,15 @@ class Settings(context: Context) {
     /**
      * Отправитель-мессенджер в списке избранных.
      *
-     * Сравнение без учёта регистра и префикса @. В список можно вписать и НОМЕР: Telegram
-     * показывает телефон вместо имени, если у контакта не задано имя/@username, причём
-     * форматирование у него своё («+31 615 092 866»). Поэтому если обе стороны похожи на
+     * Сравнение без учёта регистра и префикса @, с поддержкой масок (`*`, `?`) — см.
+     * [com.davnozdu.autoresponder.rules.NameMatch]. В список можно вписать и НОМЕР:
+     * мессенджер показывает телефон вместо имени, если контакта нет в книге, причём
+     * форматирование у него своё («+7 951 457-28-49»). Поэтому если обе стороны похожи на
      * номер — сравниваем по цифрам, а не посимвольно.
      */
     fun isExcludedName(sender: String?): Boolean {
-        val raw = sender?.trim()?.removePrefix("@") ?: return false
-        if (raw.isEmpty()) return false
-        return excludedNames.any { e ->
-            val ee = e.trim().removePrefix("@")
-            when {
-                ee.isEmpty() -> false
-                raw.equals(ee, ignoreCase = true) -> true
-                else -> com.davnozdu.autoresponder.rules.PhoneMask.sameNumber(raw, ee)
-            }
-        }
+        if (sender.isNullOrBlank()) return false
+        return excludedNames.any { com.davnozdu.autoresponder.rules.NameMatch.matches(sender, it) }
     }
 
     /** не отвечать звёздным (избранным) контактам телефона */

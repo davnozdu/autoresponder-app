@@ -28,11 +28,28 @@ object PhoneMask {
         }
     }
 
-    /** Номер в списке исключений (Избранные) — сравнение по последним 9 цифрам. */
+    /**
+     * Номер в списке исключений (Избранные) — сравнение по последним 9 цифрам.
+     * Запись с маской (`*`, `?`) сопоставляется как шаблон: и с исходной строкой,
+     * и с одними цифрами («+420*» или «*2849»).
+     */
     fun isExcluded(raw: String?, excluded: List<String>): Boolean {
         if (excluded.isEmpty()) return false
-        val a = digitsTail(raw) ?: return false
-        return excluded.any { e -> digitsTail(e)?.let { it == a } == true }
+        val plain = raw?.trim().orEmpty()
+        if (plain.isEmpty()) return false
+        val tail = digitsTail(plain)
+        val digits = plain.filter { it.isDigit() }
+        return excluded.any { entry ->
+            val e = entry.trim()
+            when {
+                e.isEmpty() -> false
+                NameMatch.hasWildcard(e) ->
+                    NameMatch.matchesWildcard(plain, e) ||
+                    (digits.isNotEmpty() &&
+                     NameMatch.matchesWildcard(digits, e.filter { !it.isWhitespace() }))
+                else -> tail != null && digitsTail(e) == tail
+            }
+        }
     }
 
     private fun digitsTail(raw: String?): String? {

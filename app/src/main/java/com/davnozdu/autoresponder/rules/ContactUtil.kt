@@ -53,7 +53,77 @@ object ContactUtil {
     }
 
     /** Сбросить кэш (после импорта контактов и т.п.). */
-    fun invalidate() = cache.clear()
+    fun invalidate() { cache.clear(); nameCache.clear() }
+
+
+    // --- Поиск по ИМЕНИ ---
+    //
+    // Мессенджеры не передают номер: WhatsApp и Telegram подставляют в уведомление имя из
+    // телефонной книги. Чтобы переключатели «не отвечать звёздным / всем контактам» работали
+    // и для них, контакт ищем по отображаемому имени.
+    //
+    // CONTENT_FILTER_URI отдаёт совпадения по началу слов (надмножество), точное сравнение
+    // делаем в Kotlin: SQLite-коллация NOCASE не сворачивает регистр кириллицы.
+
+    private val nameCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Lookup>>()
+
+    private fun lookupByName(context: Context, name: String?): Lookup {
+        val key = name?.trim() ?: return Lookup(false, false, null)
+        if (key.isEmpty()) return Lookup(false, false, null)
+        val now = System.currentTimeMillis()
+        nameCache[key]?.let { (ts, v) -> if (now - ts < TTL_MS) return v }
+
+        val result = try {
+            val uri = Uri.withAppendedPath(
+                ContactsContract.Contacts.CONTENT_FILTER_URI, Uri.encode(key))
+            context.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
+                        ContactsContract.Contacts.STARRED),
+                null, null, null
+            )?.use { c ->
+                var found: Lookup? = null
+                while (c.moveToNext()) {
+                    val dn = c.getString(0)?.trim() ?: continue
+                    if (!dn.equals(key, ignoreCase = true)) continue
+                    val starred = c.getInt(1) == 1
+                    // Одно имя может быть у нескольких контактов — звёздный среди них главнее.
+                    if (starred) { found = Lookup(true, true, dn); break }
+                    found = Lookup(true, false, dn)
+                }
+                found
+            } ?: Lookup(false, false, null)
+        } catch (e: Exception) {
+            return Lookup(false, false, null)   // ошибку не кэшируем (см. lookup выше)
+        }
+
+        if (nameCache.size > MAX_ENTRIES) nameCache.entries.removeAll { now - it.value.first > TTL_MS }
+        nameCache[key] = now to result
+        return result
+    }
+
+    /** Контакт с таким отображаемым именем есть в книге. */
+    fun isKnownName(context: Context, name: String?): Boolean = lookupByName(context, name).known
+
+    /** Контакт с таким отображаемым именем помечен звёздочкой. */
+    fun isStarredName(context: Context, name: String?): Boolean = lookupByName(context, name).starred
+
+    /**
+     * Имена звёздных (избранных) контактов — для импорта в список избранного мессенджеров.
+     * Именно эти строки WhatsApp и Telegram показывают в уведомлении.
+     */
+    fun starredNames(context: Context): List<String> = try {
+        context.contentResolver.query(
+            ContactsContract.Contacts.CONTENT_URI,
+            arrayOf(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY),
+            "${ContactsContract.Contacts.STARRED} = 1", null,
+            ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+        )?.use { c ->
+            val out = LinkedHashSet<String>()
+            while (c.moveToNext()) c.getString(0)?.trim()?.takeIf { it.isNotEmpty() }?.let { out.add(it) }
+            out.toList()
+        } ?: emptyList()
+    } catch (e: Exception) { emptyList() }
 
     fun isKnownContact(context: Context, number: String?): Boolean = lookup(context, number).known
 

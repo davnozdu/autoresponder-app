@@ -136,6 +136,24 @@ fun AppScreen() {
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {}
+    // Импорт избранных (звёздных) контактов в список исключений мессенджеров.
+    // Мессенджер показывает в уведомлении имя из телефонной книги — импортируем именно имена.
+    fun importStarredContacts() {
+        val names = com.davnozdu.autoresponder.rules.ContactUtil.starredNames(ctx)
+        val added = s.addExcludedNames(names)
+        exclNames = s.excludedNames
+        Toast.makeText(ctx, when {
+            names.isEmpty() -> "В телефонной книге нет избранных (звёздных) контактов"
+            added == 0 -> "Все ${names.size} избранных уже в списке"
+            else -> "Добавлено $added из ${names.size} избранных контактов"
+        }, Toast.LENGTH_LONG).show()
+    }
+    val contactsPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) importStarredContacts()
+        else Toast.makeText(ctx, "Без доступа к контактам импорт невозможен", Toast.LENGTH_SHORT).show()
+    }
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {}
@@ -341,10 +359,13 @@ fun AppScreen() {
             ExpandableSection("Избранные (не отвечать)") {
                 SwitchRow("Не отвечать звёздным контактам", exStarred) { exStarred = it; s.excludeStarred = it }
                 SwitchRow("Не отвечать всем контактам из книги", exContacts) { exContacts = it; s.excludeContacts = it }
+                Text("Оба переключателя действуют и на мессенджеры: там контакт ищется по имени "
+                    + "из уведомления, потому что номера WhatsApp и Telegram не передают.",
+                    style = MaterialTheme.typography.bodySmall)
                 SwitchRow("Уважать приоритетных в «Не беспокоить»", respectDnd) { respectDnd = it; s.respectDndPriority = it }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(newExcl, { newExcl = it }, label = { Text("Номер") },
+                    OutlinedTextField(newExcl, { newExcl = it }, label = { Text("Номер или маска") },
                         modifier = Modifier.weight(1f))
                     Button(onClick = {
                         if (newExcl.isNotBlank()) { s.addExcluded(newExcl); excluded = s.excludedNumbers; newExcl = "" }
@@ -361,37 +382,43 @@ fun AppScreen() {
                         TextButton(onClick = { s.removeExcluded(num); excluded = s.excludedNumbers }) { Text("Удалить") }
                     }
                 }
-                Text("Мессенджеры: имя, @username или номер", style = MaterialTheme.typography.titleSmall)
-                Text("Кому в мессенджерах не отвечаем автоматически. Telegram показывает имя или "
-                    + "@username, а если они не заданы — телефон. Номер можно вписать в любом "
-                    + "формате: +31615092866 или +31 615 092 866 — сравнение идёт по цифрам.",
+                Text("Мессенджеры (WhatsApp, Telegram): имя из книги, номер или маска",
+                    style = MaterialTheme.typography.titleSmall)
+                Text("@username в уведомление НЕ попадает. Мессенджер подставляет имя, под "
+                    + "которым человек записан в вашей телефонной книге («Алекс Лапшинский»). "
+                    + "Если контакта в книге нет: Telegram покажет имя из профиля собеседника, "
+                    + "WhatsApp — номер в своём формате («+7 951 457-28-49»). Точную строку "
+                    + "видно в журнале (from=…) и в истории переписки.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Маска: * — любой текст, ? — один символ. «Мама*» закроет «Мама Нидерланды», "
+                    + "«+420*» — все чешские номера.",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(newExclName, { newExclName = it },
-                        label = { Text("Имя, @username или номер") },
+                        label = { Text("Имя, номер или маска") },
                         modifier = Modifier.weight(1f))
                     Button(onClick = {
                         if (newExclName.isNotBlank()) { s.addExcludedName(newExclName); exclNames = s.excludedNames; newExclName = "" }
                     }) { Text("+") }
                 }
+                OutlinedButton(onClick = {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            ctx, Manifest.permission.READ_CONTACTS) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED) importStarredContacts()
+                    else contactsPermLauncher.launch(Manifest.permission.READ_CONTACTS)
+                }) { Text("Импортировать избранные контакты из книги") }
                 exclNames.forEach { nm ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         // Показываем, КАК запись будет сопоставляться — иначе номер с припиской
                         // молча сравнивается как имя и правило не срабатывает.
-                        val isNum = com.davnozdu.autoresponder.rules.PhoneMask.looksLikeNumber(nm)
-                        val digits = nm.count { it.isDigit() }
+                        val hint = com.davnozdu.autoresponder.rules.NameMatch.describe(nm)
                         Column(Modifier.weight(1f)) {
                             Text(nm)
-                            Text(when {
-                                isNum -> "номер — сравнение по цифрам, формат не важен"
-                                digits >= 8 ->
-                                    "сравнивается как ИМЯ (есть лишние символы). " +
-                                    "Для номера оставьте только цифры и +"
-                                else -> "имя / @username — точное совпадение"
-                            }, style = MaterialTheme.typography.labelSmall,
-                               color = if (!isNum && digits >= 8) MaterialTheme.colorScheme.error
+                            Text(hint, style = MaterialTheme.typography.labelSmall,
+                               color = if (hint.startsWith("сравнивается как ИМЯ"))
+                                       MaterialTheme.colorScheme.error
                                        else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         TextButton(onClick = { s.removeExcludedName(nm); exclNames = s.excludedNames }) { Text("Удалить") }

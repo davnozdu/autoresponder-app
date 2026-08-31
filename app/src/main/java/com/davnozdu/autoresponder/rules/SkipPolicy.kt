@@ -18,4 +18,28 @@ object SkipPolicy {
             return "приоритетный для DND"
         return null
     }
+
+    /**
+     * То же для мессенджеров (WhatsApp/Telegram), где номера нет.
+     *
+     * В уведомлении приходит имя из телефонной книги, а для незнакомцев — номер в формате
+     * самого мессенджера. Поэтому: сначала список избранного мессенджеров (имена и маски),
+     * затем — либо правила по номеру, либо поиск контакта по имени, чтобы переключатели
+     * «не отвечать звёздным / всем контактам» действовали и здесь.
+     */
+    fun reasonForSender(context: Context, sender: String?, s: Settings): String? {
+        val raw = sender?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        if (s.isExcludedName(raw)) return "в Избранных мессенджеров"
+
+        if (PhoneMask.looksLikeNumber(raw)) {
+            if (PhoneMask.isExcluded(raw, s.excludedNumbers)) return "в Избранных (номер)"
+            if (s.excludeStarred && ContactUtil.isStarred(context, raw)) return "звёздный контакт"
+            if (s.excludeContacts && ContactUtil.isKnownContact(context, raw)) return "контакт из книги"
+            return null
+        }
+        if (s.excludeStarred && ContactUtil.isStarredName(context, raw)) return "звёздный контакт «$raw»"
+        if (s.excludeContacts && ContactUtil.isKnownName(context, raw)) return "контакт из книги «$raw»"
+        return null
+    }
 }
