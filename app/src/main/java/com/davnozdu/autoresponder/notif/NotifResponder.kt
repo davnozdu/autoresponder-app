@@ -115,6 +115,44 @@ object NotifResponder {
             if (!bl.viaLlm || !chOk) { log.add("NOTIF[$tag] $key — ЧС: без ответа"); return }
         }
         val forceReply = bl != null
+
+        // CRM: статус заказа. Номера в уведомлении мессенджера нет — он берётся из
+        // телефонной книги по имени отправителя (контакта нет — в CRM не идём).
+        // Проверяется ДО гейта «сейчас открыто»: отвечать статусом днём разрешает
+        // отдельный тумблер.
+        val histKeyEarly = if (channel == Channel.MESSAGES) key else sender.trim()
+        val crmPhones = com.davnozdu.autoresponder.crm.CrmGate.phonesFor(
+            context, number, if (channel == Channel.MESSAGES) null else sender)
+        // Считаем ДО обращения к CrmGate: обработав «ДА», он состояние разговора стирает,
+        // и после вызова отличить эскалацию от обычного вопроса уже нельзя.
+        val crmEscalating = com.davnozdu.autoresponder.crm.CrmGate.isEscalation(context, histKeyEarly, text)
+        val crmReply = com.davnozdu.autoresponder.crm.CrmGate.reply(
+            context, s, histKeyEarly, crmPhones, text, inCh, closedReason != null)
+        if (crmReply != null) {
+            NumberLock.withKey(key) {
+                if (!Dedup.claim("crm:$key:${text.trim()}")) {
+                    log.add("NOTIF[$tag] $key — дубль, ответ по CRM пропущен"); return@withKey
+                }
+                // Лимит действует и на ответы по CRM — иначе одинаковые «ну что там?»
+                // получали бы ответ бесконечно. Но «ДА» он не глушит: клиент уверен,
+                // что его услышали, а заявки нет — худший из возможных исходов.
+                if (!crmEscalating &&
+                    store0(context).replyMode(key, s.maxReplies, s.timeoutHours, s.warnEnabled) == ReplyMode.SILENT) {
+                    log.add("NOTIF[$tag] $key — лимит/таймаут, ответ по CRM пропущен"); return@withKey
+                }
+                val outText = Responder.finish(s, crmReply)
+                if (tryRemoteInputReply(context, sbn, outText)) {
+                    store0(context).markReplied(key, s.timeoutHours)
+                    HistoryLogger.record(context, inId, inCh, "out", outText, auto = true)
+                    NotifListenerService.dismiss(sbn.key)
+                    log.add("NOTIF[$tag] $key — ответ по CRM: $outText")
+                } else {
+                    log.add("NOTIF[$tag] $key — ответ по CRM не ушёл (нет кнопки «Ответить»)")
+                }
+            }
+            return
+        }
+
         if (!forceReply && closedReason == null) {
             log.add("NOTIF[$tag] ${sender.take(16)} — сейчас открыто (не DND/не расписание), пропуск"); return
         }
@@ -164,6 +202,9 @@ object NotifResponder {
             log.add("NOTIF[$tag] $key — ответить не удалось (нет кнопки Reply)")
         }
     }
+
+    /** ReplyStore до основной ветки: CRM-ответ уходит раньше, чем создаётся общий store. */
+    private fun store0(context: Context) = ReplyStore(context)
 
     private fun tryRemoteInputReply(context: Context, sbn: StatusBarNotification, text: String): Boolean {
         return try {

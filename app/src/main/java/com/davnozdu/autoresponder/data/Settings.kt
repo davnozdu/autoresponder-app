@@ -318,6 +318,46 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_EXP_SECRETS, false)
         set(v) = sp.edit().putBoolean(K_EXP_SECRETS, v).apply()
 
+    // --- CRM: статус заказа по номеру телефона (бизнес-функция, по умолчанию выключена) ---
+
+    /** Главный тумблер функции. */
+    var crmEnabled: Boolean
+        get() = sp.getBoolean(K_CRM_ON, false)
+        set(v) = sp.edit().putBoolean(K_CRM_ON, v).apply()
+
+    /** Адрес CRM без хвоста: https://crm.example.cz */
+    var crmBaseUrl: String
+        get() = sp.getString(K_CRM_URL, "")!!.trim().trimEnd('/')
+        set(v) = sp.edit().putString(K_CRM_URL, v.trim().trimEnd('/')).apply()
+
+    var crmToken: String
+        get() = sp.getString(K_CRM_TOKEN, "")!!
+        set(v) = sp.edit().putString(K_CRM_TOKEN, v.trim()).apply()
+
+    /**
+     * Отвечать по CRM и в рабочее время.
+     *
+     * Обычный автоответ уходит только когда «закрыто», но статус заказа — не «мы закрыты»,
+     * и спрашивают о нём чаще всего как раз днём. Отвечаем при этом ТОЛЬКО известному
+     * клиенту и ТОЛЬКО на вопрос о статусе: иначе бот начнёт отвечать вместо человека.
+     */
+    var crmAlwaysAnswer: Boolean
+        get() = sp.getBoolean(K_CRM_ALWAYS, false)
+        set(v) = sp.edit().putBoolean(K_CRM_ALWAYS, v).apply()
+
+    /** Когда последний раз синхронизировали реестр номеров. */
+    var crmRosterAt: Long
+        get() = sp.getLong(K_CRM_ROSTER_AT, 0L)
+        set(v) = sp.edit().putLong(K_CRM_ROSTER_AT, v).apply()
+
+    /** ETag реестра: не изменился — CRM отвечает 304 и пустым телом. */
+    var crmRosterEtag: String
+        get() = sp.getString(K_CRM_ETAG, "")!!
+        set(v) = sp.edit().putString(K_CRM_ETAG, v).apply()
+
+    val crmReady: Boolean
+        get() = crmEnabled && crmBaseUrl.isNotBlank() && crmToken.isNotBlank()
+
     /** Учитывать список праздников (когда офис закрыт) в ответах LLM. По умолчанию выкл. */
     var holidaysEnabled: Boolean
         get() = sp.getBoolean(K_HOL_ON, false)
@@ -540,6 +580,12 @@ class Settings(context: Context) {
         private const val K_BK_LAST = "backup_last"
         private const val K_HOL_ON = "holidays_on"
         private const val K_EXP_SECRETS = "export_secrets"
+        private const val K_CRM_ON = "crm_on"
+        private const val K_CRM_URL = "crm_url"
+        private const val K_CRM_TOKEN = "crm_token"
+        private const val K_CRM_ALWAYS = "crm_always"
+        private const val K_CRM_ROSTER_AT = "crm_roster_at"
+        private const val K_CRM_ETAG = "crm_etag"
         val DEFAULT_APPS = setOf(
             "com.google.android.apps.messaging", "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger")
         private const val K_TPL_PREFIX = "tpl_"
@@ -567,7 +613,7 @@ class Settings(context: Context) {
         private const val K_BIZ = "business_info"
 
         /** Ключи, которые не попадают в экспорт настроек без явного согласия. */
-        private val SECRET_KEYS = setOf(K_LLM_KEY, K_LLM2_KEY)
+        private val SECRET_KEYS = setOf(K_LLM_KEY, K_LLM2_KEY, K_CRM_TOKEN)
 
         const val DEF_AI_PREFIX = "Ответ от AI:"
         const val DEF_PROMPT_CALL =

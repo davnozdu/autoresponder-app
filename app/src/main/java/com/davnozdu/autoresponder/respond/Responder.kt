@@ -123,7 +123,10 @@ object Responder {
         // (SMS/звонок) для ОДНОГО номера одновременно пройти canReply→…→markReplied и удвоить ответ.
         NumberLock.withKey(norm) {
             val mode = store.replyMode(norm, s.maxReplies, s.timeoutHours, s.warnEnabled)
-            if (mode == ReplyMode.SILENT) {
+            // «ДА» в ответ на предложение позвать мастера лимит не глушит: иначе клиент
+            // уверен, что его услышали, а заявки нет — худший из возможных исходов.
+            val escalating = com.davnozdu.autoresponder.crm.CrmGate.isEscalation(context, norm, incomingText)
+            if (mode == ReplyMode.SILENT && !escalating) {
                 log.add("$tag $norm — лимит ${s.maxReplies}, таймаут ${s.timeoutHours}ч, тишина"); return@withKey
             }
 
@@ -145,6 +148,34 @@ object Responder {
                     override = bl.prompt; forceReply = true
                 }
             }
+            // CRM: статус заказа по номеру. Отвечает и в рабочее время, если это
+            // разрешено тумблером, — поэтому проверяется ДО гейта «сейчас открыто».
+            val crmPhones = com.davnozdu.autoresponder.crm.CrmGate.phonesFor(context, norm, null)
+            val crmReply = if (kind == Kind.SMS)
+                com.davnozdu.autoresponder.crm.CrmGate.reply(
+                    context, s, norm, crmPhones, incomingText, "sms", closedReason != null)
+            else null
+            if (crmReply != null) {
+                // Дедуп тот же, что у обычного пути: одно входящее SMS приходит и
+                // ресивером, и уведомлением Google Messages. Заявляем его здесь, потому
+                // что до общей проверки ниже мы не доходим.
+                if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {
+                    log.add("$tag $norm — дубль, ответ по CRM пропущен"); return@withKey
+                }
+                if (s.replyDelayMs > 0) delay(s.replyDelayMs)
+                val outText = finish(s, crmReply)
+                val slotCrm = s.slotForNumber(norm)
+                val segsCrm = SmsSender.send(context, norm, outText, SimUtil.resolveSubId(context, slotCrm))
+                if (segsCrm >= 0) {
+                    store.markReplied(norm, s.timeoutHours)
+                    HistoryLogger.record(context, norm, "sms", "out", outText, auto = true)
+                    log.add("$tag $norm — ответ по CRM ($segsCrm сег): $outText")
+                } else {
+                    log.add("$tag $norm — ОШИБКА отправки ответа по CRM")
+                }
+                return@withKey
+            }
+
             if (!forceReply && closedReason == null) { log.add("$tag $from — открыто, пропуск"); return@withKey }
 
             if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {
@@ -177,6 +208,10 @@ object Responder {
             }
         }
     }
+
+    /** Готовый текст (например, шаблон CRM): префикс и обрезка как у обычного ответа. */
+    fun finish(s: Settings, text: String): String =
+        SegmentBudget.clampToBudget(applyPrefix(s.aiPrefix, text), s.maxSegments)
 
     /** Публичная сборка финального ответа (LLM/шаблон + префикс + обрезка сегментов). */
     fun composeReply(context: Context, s: Settings, incomingText: String?, kind: Kind, returning: Boolean,
@@ -286,6 +321,11 @@ object Responder {
     ): String {
         val defName = when (s.defaultLang) { "ru" -> "Russian"; "cs" -> "Czech"; else -> "English" }
         val history = historyBlock(context, historyKey, incomingText)
+        // Клиент известен, заказ у него есть, но спросил он не про статус (на прямой вопрос
+        // отвечает шаблон в CrmFlow, сюда такое не доходит). Отдаём модели факты, чтобы она
+        // говорила своими словами, но не выдумывала номера и сроки.
+        val crm = com.davnozdu.autoresponder.crm.CrmFlow.promptBlock(
+            context, com.davnozdu.autoresponder.crm.CrmGate.phonesFor(context, null, historyKey))
         // Текущие дата/время/день недели с устройства — чтобы LLM накладывала праздники на текущий год
         // и понимала «сегодня/завтра/в субботу».
         val now = java.time.LocalDateTime.now()
@@ -312,6 +352,7 @@ object Responder {
             ${AboutInfo.text(context, s.businessInfo)}
             $holBlock
             $nowBlock
+            $crm
             $history
             ${if (!incomingText.isNullOrBlank()) "Customer's last message: \"$incomingText\"" else ""}
             Reply in the customer's language; if unknown, reply in $defName.
@@ -328,6 +369,7 @@ object Responder {
             ${AboutInfo.text(context, s.businessInfo)}
             $holBlock
             $nowBlock
+            $crm
             $history
             Текущий режим: ${if (closedNow) "нерабочее время (Не беспокоить включён)" else "рабочее время"}.
             Customer's SMS: "$incomingText"

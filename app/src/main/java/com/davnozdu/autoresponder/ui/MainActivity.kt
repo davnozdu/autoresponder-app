@@ -88,6 +88,11 @@ fun AppScreen() {
     var warnOn by remember { mutableStateOf(s.warnEnabled) }
     var exclNames by remember { mutableStateOf(s.excludedNames) }
     var newExclName by remember { mutableStateOf("") }
+    var crmOn by remember { mutableStateOf(s.crmEnabled) }
+    var crmUrl by remember { mutableStateOf(s.crmBaseUrl) }
+    var crmToken by remember { mutableStateOf(s.crmToken) }
+    var crmAlways by remember { mutableStateOf(s.crmAlwaysAnswer) }
+    var crmStatus by remember { mutableStateOf("") }
     var aboutSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.AboutInfo.source(ctx)) }
     var holOn by remember { mutableStateOf(s.holidaysEnabled) }
     var holSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.Holidays.source(ctx)) }
@@ -424,6 +429,53 @@ fun AppScreen() {
                         TextButton(onClick = { s.removeExcludedName(nm); exclNames = s.excludedNames }) { Text("Удалить") }
                     }
                 }
+            }
+
+            ExpandableSection("CRM: статус заказа") {
+                Text("Клиент спрашивает «когда будет готов заказ?» — приложение находит его "
+                    + "в CRM по номеру телефона и отвечает само: этап заказа и последний "
+                    + "статус с датой. Несколько заказов — спросит, про какой. Нужен живой "
+                    + "мастер — клиент пишет ДА, и вопрос ложится в карточку заказа.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Номер берётся из SMS и звонка напрямую, а для WhatsApp и Telegram — "
+                    + "из телефонной книги по имени отправителя. Нет контакта в книге — "
+                    + "в CRM не идём.",
+                    style = MaterialTheme.typography.bodySmall)
+                SwitchRow("Включить", crmOn) { crmOn = it; s.crmEnabled = it }
+                OutlinedTextField(crmUrl, { crmUrl = it; s.crmBaseUrl = it },
+                    label = { Text("Адрес CRM (https://…)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(crmToken, { crmToken = it; s.crmToken = it },
+                    label = { Text("Токен") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth())
+                Text("Токен выпускается в CRM: Настройки → Автоответчик. Показывается один раз.",
+                    style = MaterialTheme.typography.bodySmall)
+                SwitchRow("Отвечать и в рабочее время", crmAlways) { crmAlways = it; s.crmAlwaysAnswer = it }
+                Text("Обычный автоответ уходит только когда «закрыто». Статус заказа — не "
+                    + "«мы закрыты», и спрашивают о нём чаще всего днём. При включённом "
+                    + "переключателе днём отвечаем только известному клиенту и только на "
+                    + "вопрос о заказе.",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        crmStatus = "Проверяю…"
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                com.davnozdu.autoresponder.crm.CrmRoster.sync(ctx, force = true)
+                            }
+                            crmStatus = if (ok)
+                                "Связь есть. В реестре ${com.davnozdu.autoresponder.crm.CrmRoster.size(ctx)} номеров с активными записями."
+                            else "Не вышло. Проверь адрес, токен и что в CRM включён приём (и что приложению разрешена сеть в файрволе)."
+                        }
+                    }) { Text("Проверить связь") }
+                    OutlinedButton(onClick = {
+                        com.davnozdu.autoresponder.crm.CrmRoster.clear(ctx)
+                        com.davnozdu.autoresponder.crm.CrmFlow.invalidate()
+                        crmStatus = "Реестр очищен."
+                    }) { Text("Сбросить реестр") }
+                }
+                if (crmStatus.isNotBlank())
+                    Text(crmStatus, style = MaterialTheme.typography.bodySmall)
             }
 
             ExpandableSection("Лимиты и предупреждение") {
