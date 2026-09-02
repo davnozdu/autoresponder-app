@@ -48,7 +48,7 @@ private fun ago(ts: Long): String {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun InboxScreen() {
     val ctx = LocalContext.current
@@ -68,8 +68,9 @@ fun InboxScreen() {
 
     Scaffold(topBar = { TopAppBar(title = { Text("Требуют ответа") }) }) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            Text("Последнее слово за клиентом: авто-ответ был, живого — нет. "
-                + "Ветка уходит из списка сама, когда вы отправите SMS или перезвоните.",
+            Text("Только те, кому ответил робот, а вы — ещё нет. Рассылки и переписка, "
+                + "на которую автоответчик не отвечал, сюда не попадают. Ветка уходит из "
+                + "списка сама, когда вы отправите SMS или перезвоните.",
                 Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
             Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(days == 1, { days = 1 }, { Text("Сутки") })
@@ -87,8 +88,11 @@ fun InboxScreen() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (p.body.isNotBlank())
                             Text(p.body.take(120), style = MaterialTheme.typography.bodySmall)
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // FlowRow, а не Row: четыре кнопки на узком экране или при
+                        // крупном системном шрифте уезжают за край, и «Готово» —
+                        // единственное, ради чего экран и нужен, — становится недоступным.
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.Center) {
                             TextButton(onClick = {
                                 ctx.startActivity(Intent(Intent.ACTION_DIAL,
                                     Uri.parse("tel:" + p.number)))
@@ -97,7 +101,6 @@ fun InboxScreen() {
                                 ctx.startActivity(Intent(Intent.ACTION_SENDTO,
                                     Uri.parse("smsto:" + p.number)))
                             }) { Text("SMS") }
-                            Spacer(Modifier.weight(1f))
                             TextButton(onClick = { blockWho = p.number to p.name }) { Text("В ЧС") }
                             TextButton(onClick = {
                                 // «Занялся» — отметка временем последнего входящего: клиент

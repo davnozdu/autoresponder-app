@@ -251,11 +251,16 @@ class HistoryDb private constructor(context: Context) :
     }
 
     /**
-     * Ветки, где последнее слово осталось за клиентом, — «требуют ответа».
+     * Ветки, где ЗА ВАС ответил робот, а живого ответа так и не было.
      *
-     * Авто-ответ ответом НЕ считается: в том и смысл, что робот подержал разговор, а
-     * человеку всё равно надо перезвонить. Ответом считается наше исходящее, сделанное
-     * руками (`auto=0`) — отправленная SMS или исходящий звонок из журнала.
+     * Отбор идёт не по входящим, а по авто-ответам: список нужен затем, что клиенту от
+     * нашего имени пообещали ответить в рабочее время, и обещание кто-то должен выполнить.
+     * Банковские рассылки, переписка с родными и всё, на что автоответчик не отвечал,
+     * сюда не попадают — они не наша задача, а шум, из-за которого список перестают открывать.
+     *
+     * Авто-ответ ответом НЕ считается: он и есть причина, по которой ветка в списке.
+     * Ответом считается наше исходящее, сделанное руками (`auto=0`) — отправленная SMS
+     * или исходящий звонок из журнала.
      *
      * [since] отсекает древность: неделю назад «не ответили» — это уже не задача, а история.
      *
@@ -275,10 +280,12 @@ class HistoryDb private constructor(context: Context) :
               FROM (SELECT number,
                            MAX(CASE WHEN direction='in' THEN ts END) AS last_in,
                            MAX(CASE WHEN direction='out' AND auto=0 THEN ts END) AS last_out,
+                           MAX(CASE WHEN direction='out' AND auto=1 THEN ts END) AS last_auto,
                            SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS cnt
                       FROM events GROUP BY number) g
               LEFT JOIN inbox_done d ON d.number = g.number
-             WHERE g.last_in IS NOT NULL AND g.last_in >= CAST(? AS INTEGER)
+             WHERE g.last_auto >= CAST(? AS INTEGER)
+               AND g.last_in IS NOT NULL
                AND g.last_in > COALESCE(g.last_out, 0)
                AND g.last_in > COALESCE(d.ts, 0)
              ORDER BY g.last_in DESC
