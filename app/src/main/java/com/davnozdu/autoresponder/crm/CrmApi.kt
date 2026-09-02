@@ -55,6 +55,17 @@ object CrmApi {
     private fun Request.Builder.auth(s: Settings) = this
         .header("Authorization", "Bearer ${s.crmToken}")
         .header("X-Api-Token", s.crmToken)
+        // Постоянный User-Agent: перед CRM стоит Cloudflare, и если его защита начнёт
+        // придираться к запросам, по этой строке приложение можно внести в исключения.
+        .header("User-Agent", "AutoResponder/${com.davnozdu.autoresponder.BuildConfig.VERSION_NAME}")
+
+    /**
+     * Ответ не разобрался как JSON — почти всегда это страница-заглушка перед CRM
+     * (Cloudflare, «сайт на обслуживании», редирект хостера). Без куска тела в журнале
+     * это неотличимо от «CRM молчит», поэтому первые сто знаков забираем с собой.
+     */
+    private fun snippet(body: String): String =
+        body.replace(Regex("\\s+"), " ").trim().take(100)
 
     /**
      * Реестр номеров с активными записями.
@@ -71,7 +82,8 @@ object CrmApi {
             client.newCall(req).execute().use { r ->
                 when {
                     r.code == 304 -> RosterResult.NotModified
-                    !r.isSuccessful -> RosterResult.Error("HTTP ${r.code}")
+                    !r.isSuccessful ->
+                        RosterResult.Error("HTTP ${r.code}: ${snippet(r.body?.string().orEmpty())}")
                     else -> {
                         val body = r.body?.string().orEmpty()
                         val arr = JSONObject(body).optJSONArray("phones") ?: JSONArray()
@@ -95,11 +107,15 @@ object CrmApi {
             val req = Request.Builder().url(url(s, "bot.lookup")).auth(s)
                 .post(payload.toRequestBody(JSON)).build()
             client.newCall(req).execute().use { r ->
+                val body = r.body?.string().orEmpty()
                 if (!r.isSuccessful) {
-                    EventLog(context).add("CRM lookup: HTTP ${r.code}")
+                    EventLog(context).add("CRM lookup: HTTP ${r.code} — ${snippet(body)}")
                     return null
                 }
-                val o = JSONObject(r.body?.string().orEmpty())
+                val o = try { JSONObject(body) } catch (e: Exception) {
+                    EventLog(context).add("CRM lookup: ответ не JSON — ${snippet(body)}")
+                    return null
+                }
                 if (!o.optBoolean("found", false)) return CrmLookup(false, "", emptyList())
                 val arr = o.optJSONArray("records") ?: JSONArray()
                 val out = ArrayList<CrmRecord>(arr.length())
