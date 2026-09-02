@@ -258,6 +258,11 @@ class HistoryDb private constructor(context: Context) :
      * руками (`auto=0`) — отправленная SMS или исходящий звонок из журнала.
      *
      * [since] отсекает древность: неделю назад «не ответили» — это уже не задача, а история.
+     *
+     * CAST у параметра обязателен. Android отдаёт параметры запроса ТОЛЬКО строками, а
+     * last_in — не колонка, а агрегат, и integer-affinity колонки ts на него не переходит.
+     * Сравнение числа со строкой в SQLite всегда ложно (текст «больше» любого числа),
+     * поэтому без CAST запрос молча возвращал ноль строк — проверено на живой базе.
      */
     fun needsAnswer(since: Long): List<PendingItem> {
         val res = ArrayList<PendingItem>()
@@ -273,7 +278,7 @@ class HistoryDb private constructor(context: Context) :
                            SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS cnt
                       FROM events GROUP BY number) g
               LEFT JOIN inbox_done d ON d.number = g.number
-             WHERE g.last_in IS NOT NULL AND g.last_in >= ?
+             WHERE g.last_in IS NOT NULL AND g.last_in >= CAST(? AS INTEGER)
                AND g.last_in > COALESCE(g.last_out, 0)
                AND g.last_in > COALESCE(d.ts, 0)
              ORDER BY g.last_in DESC
