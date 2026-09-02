@@ -21,29 +21,47 @@ object CrmRoster {
     private const val FRESH_MS = 60 * 60_000L        // час
     private const val SYNC_EVERY_MS = 15 * 60_000L   // как часто пытаемся обновить
 
-    @Volatile private var cache: Set<String>? = null
+    // Номер -> отпечаток состояния его записей в CRM (пустая строка, если CRM старая).
+    @Volatile private var cache: Map<String, String>? = null
 
     private fun file(context: Context) = File(context.applicationContext.filesDir, FILE)
 
-    private fun load(context: Context): Set<String> {
+    /** Формат файла: `номер` или `номер<TAB>отпечаток` — старые файлы читаются как есть. */
+    private fun load(context: Context): Map<String, String> {
         cache?.let { return it }
-        val set = try {
+        val map = try {
             val f = file(context)
-            if (!f.exists()) emptySet()
-            else f.readLines().mapNotNull { it.trim().ifBlank { null } }.toSet()
-        } catch (_: Exception) { emptySet() }
-        cache = set
-        return set
+            if (!f.exists()) emptyMap()
+            else f.readLines().mapNotNull { line ->
+                val t = line.trim()
+                if (t.isEmpty()) null
+                else {
+                    val i = t.indexOf('\t')
+                    if (i < 0) t to "" else t.substring(0, i) to t.substring(i + 1)
+                }
+            }.toMap()
+        } catch (_: Exception) { emptyMap() }
+        cache = map
+        return map
     }
 
-    private fun save(context: Context, phones: List<String>) {
+    private fun save(context: Context, phones: List<String>, stamps: Map<String, String>) {
+        val map = phones.associateWith { stamps[it].orEmpty() }
         try {
-            file(context).writeText(phones.joinToString("\n"))
-            cache = phones.toSet()
+            file(context).writeText(map.entries.joinToString("\n") { (k, v) ->
+                if (v.isEmpty()) k else "$k\t$v" })
+            cache = map
         } catch (e: Exception) {
             EventLog(context).add("CRM реестр: не удалось сохранить (${e.message})")
         }
     }
+
+    /**
+     * Отпечаток состояния для номера: пока он тот же, ответ CRM про этого клиента не
+     * изменился. Пусто — CRM старой версии или номера нет в реестре; тогда кеш ответа
+     * живёт по времени, как раньше.
+     */
+    fun stampFor(context: Context, phone: String): String = load(context)[key(phone)].orEmpty()
 
     fun size(context: Context): Int = load(context).size
 
@@ -67,7 +85,7 @@ object CrmRoster {
         if (phones.isEmpty()) return false
         val roster = load(context)
         if (roster.isEmpty()) return !isFresh(context)
-        if (phones.any { key(it).length >= 6 && key(it) in roster }) return true
+        if (phones.any { key(it).length >= 6 && key(it) in roster.keys }) return true
         return !isFresh(context)
     }
 
@@ -86,7 +104,15 @@ object CrmRoster {
 
         return when (val res = CrmApi.roster(context, if (force) "" else s.crmRosterEtag)) {
             is RosterResult.Ok -> {
-                save(context, res.phones)
+                // Изменившийся отпечаток = ответ про этого клиента устарел; выбрасываем
+                // ровно его, а не весь кеш: у остальных ответ по-прежнему верен.
+                val old = load(context)
+                res.phones.forEach { p ->
+                    if (old[p] != res.stamps[p].orEmpty()) CrmFlow.invalidate(p)
+                }
+                old.keys.filterNot { it in res.stamps.keys || it in res.phones }
+                    .forEach { CrmFlow.invalidate(it) }   // заказ закрыт — номер выпал из реестра
+                save(context, res.phones, res.stamps)
                 s.crmRosterEtag = res.etag
                 s.crmRosterAt = System.currentTimeMillis()
                 EventLog(context).add("CRM реестр: ${res.phones.size} номеров с активными записями")
@@ -121,9 +147,10 @@ object CrmRoster {
 
         return when (val res = CrmApi.roster(context, "")) {
             is RosterResult.Ok -> {
-                save(context, res.phones)
+                save(context, res.phones, res.stamps)
                 s.crmRosterEtag = res.etag
                 s.crmRosterAt = System.currentTimeMillis()
+                CrmFlow.invalidateAll()
                 null
             }
             // Пустого ETag мы не посылали, так что 304 сюда прийти не может; на всякий

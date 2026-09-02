@@ -627,7 +627,7 @@ fun AppScreen() {
                     }) { Text("Проверить связь") }
                     OutlinedButton(onClick = {
                         com.davnozdu.autoresponder.crm.CrmRoster.clear(ctx)
-                        com.davnozdu.autoresponder.crm.CrmFlow.invalidate()
+                        com.davnozdu.autoresponder.crm.CrmFlow.invalidateAll()
                         crmStatus = "Реестр очищен."
                     }) { Text("Сбросить реестр") }
                 }

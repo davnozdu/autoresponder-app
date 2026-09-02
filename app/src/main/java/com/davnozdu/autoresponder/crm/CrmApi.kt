@@ -87,10 +87,22 @@ object CrmApi {
                         RosterResult.Error("HTTP ${r.code}: ${snippet(r.body?.string().orEmpty())}")
                     else -> {
                         val body = r.body?.string().orEmpty()
-                        val arr = JSONObject(body).optJSONArray("phones") ?: JSONArray()
+                        val o = JSONObject(body)
+                        val arr = o.optJSONArray("phones") ?: JSONArray()
                         val list = ArrayList<String>(arr.length())
                         for (i in 0 until arr.length()) list.add(arr.getString(i))
-                        RosterResult.Ok(list, r.header("ETag").orEmpty())
+                        // Отпечатки состояния (CRM новее v1.24): номер -> короткий хеш.
+                        val stamps = HashMap<String, String>()
+                        o.optJSONObject("stamps")?.let { j ->
+                            val it2 = j.keys()
+                            while (it2.hasNext()) { val k = it2.next(); stamps[k] = j.optString(k) }
+                        }
+                        // ETag берём из тела, если заголовок не дошёл: перед CRM стоит
+                        // Cloudflare, и он ETag ответа срезает — условный запрос при этом
+                        // работает, но телефону нечего было отправить обратно, и полный
+                        // реестр качался каждые 15 минут.
+                        val etag = r.header("ETag").orEmpty().ifBlank { o.optString("etag") }
+                        RosterResult.Ok(list, etag, stamps)
                     }
                 }
             }
@@ -167,7 +179,8 @@ object CrmApi {
 }
 
 sealed class RosterResult {
-    data class Ok(val phones: List<String>, val etag: String) : RosterResult()
+    data class Ok(val phones: List<String>, val etag: String,
+                  val stamps: Map<String, String> = emptyMap()) : RosterResult()
     object NotModified : RosterResult()
     data class Error(val why: String) : RosterResult()
 }

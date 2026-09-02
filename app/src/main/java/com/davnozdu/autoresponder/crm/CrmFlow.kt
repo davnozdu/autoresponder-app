@@ -17,8 +17,13 @@ import com.davnozdu.autoresponder.data.Settings
  */
 object CrmFlow {
 
+    /** Запасной срок жизни ответа — когда отпечатка нет (старая CRM, номер вне реестра). */
     private const val CACHE_MS = 5 * 60_000L
-    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, CrmLookup>>()
+    /** Отпечаток есть — ответ верен, пока он не изменился; сутки стоят как страховка. */
+    private const val CACHE_STAMPED_MS = 24 * 60 * 60_000L
+
+    private data class Cached(val at: Long, val stamp: String, val value: CrmLookup)
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Cached>()
 
     /* ---------------- Определение вопроса ---------------- */
 
@@ -122,29 +127,44 @@ object CrmFlow {
 
     /**
      * Что в работе у этого человека, или null — если спрашивать не нужно либо не вышло.
-     * Кеш на пять минут: серия «ну что там?», «алё», «???» подряд не должна давать три запроса.
+     *
+     * Кеш держится не на времени, а на отпечатке состояния из реестра. Раньше ответ жил
+     * пять минут: дольше — риск сказать про уже закрытый заказ, короче — запрос в CRM на
+     * каждое «ну что там?». Теперь реестр (условный запрос, обычно пустой ответ 304)
+     * сообщает, у кого что-то изменилось, и выброшен будет ровно этот номер.
+     *
+     * Перед ответом реестр при необходимости досинхронизируется: вопрос о статусе приходит
+     * несколько раз в день, лишние 200 мс на пустой 304 дешевле устаревшего ответа.
      */
     fun lookup(context: Context, phones: List<String>): CrmLookup? {
         val s = Settings(context)
         if (!s.crmReady) return null
+        CrmRoster.sync(context)
         if (!CrmRoster.shouldAsk(context, phones)) return null
 
         for (p in phones) {
             val key = p.filter { it.isDigit() }.takeLast(9)
             if (key.length < 6) continue
-            cache[key]?.let { (ts, v) ->
-                if (System.currentTimeMillis() - ts < CACHE_MS) {
-                    return if (v.found) v else null
-                }
+            val stamp = CrmRoster.stampFor(context, p)
+            cache[key]?.let { c ->
+                val age = System.currentTimeMillis() - c.at
+                val fresh = if (stamp.isNotEmpty() && c.stamp == stamp) age < CACHE_STAMPED_MS
+                            else age < CACHE_MS
+                if (fresh) return if (c.value.found) c.value else null
             }
             val res = CrmApi.lookup(context, p) ?: continue
-            cache[key] = System.currentTimeMillis() to res
+            cache[key] = Cached(System.currentTimeMillis(), stamp, res)
             if (res.found && res.records.isNotEmpty()) return res
         }
         return null
     }
 
-    fun invalidate() = cache.clear()
+    /** Забыть ответ по одному номеру (у него в CRM что-то изменилось). */
+    fun invalidate(phoneKey: String) {
+        cache.remove(phoneKey.filter { it.isDigit() }.takeLast(9))
+    }
+
+    fun invalidateAll() = cache.clear()
 
     /** В CRM чешский обозначен как «cz», в приложении — «cs». */
     private fun crmLang(v: String) = if (v.equals("cz", true)) "cs" else v.lowercase()
