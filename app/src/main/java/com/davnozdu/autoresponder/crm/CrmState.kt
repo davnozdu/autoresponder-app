@@ -43,7 +43,7 @@ object CrmState {
                 val j = arr.getJSONObject(i)
                 recs.add(CrmRecord(
                     entity = j.optString("e"), id = j.optInt("i"), number = j.optString("n"),
-                    device = j.optString("d"), label = j.optString("l"),
+                    device = j.optString("d"), stage = j.optString("s"), label = j.optString("l"),
                     lastLabel = j.optString("ll").ifBlank { null },
                     lastAt = j.optString("la").ifBlank { null },
                     deadline = j.optString("dl").ifBlank { null },
@@ -59,7 +59,7 @@ object CrmState {
         for (r in records) {
             arr.put(JSONObject()
                 .put("e", r.entity).put("i", r.id).put("n", r.number).put("d", r.device)
-                .put("l", r.label).put("ll", r.lastLabel ?: "").put("la", r.lastAt ?: "")
+                .put("s", r.stage).put("l", r.label).put("ll", r.lastLabel ?: "").put("la", r.lastAt ?: "")
                 .put("dl", r.deadline ?: "").put("a", r.canAsk))
         }
         val o = JSONObject()

@@ -17,7 +17,8 @@ data class CrmRecord(
     val id: Int,
     val number: String,          // ZK-2026-0042
     val device: String,          // «Ноутбук MacBook Pro 14», у рекламации пусто
-    val label: String,           // «В работе»
+    val stage: String,           // код этапа: new | in_progress | ready | …
+    val label: String,           // «В работе» — уже на языке клиента
     val lastLabel: String?,      // «Диагностика» — последняя запись ленты этапов
     val lastAt: String?,         // когда
     val deadline: String?,       // срок рекламации
@@ -127,6 +128,7 @@ object CrmApi {
                         id = j.optInt("id"),
                         number = j.optString("number"),
                         device = j.optString("device"),
+                        stage = j.optString("stage"),
                         label = j.optString("label"),
                         lastLabel = last?.optString("label")?.ifBlank { null },
                         lastAt = last?.optString("at")?.ifBlank { null },

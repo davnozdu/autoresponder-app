@@ -48,12 +48,23 @@ object CrmText {
             }
         } else ""
 
+        // Заказ уже готов — обещать «сообщим, когда будет готово» нелепо, а именно так
+        // и выходило: этап «Готов к выдаче» входит в активные, и общая фраза к нему
+        // подставлялась как ко всем остальным.
+        val ready = r.stage.equals("ready", true)
+
         return when (l(lang)) {
-            "cs" -> "$t — ${r.label}.$extra Až bude hotovo, ozveme se. " +
+            "cs" -> "$t — ${r.label}.$extra " +
+                    (if (ready) "Můžete si ji vyzvednout v pracovní době. "
+                     else "Až bude hotovo, ozveme se. ") +
                     "Chcete odpověď od technika? Napište ANO."
-            "en" -> "$t — ${r.label}.$extra We will message you when it is ready. " +
+            "en" -> "$t — ${r.label}.$extra " +
+                    (if (ready) "You can pick it up during business hours. "
+                     else "We will message you when it is ready. ") +
                     "Want a reply from the technician? Write YES."
-            else -> "$t — ${r.label}.$extra Как будет готово, вы получите сообщение. " +
+            else -> "$t — ${r.label}.$extra " +
+                    (if (ready) "Можно забрать в рабочее время. "
+                     else "Как будет готово, вы получите сообщение. ") +
                     "Нужен ответ мастера — напишите ДА."
         }
     }
