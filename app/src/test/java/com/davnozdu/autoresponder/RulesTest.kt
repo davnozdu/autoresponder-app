@@ -196,3 +196,42 @@ class TimeWindowTest {
         assertEquals("22:30", com.davnozdu.autoresponder.rules.TimeWindow.fmt(22 * 60 + 30))
     }
 }
+
+class PricesTest {
+
+    private val csv = """
+        # устройство;услуга;цена;срок
+        устройство;услуга;цена;срок
+        iPhone 12;замена экрана;3500 Kč;1 день
+        iPhone 13;замена экрана;4200 Kč;1 день
+        MacBook Pro 14;замена батареи;5900 Kč;2 дня
+    """.trimIndent()
+
+    @Test fun `заголовок и комментарии не попадают в прайс`() {
+        val rows = com.davnozdu.autoresponder.store.Prices.parse(csv)
+        assertEquals(3, rows.size)
+        assertEquals("iPhone 12", rows[0].device)
+        assertEquals("3500 Kč", rows[0].price)
+    }
+
+    @Test fun `вопрос про деньги узнаётся на трёх языках`() {
+        val p = com.davnozdu.autoresponder.store.Prices
+        assertTrue(p.looksLikePriceQuestion("сколько стоит замена экрана?"))
+        assertTrue(p.looksLikePriceQuestion("Kolik stojí výměna displeje?"))
+        assertTrue(p.looksLikePriceQuestion("how much is a screen replacement"))
+        assertFalse(p.looksLikePriceQuestion("когда будет готов?"))
+        assertFalse(p.looksLikePriceQuestion(null))
+    }
+
+    @Test fun `подбираются строки по словам вопроса`() {
+        val rows = com.davnozdu.autoresponder.store.Prices.parse(csv)
+        val hit = com.davnozdu.autoresponder.store.Prices.match(rows, "сколько стоит замена батареи на macbook")
+        assertTrue(hit.isNotEmpty())
+        assertEquals("MacBook Pro 14", hit.first().device)
+    }
+
+    @Test fun `на неизвестное устройство строк нет — модель цену не назовёт`() {
+        val rows = com.davnozdu.autoresponder.store.Prices.parse(csv)
+        assertTrue(com.davnozdu.autoresponder.store.Prices.match(rows, "сколько стоит ремонт холодильника").isEmpty())
+    }
+}

@@ -52,6 +52,8 @@ fun AppScreen() {
 
     var enabled by remember { mutableStateOf(s.enabled) }
     var respCalls by remember { mutableStateOf(s.respondCalls) }
+    var priceSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.Prices.source(ctx)) }
+    var priceCount by remember { mutableStateOf(com.davnozdu.autoresponder.store.Prices.rows(ctx).size) }
     var digestOn by remember { mutableStateOf(s.digestEnabled) }
     var digestHour by remember { mutableStateOf(s.digestHour) }
     var quietOn by remember { mutableStateOf(s.quietHoursOn) }
@@ -216,6 +218,19 @@ fun AppScreen() {
                 holSrc = com.davnozdu.autoresponder.store.Holidays.source(ctx)
                 Toast.makeText(ctx, "Список праздников загружен", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) { Toast.makeText(ctx, "Ошибка загрузки списка", Toast.LENGTH_SHORT).show() }
+        }
+    }
+    val priceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val txt = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: ""
+                com.davnozdu.autoresponder.store.Prices.saveAppCopy(ctx, txt)
+                priceSrc = com.davnozdu.autoresponder.store.Prices.source(ctx)
+                priceCount = com.davnozdu.autoresponder.store.Prices.rows(ctx).size
+                Toast.makeText(ctx, "Прайс загружен: $priceCount строк", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) { Toast.makeText(ctx, "Ошибка загрузки прайса", Toast.LENGTH_SHORT).show() }
         }
     }
     val contactLauncher = rememberLauncherForActivityResult(
@@ -783,6 +798,28 @@ fun AppScreen() {
                         Toast.makeText(ctx, "Загруженный файл удалён", Toast.LENGTH_SHORT).show()
                     }) { Text("Убрать загруженный") }
                 }
+            }
+
+            ExpandableSection("Прайс-лист (цены как факты)") {
+                Text("Цену модель НЕ придумывает: код подставляет в промпт строки прайса, "
+                    + "а нет подходящей — запрещает называть цифру и велит сказать, что "
+                    + "мастер уточнит после диагностики.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Формат CSV, одна услуга в строке: устройство;услуга;цена;срок. "
+                    + "«#» — комментарий. Пример: iPhone 12;замена экрана;3500 Kč;1 день",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { priceLauncher.launch(arrayOf("*/*")) }) { Text("Загрузить .csv") }
+                    if (priceSrc != null) OutlinedButton(onClick = {
+                        com.davnozdu.autoresponder.store.Prices.saveAppCopy(ctx, null)
+                        priceSrc = com.davnozdu.autoresponder.store.Prices.source(ctx)
+                        priceCount = com.davnozdu.autoresponder.store.Prices.rows(ctx).size
+                    }) { Text("Убрать копию") }
+                }
+                Text(priceSrc?.let { "Источник: $it ($priceCount строк)" }
+                    ?: "Прайс не задан — цены в ответах не называются. "
+                       + "Можно положить файл в ${com.davnozdu.autoresponder.store.Prices.PUBLIC_PATH}",
+                    style = MaterialTheme.typography.bodySmall)
             }
 
             ExpandableSection("Праздники (гос. выходные)") {

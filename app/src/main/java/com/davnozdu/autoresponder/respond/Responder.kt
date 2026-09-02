@@ -329,6 +329,8 @@ object Responder {
         // говорила своими словами, но не выдумывала номера и сроки.
         val crm = com.davnozdu.autoresponder.crm.CrmFlow.promptBlock(
             context, com.davnozdu.autoresponder.crm.CrmGate.phonesFor(context, null, historyKey))
+        // Цены — тоже факты кода, не модели: см. Prices.
+        val prices = com.davnozdu.autoresponder.store.Prices.promptBlock(context, incomingText)
         // Текущие дата/время/день недели с устройства — чтобы LLM накладывала праздники на текущий год
         // и понимала «сегодня/завтра/в субботу».
         val now = java.time.LocalDateTime.now()
@@ -373,6 +375,7 @@ object Responder {
             $holBlock
             $nowBlock
             $crm
+            $prices
             $history
             Текущий режим: ${if (closedNow) "нерабочее время (Не беспокоить включён)" else "рабочее время"}.
             Customer's SMS: "$incomingText"
