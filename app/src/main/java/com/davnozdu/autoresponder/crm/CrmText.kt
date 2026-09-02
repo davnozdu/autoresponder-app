@@ -57,15 +57,15 @@ object CrmText {
             "cs" -> "$t — ${r.label}.$extra " +
                     (if (ready) "Můžete si ji vyzvednout v pracovní době. "
                      else "Až bude hotovo, ozveme se. ") +
-                    "Chcete odpověď od technika? Napište ANO."
+                    "Chcete odpověď od technika? Napište ANO a rovnou svůj dotaz."
             "en" -> "$t — ${r.label}.$extra " +
                     (if (ready) "You can pick it up during business hours. "
                      else "We will message you when it is ready. ") +
-                    "Want a reply from the technician? Write YES."
+                    "Want a reply from the technician? Write YES and your question."
             else -> "$t — ${r.label}.$extra " +
                     (if (ready) "Можно забрать в рабочее время. "
                      else "Как будет готово, вы получите сообщение. ") +
-                    "Нужен ответ мастера — напишите ДА."
+                    "Нужен ответ мастера — напишите ДА и следом ваш вопрос."
         }
     }
 
@@ -84,9 +84,9 @@ object CrmText {
     fun all(records: List<CrmRecord>, lang: String): String {
         val list = records.take(3).joinToString("; ") { "${title(it, lang)} — ${it.label}" }
         return when (l(lang)) {
-            "cs" -> "Stav zakázek: $list. Chcete odpověď od technika? Napište ANO."
-            "en" -> "Order status: $list. Want a reply from the technician? Write YES."
-            else -> "Статусы заказов: $list. Нужен ответ мастера — напишите ДА."
+            "cs" -> "Stav zakázek: $list. Chcete odpověď od technika? Napište ANO a svůj dotaz."
+            "en" -> "Order status: $list. Want a reply from the technician? Write YES and your question."
+            else -> "Статусы заказов: $list. Нужен ответ мастера — напишите ДА и следом ваш вопрос."
         }
     }
 

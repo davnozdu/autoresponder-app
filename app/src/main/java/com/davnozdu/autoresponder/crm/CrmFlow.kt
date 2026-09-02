@@ -43,17 +43,34 @@ object CrmFlow {
         return hasSubject && hasState
     }
 
-    private val yesWords = setOf(
-        "да", "ага", "давай", "давайте", "нужен", "нужно", "хочу", "конечно",
-        "ano", "jo", "chci", "prosím", "prosim",
-        "yes", "yep", "ok", "okay", "sure", "+", "👍", "✅")
+    private val yesWords = listOf(
+        "да", "ага", "давай", "давайте", "конечно",
+        "ano", "jo", "chci",
+        "yes", "yep", "okay", "ok", "sure", "+", "👍", "✅")
 
-    /** Согласие — только коротким сообщением: «да, но сначала скажите…» согласием не считаем. */
-    fun isYes(text: String): Boolean {
-        val t = norm(text).trim().trim('.', '!', ',', ' ')
-        if (t.length > 20) return false
-        return yesWords.any { t == it || t.startsWith("$it ") || t.startsWith("$it,") }
+    /**
+     * Согласие позвать мастера и, если клиент его дописал, сам вопрос.
+     *
+     * Клиента просят написать «ДА и следом ваш вопрос», поэтому длина сообщения больше
+     * ничего не решает — важно, что оно начинается со слова согласия. Остаток строки
+     * и уходит мастеру: свежий вопрос полезнее того, с которого начался разговор.
+     *
+     * @return null, если согласия нет; иначе вопрос (может быть пустым).
+     */
+    fun yesWithQuestion(text: String): String? {
+        val t = norm(text).trimStart()
+        for (w in yesWords) {
+            if (!t.startsWith(w)) continue
+            val rest = t.substring(w.length)
+            // «да» — согласие, «даже», «давление» — нет: за словом должен идти
+            // разделитель или конец строки.
+            if (rest.isNotEmpty() && (rest[0].isLetter() || rest[0].isDigit())) continue
+            return rest.trimStart(' ', ',', '.', '!', ':', ';', '-', '—', '\n').trim()
+        }
+        return null
     }
+
+    fun isYes(text: String): Boolean = yesWithQuestion(text) != null
 
     /* ---------------- Сопоставление заказа ---------------- */
 
@@ -129,6 +146,9 @@ object CrmFlow {
 
     fun invalidate() = cache.clear()
 
+    /** В CRM чешский обозначен как «cz», в приложении — «cs». */
+    private fun crmLang(v: String) = if (v.equals("cz", true)) "cs" else v.lowercase()
+
     /* ---------------- Разговор ---------------- */
 
     /**
@@ -143,35 +163,43 @@ object CrmFlow {
         val log = EventLog(context)
 
         val st = CrmState.get(context, key)
+        // Язык разговора выбирается один раз (карточка клиента важнее определения по
+        // тексту) и держится до конца: иначе ответ «ДА» латиницей уводил бы переписку
+        // на английский посреди чешского разговора.
+        val talk = st?.lang?.ifBlank { null } ?: lang
 
         // 1. Мы спрашивали, про какой заказ речь.
         if (st != null && st.kind == CrmState.Kind.CHOICE) {
             val picked = match(text, st.records)
             if (picked != null) {
-                CrmState.put(context, key, CrmState.Kind.ASK, listOf(picked), st.question)
+                CrmState.put(context, key, CrmState.Kind.ASK, listOf(picked), st.question, talk)
                 log.add("CRM[$key] выбран заказ ${picked.number}")
-                return CrmText.status(picked, lang)
+                return CrmText.status(picked, talk)
             }
             if (st.retries < 1) {
-                CrmState.put(context, key, CrmState.Kind.CHOICE, st.records, st.question, st.retries + 1)
-                return CrmText.choose(st.records, lang)
+                CrmState.put(context, key, CrmState.Kind.CHOICE, st.records, st.question, talk, st.retries + 1)
+                return CrmText.choose(st.records, talk)
             }
             // Второй промах — не мучаем: отдаём всё разом и уходим из режима выбора.
             CrmState.clear(context, key)
             log.add("CRM[$key] выбор не удался, отдаю все статусы")
-            return CrmText.all(st.records, lang)
+            return CrmText.all(st.records, talk)
         }
 
         // 2. Мы предложили позвать мастера.
-        if (st != null && st.kind == CrmState.Kind.ASK && isYes(text)) {
-            val rec = st.records.firstOrNull()
+        val yes = if (st != null && st.kind == CrmState.Kind.ASK) yesWithQuestion(text) else null
+        if (yes != null) {
+            val rec = st!!.records.firstOrNull()
             CrmState.clear(context, key)
             if (rec == null) return null
-            if (!rec.canAsk) return CrmText.askClosed(lang)
+            if (!rec.canAsk) return CrmText.askClosed(talk)
             val phone = phones.firstOrNull { it.filter { c -> c.isDigit() }.length >= 6 } ?: return null
-            val err = CrmApi.ask(context, phone, rec.entity, rec.id, st.question, channel)
+            // Клиент дописал вопрос после «ДА» — уходит он; иначе тот, с которого
+            // начался разговор.
+            val question = yes.ifBlank { st.question }
+            val err = CrmApi.ask(context, phone, rec.entity, rec.id, question, channel)
             log.add("CRM[$key] вопрос мастеру по ${rec.number}: ${err ?: "принят"}")
-            return if (err == null) CrmText.asked(lang) else CrmText.askFailed(lang)
+            return if (err == null) CrmText.asked(talk) else CrmText.askFailed(talk)
         }
 
         // 3. Новый вопрос о статусе.
@@ -180,23 +208,26 @@ object CrmFlow {
 
         val res = lookup(context, phones) ?: return null
         if (!res.found || res.records.isEmpty()) return null
-        val l = if (res.lang.isNotBlank()) res.lang else lang
+        // Язык карточки клиента важнее определения по тексту: мастерская проставила его
+        // осознанно. Карточка молчит — берём язык сообщения, а если и он не определился,
+        // LangDetect вернул язык по умолчанию (у мастерской чешский).
+        val l = if (res.lang.isNotBlank()) crmLang(res.lang) else lang
 
         // Номер заказа прямо в сообщении — отвечаем сразу про него, ничего не переспрашивая.
         match(text, res.records)?.let { rec ->
-            CrmState.put(context, key, CrmState.Kind.ASK, listOf(rec), text)
+            CrmState.put(context, key, CrmState.Kind.ASK, listOf(rec), text, l)
             log.add("CRM[$key] статус по номеру из сообщения: ${rec.number}")
             return CrmText.status(rec, l)
         }
 
         if (res.records.size == 1) {
             val rec = res.records.first()
-            CrmState.put(context, key, CrmState.Kind.ASK, listOf(rec), text)
+            CrmState.put(context, key, CrmState.Kind.ASK, listOf(rec), text, l)
             log.add("CRM[$key] статус: ${rec.number} — ${rec.label}")
             return CrmText.status(rec, l)
         }
 
-        CrmState.put(context, key, CrmState.Kind.CHOICE, res.records, text)
+        CrmState.put(context, key, CrmState.Kind.CHOICE, res.records, text, l)
         log.add("CRM[$key] активных записей ${res.records.size}, спрашиваю про какую")
         return CrmText.choose(res.records, l)
     }

@@ -24,6 +24,7 @@ object CrmState {
         val kind: Kind,
         val records: List<CrmRecord>,   // для CHOICE — кандидаты, для ASK — одна запись
         val question: String,           // исходный вопрос клиента: он и уйдёт мастеру
+        val lang: String,               // язык разговора: выбран один раз и держится до конца
         val retries: Int,
         val at: Long
     )
@@ -49,12 +50,13 @@ object CrmState {
                     deadline = j.optString("dl").ifBlank { null },
                     price = null, canAsk = j.optBoolean("a", true)))
             }
-            Entry(Kind.valueOf(o.optString("k")), recs, o.optString("q"), o.optInt("r"), at)
+            Entry(Kind.valueOf(o.optString("k")), recs, o.optString("q"),
+                o.optString("lang"), o.optInt("r"), at)
         } catch (_: Exception) { clear(context, key); null }
     }
 
     fun put(context: Context, key: String, kind: Kind, records: List<CrmRecord>,
-            question: String, retries: Int = 0) {
+            question: String, lang: String, retries: Int = 0) {
         val arr = JSONArray()
         for (r in records) {
             arr.put(JSONObject()
@@ -63,7 +65,7 @@ object CrmState {
                 .put("dl", r.deadline ?: "").put("a", r.canAsk))
         }
         val o = JSONObject()
-            .put("k", kind.name).put("recs", arr).put("q", question)
+            .put("k", kind.name).put("recs", arr).put("q", question).put("lang", lang)
             .put("r", retries).put("at", System.currentTimeMillis())
         sp(context).edit().putString(key, o.toString()).apply()
         prune(context)
