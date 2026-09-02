@@ -252,6 +252,58 @@ fun AppScreen() {
                 }
             }
 
+            ExpandableSection("Версия приложения") {
+                Text(com.davnozdu.autoresponder.update.Updater.currentVersion,
+                    style = MaterialTheme.typography.headlineSmall)
+                Text("сборка ${com.davnozdu.autoresponder.BuildConfig.VERSION_CODE}"
+                    + (if (com.davnozdu.autoresponder.BuildConfig.DEBUG) " · debug" else ""),
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Проверка последний раз: " +
+                    (if (s.lastUpdateCheck > 0)
+                        java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault())
+                            .format(java.util.Date(s.lastUpdateCheck))
+                     else "не выполнялась"),
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Само приложение проверяет обновление раз в сутки при открытии настроек. "
+                    + "Здесь можно проверить вручную в любой момент.",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !updBusy, onClick = {
+                        updStatus = "Проверяю…"
+                        scope.launch {
+                            val res = withContext(Dispatchers.IO) {
+                                com.davnozdu.autoresponder.update.Updater.check()
+                            }
+                            s.lastUpdateCheck = System.currentTimeMillis()
+                            update = (res as? com.davnozdu.autoresponder.update.UpdateCheck.Available)?.info
+                            updStatus = updLabel(res)
+                        }
+                    }) { Text("Проверить обновления") }
+                    // Кнопка установки нужна и здесь: баннер сверху легко пролистать мимо,
+                    // а искать его обратно после проверки — лишний шаг.
+                    update?.let { u ->
+                        Button(enabled = !updBusy, onClick = {
+                            updBusy = true
+                            scope.launch {
+                                val ok = withContext(Dispatchers.IO) {
+                                    val f = com.davnozdu.autoresponder.update.Updater.download(ctx, u.apkUrl)
+                                    f != null && com.davnozdu.autoresponder.update.Updater.install(ctx, f)
+                                }
+                                updBusy = false
+                                Toast.makeText(ctx,
+                                    if (ok) "Устанавливаю…" else "Ошибка обновления", Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text(if (updBusy) "Загрузка…" else "Обновить до ${u.version}") }
+                    }
+                }
+                if (updStatus.isNotBlank())
+                    Text(updStatus, style = MaterialTheme.typography.bodySmall)
+                update?.let { u ->
+                    if (u.notes.isNotBlank())
+                        Text(u.notes, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
             ExpandableSection("Основное", initiallyOpen = true) {
                 SwitchRow("Включён", enabled) { enabled = it; s.enabled = it }
                 SwitchRow("Отвечать на звонки", respCalls) { respCalls = it; s.respondCalls = it }
@@ -774,19 +826,6 @@ fun AppScreen() {
                         ctx.startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     }
                 }) { Text("Отключить оптимизацию батареи") }
-                Text("Текущая версия: ${com.davnozdu.autoresponder.update.Updater.currentVersion}",
-                    style = MaterialTheme.typography.bodySmall)
-                Button(onClick = {
-                    updStatus = "Проверяю…"
-                    scope.launch {
-                        val res = withContext(Dispatchers.IO) { com.davnozdu.autoresponder.update.Updater.check() }
-                        s.lastUpdateCheck = System.currentTimeMillis()
-                        update = (res as? com.davnozdu.autoresponder.update.UpdateCheck.Available)?.info
-                        updStatus = updLabel(res)
-                        Toast.makeText(ctx, updStatus, Toast.LENGTH_LONG).show()
-                    }
-                }) { Text("Проверить обновление") }
-                if (updStatus.isNotBlank()) Text(updStatus, style = MaterialTheme.typography.bodySmall)
             }
 
             ExpandableSection("Экраны") {
