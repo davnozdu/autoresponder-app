@@ -18,5 +18,8 @@ class App : Application() {
         LogFile.keepDays = s.logKeepDays
         LogFile.enabled = s.logToFile
         LogFile.rotate()
+        // Признак жизни для KernelSU-модуля: без него «приложение убито менеджером
+        // питания» выглядит снаружи ровно как «всё настроено и работает».
+        com.davnozdu.autoresponder.store.Heartbeat.tick(this)
     }
 }

@@ -309,6 +309,24 @@ class Settings(context: Context) {
     var backupKeep: Int
         get() = sp.getInt(K_BK_KEEP, 10)
         set(v) = sp.edit().putInt(K_BK_KEEP, v).apply()
+    // --- Управление по SMS с доверенного номера ---
+    var smsCommandsOn: Boolean
+        get() = sp.getBoolean(K_SMSCMD_ON, false)
+        set(v) = sp.edit().putBoolean(K_SMSCMD_ON, v).apply()
+    var smsCommandNumbers: List<String>
+        get() = sp.getString(K_SMSCMD_NUM, "")!!
+            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        set(v) = sp.edit().putString(K_SMSCMD_NUM, v.joinToString(",")).apply()
+    fun addSmsCommandNumber(number: String) {
+        val n = com.davnozdu.autoresponder.rules.PhoneMask.canonical(number)
+        if (n.isEmpty()) return
+        val cur = smsCommandNumbers.toMutableList()
+        if (cur.none { it.equals(n, true) }) { cur.add(n); smsCommandNumbers = cur }
+    }
+    fun removeSmsCommandNumber(number: String) {
+        smsCommandNumbers = smsCommandNumbers.filterNot { it.equals(number.trim(), true) }
+    }
+
     // --- Утренняя сводка ---
     var digestEnabled: Boolean
         get() = sp.getBoolean(K_DIGEST_ON, true)
@@ -609,6 +627,8 @@ class Settings(context: Context) {
         private const val K_MON_APPS = "monitored_apps"
         private const val K_NOTIF_AGE = "notif_age_min"
         private const val K_UPD_CHECK = "last_upd_check"
+        private const val K_SMSCMD_ON = "smscmd_on"
+        private const val K_SMSCMD_NUM = "smscmd_numbers"
         private const val K_DIGEST_ON = "digest_on"
         private const val K_DIGEST_HOUR = "digest_hour"
         private const val K_QUIET_ON = "quiet_on"

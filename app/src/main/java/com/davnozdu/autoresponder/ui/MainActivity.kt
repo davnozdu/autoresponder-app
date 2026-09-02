@@ -54,6 +54,9 @@ fun AppScreen() {
     var respCalls by remember { mutableStateOf(s.respondCalls) }
     var priceSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.Prices.source(ctx)) }
     var priceCount by remember { mutableStateOf(com.davnozdu.autoresponder.store.Prices.rows(ctx).size) }
+    var smsCmdOn by remember { mutableStateOf(s.smsCommandsOn) }
+    var smsCmdNums by remember { mutableStateOf(s.smsCommandNumbers) }
+    var newCmdNum by remember { mutableStateOf("") }
     var digestOn by remember { mutableStateOf(s.digestEnabled) }
     var digestHour by remember { mutableStateOf(s.digestHour) }
     var quietOn by remember { mutableStateOf(s.quietHoursOn) }
@@ -389,6 +392,38 @@ fun AppScreen() {
                     else "Активно ${fmtMin(startMin)} → ${fmtMin(endMin)}",
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+
+            ExpandableSection("Управление по SMS") {
+                SwitchRow("Принимать команды с доверенных номеров", smsCmdOn) { smsCmdOn = it; s.smsCommandsOn = it }
+                Text("Команды (регистр не важен): STATUS — состояние, OFF — выключить автоответ, "
+                    + "ON — включить, PAUSE — пауза до следующего DND, DIGEST — показать сводку. "
+                    + "Русские слова тоже понимаются: статус, выкл, вкл, пауза, сводка.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Отправителя SMS подделать несложно, поэтому по умолчанию выключено, "
+                    + "а команды принимаются только с номеров из этого списка. Ответ уходит "
+                    + "той же SMS на тот же номер.",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(newCmdNum, { newCmdNum = it }, label = { Text("Доверенный номер") },
+                        modifier = Modifier.weight(1f), singleLine = true)
+                    Button(onClick = {
+                        if (newCmdNum.isNotBlank()) {
+                            s.addSmsCommandNumber(newCmdNum); smsCmdNums = s.smsCommandNumbers; newCmdNum = ""
+                        }
+                    }) { Text("+") }
+                }
+                CanonicalHint(newCmdNum)
+                smsCmdNums.forEach { n ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(n)
+                        TextButton(onClick = { s.removeSmsCommandNumber(n); smsCmdNums = s.smsCommandNumbers }) { Text("Удалить") }
+                    }
+                }
+                if (smsCmdOn && smsCmdNums.isEmpty()) Text("Список пуст — ни одна команда не будет принята.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
 
             ExpandableSection("Утренняя сводка") {

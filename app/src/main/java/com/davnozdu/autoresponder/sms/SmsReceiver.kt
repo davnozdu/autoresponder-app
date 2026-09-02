@@ -37,6 +37,9 @@ class SmsReceiver : BroadcastReceiver() {
         val keys = intent.extras?.keySet()?.joinToString(",") ?: "-"
         com.davnozdu.autoresponder.data.EventLog(context)
             .add("SMS вход: subId=$subId extras=[$keys] | ${com.davnozdu.autoresponder.rules.SimUtil.describe(context)}")
+        // Команда с доверенного номера обрабатывается ДО истории и автоответа: она не
+        // переписка с клиентом, ей нечего делать ни в контексте LLM, ни в лимитах.
+        if (SmsCommands.handle(context, sender, body, subId)) return
         HistoryLogger.record(context, sender, "sms", "in", body)
         Responder.handle(context, sender, body, Kind.SMS, subId)
     }

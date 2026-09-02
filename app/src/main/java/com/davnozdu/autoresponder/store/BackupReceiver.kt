@@ -20,6 +20,7 @@ class BackupReceiver : BroadcastReceiver() {
                     // После перезагрузки система стирает все alarms: утренняя сводка
                     // взводится здесь же, другого BOOT_COMPLETED в приложении нет.
                     com.davnozdu.autoresponder.notif.Digest.schedule(app)
+                    Heartbeat.tick(app)
                 } catch (_: Exception) {
                 } finally { pending.finish() }
             }.start()

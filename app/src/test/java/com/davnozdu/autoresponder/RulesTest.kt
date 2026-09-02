@@ -235,3 +235,25 @@ class PricesTest {
         assertTrue(com.davnozdu.autoresponder.store.Prices.match(rows, "сколько стоит ремонт холодильника").isEmpty())
     }
 }
+
+class SmsCommandsTest {
+
+    private val p = com.davnozdu.autoresponder.sms.SmsCommands
+
+    @Test fun `команды понимаются на двух языках и в любом регистре`() {
+        assertEquals("status", p.parse("STATUS"))
+        assertEquals("status", p.parse(" статус "))
+        assertEquals("off", p.parse("stop"))
+        assertEquals("on", p.parse("Вкл"))
+        assertEquals("pause", p.parse("pause 2"))
+        assertEquals("digest", p.parse("сводка"))
+    }
+
+    @Test fun `обычное сообщение командой не считается`() {
+        assertNull(p.parse("Здравствуйте, когда откроетесь?"))
+        assertNull(p.parse(""))
+        assertNull(p.parse(null))
+        // Длинный текст, начинающийся со слова команды, — это письмо, а не команда.
+        assertNull(p.parse("status " + "x".repeat(60)))
+    }
+}
