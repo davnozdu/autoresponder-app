@@ -24,6 +24,7 @@ object AutoNotifications {
     const val ACT_PAUSE_REBOOT = "com.davnozdu.autoresponder.PAUSE_REBOOT"
     const val ACT_DISABLE = "com.davnozdu.autoresponder.DISABLE"
     const val ACT_BL_NOTIFY = "com.davnozdu.autoresponder.BL_NOTIFY"
+    const val ACT_QUIET_FLUSH = "com.davnozdu.autoresponder.QUIET_FLUSH"
     const val ID_BLACKLIST = 1003
 
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)

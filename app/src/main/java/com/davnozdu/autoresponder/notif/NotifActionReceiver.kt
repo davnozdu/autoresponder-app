@@ -16,6 +16,7 @@ class NotifActionReceiver : BroadcastReceiver() {
                 Settings(context).enabled = false; AutoReplyState.resume(context); AutoNotifications.cancelDnd(context)
             }
             AutoNotifications.ACT_BL_NOTIFY -> BlacklistNotifier.onAlarm(context)
+            AutoNotifications.ACT_QUIET_FLUSH -> com.davnozdu.autoresponder.respond.QuietHours.onAlarm(context)
         }
     }
 }

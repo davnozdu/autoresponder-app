@@ -118,6 +118,9 @@ object Responder {
             }
         }
 
+        // Тихий час — последним из гейтов: придерживаем только то, на что реально ответили бы.
+        if (kind == Kind.CALL && QuietHours.holdIfQuiet(context, s, norm)) return
+
         val store = ReplyStore(context)
         // Пер-номерная блокировка: не даём событию из msg-полосы (RCS/мессенджер) и из main-полосы
         // (SMS/звонок) для ОДНОГО номера одновременно пройти canReply→…→markReplied и удвоить ответ.

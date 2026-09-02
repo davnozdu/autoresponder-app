@@ -28,6 +28,9 @@ class EventLog(@Suppress("UNUSED_PARAMETER") context: Context? = null) {
             // Дублируем в logcat: журнал живёт только в RAM, а при разборе проблем удобно
             // смотреть через `adb logcat -s AutoResp`.
             android.util.Log.i("AutoResp", line)
+            // И в файл, если включено: logcat переживает не каждую перезагрузку, а разбирать
+            // вчерашний случай приходится именно по вчерашним строкам.
+            LogFile.append(line)
         }
         @Synchronized fun snapshot(): String = buf.joinToString("\n")
         @Synchronized fun clear() = buf.clear()

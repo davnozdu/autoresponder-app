@@ -24,7 +24,7 @@ data class HistItem(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 7) {
+    SQLiteOpenHelper(context.applicationContext, "history.db", null, 8) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -43,6 +43,12 @@ class HistoryDb private constructor(context: Context) :
         createBlacklist(db)
         createQa(db)
         createBlPending(db)
+        createSmsHold(db)
+    }
+
+    /** Ночные авто-SMS, придержанные до утра (тихий час). */
+    private fun createSmsHold(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS sms_hold(_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, ts INTEGER)")
     }
 
     private fun createBlPending(db: SQLiteDatabase) {
@@ -89,12 +95,13 @@ class HistoryDb private constructor(context: Context) :
         if (oldV < 5) addColumn(db, "ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
         if (oldV < 6) createBlPending(db)
         if (oldV < 7) addColumn(db, "ALTER TABLE blacklist ADD COLUMN until_ts INTEGER NOT NULL DEFAULT 0")
+        if (oldV < 8) createSmsHold(db)
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
      *  По умолчанию SQLiteOpenHelper бросает SQLiteDowngradeFailedException и приложение крашится. */
     override fun onDowngrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
-        createBlacklist(db); createQa(db); createBlPending(db)
+        createBlacklist(db); createQa(db); createBlPending(db); createSmsHold(db)
         // Таблица могла остаться из бэкапа старой схемы — CREATE IF NOT EXISTS её не тронет,
         // а SELECT с новыми колонками упадёт. ALTER'ы безопасны: дубликат глотается.
         addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
@@ -352,6 +359,25 @@ class HistoryDb private constructor(context: Context) :
         readableDatabase.rawQuery("SELECT COUNT(*) FROM bl_pending", null).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
     fun blPendingClear() { writableDatabase.delete("bl_pending", null, null) }
+
+    // --- Придержанные до утра авто-SMS (тихий час) ---
+    fun smsHoldAdd(number: String) {
+        val cv = ContentValues().apply { put("number", number); put("ts", System.currentTimeMillis()) }
+        writableDatabase.insert("sms_hold", null, cv)
+    }
+    /** Номера без повторов: три ночных звонка с одного номера — одна утренняя SMS. */
+    fun smsHoldNumbers(): List<String> {
+        val res = ArrayList<String>()
+        readableDatabase.rawQuery("SELECT DISTINCT number FROM sms_hold ORDER BY ts", null).use { c ->
+            while (c.moveToNext()) c.getString(0)?.let { res.add(it) }
+        }
+        return res
+    }
+    fun smsHoldCount(): Int {
+        readableDatabase.rawQuery("SELECT COUNT(*) FROM sms_hold", null).use { c ->
+            return if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+    fun smsHoldClear() { writableDatabase.delete("sms_hold", null, null) }
 
     /** Принудительный WAL-checkpoint перед копированием файла БД (для бэкапа). */
     fun checkpoint() {

@@ -52,6 +52,9 @@ fun AppScreen() {
 
     var enabled by remember { mutableStateOf(s.enabled) }
     var respCalls by remember { mutableStateOf(s.respondCalls) }
+    var quietOn by remember { mutableStateOf(s.quietHoursOn) }
+    var quietStart by remember { mutableStateOf(s.quietStartMin) }
+    var quietEnd by remember { mutableStateOf(s.quietEndMin) }
     var respSms by remember { mutableStateOf(s.respondSms) }
     var notifOn by remember { mutableStateOf(s.notificationsEnabled) }
     var blnMode by remember { mutableStateOf(s.blNotifMode) }
@@ -369,6 +372,26 @@ fun AppScreen() {
                     else "Активно ${fmtMin(startMin)} → ${fmtMin(endMin)}",
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+
+            ExpandableSection("Тихий час (ночные SMS)") {
+                SwitchRow("Не будить SMS ночью", quietOn) { quietOn = it; s.quietHoursOn = it }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("С")
+                    OutlinedButton(onClick = { pickTime(ctx, quietStart) { quietStart = it; s.quietStartMin = it } }) { Text(fmtMin(quietStart)) }
+                    Text("до")
+                    OutlinedButton(onClick = { pickTime(ctx, quietEnd) { quietEnd = it; s.quietEndMin = it } }) { Text(fmtMin(quietEnd)) }
+                }
+                Text("Звонок ночью отклоняется как обычно, но ответная SMS уходит утром — "
+                    + "и одна на номер, сколько бы раз ни звонили. Ошибся номером или звонит "
+                    + "из другого часового пояса — не разбудим.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("На SMS и сообщения мессенджеров не влияет: человек написал сам, "
+                    + "молчание в ответ выглядело бы поломкой.",
+                    style = MaterialTheme.typography.bodySmall)
+                val held = remember(quietOn) { com.davnozdu.autoresponder.store.HistoryDb.get(ctx).smsHoldCount() }
+                if (held > 0) Text("Сейчас придержано: $held", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary)
             }
 
             ExpandableSection("Маска стран и выбор SIM") {
@@ -875,10 +898,22 @@ fun AppScreen() {
 
             ExpandableSection("Журнал") {
                 var logText by remember { mutableStateOf(EventLog(ctx).all()) }
+                var logFileOn by remember { mutableStateOf(s.logToFile) }
+                var logSize by remember { mutableStateOf(com.davnozdu.autoresponder.data.LogFile.sizeBytes()) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { logText = EventLog(ctx).all() }) { Text("Обновить") }
                     OutlinedButton(onClick = { EventLog(ctx).clear(); logText = "" }) { Text("Очистить") }
                 }
+                SwitchRow("Писать журнал в файл", logFileOn) { logFileOn = it; s.logToFile = it }
+                Text("В памяти журнал живёт до перезагрузки. Файл нужен, когда разбираться "
+                    + "приходится через сутки: «почему клиенту не ответили вчера вечером».",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("${com.davnozdu.autoresponder.data.LogFile.DIR} — по файлу на сутки, "
+                    + "хранится ${s.logKeepDays} дней, сейчас ${logSize / 1024} КБ",
+                    style = MaterialTheme.typography.bodySmall)
+                if (logSize > 0) OutlinedButton(onClick = {
+                    com.davnozdu.autoresponder.data.LogFile.clear(); logSize = 0
+                }) { Text("Удалить файлы журнала") }
                 Text(logText.ifBlank { "пусто" }, style = MaterialTheme.typography.bodySmall)
             }
 

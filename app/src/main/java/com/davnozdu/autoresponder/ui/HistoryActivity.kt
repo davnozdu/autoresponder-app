@@ -60,6 +60,7 @@ fun HistoryScreen() {
     var summary by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var blockWho by remember { mutableStateOf<Pair<String, String?>?>(null) }
 
     fun channelsFor(f: Int) = when (f) {
         1 -> listOf("call"); 2 -> listOf("sms", "rcs"); 3 -> listOf("whatsapp", "telegram"); else -> emptyList()
@@ -80,6 +81,13 @@ fun HistoryScreen() {
         TopAppBar(title = { Text(if (openNumber == null) "История" else (openName ?: openNumber!!)) },
             navigationIcon = {
                 if (openNumber != null) TextButton(onClick = { openNumber = null; summary = null }) { Text("‹ Назад") }
+            },
+            actions = {
+                // Блокировка заводится там, где человек только что достал: открытая ветка
+                // уже знает, кого именно и под каким именем записывать.
+                if (openNumber != null) TextButton(onClick = {
+                    blockWho = openNumber!! to openName
+                }) { Text("В ЧС") }
             })
     }) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
@@ -174,6 +182,13 @@ fun HistoryScreen() {
                     }
                 }
             }
+        }
+    }
+
+    blockWho?.let { (num, name) ->
+        BlockDialog(num, name, onDismiss = { blockWho = null }) { until ->
+            blockWho = null
+            Toast.makeText(ctx, "В чёрном списке. $until", Toast.LENGTH_LONG).show()
         }
     }
 

@@ -52,9 +52,8 @@ object ClosedState {
             val inHours = nowMin in workStart until workEnd
             return !(isWorkDay && inHours)
         }
-        // Одинаковые границы = окно на целые сутки (раньше «закрыто» не наступало никогда).
-        if (windowStart == windowEnd) return true
-        return if (windowStart < windowEnd) nowMin in windowStart until windowEnd
-               else nowMin >= windowStart || nowMin < windowEnd
+        // Одинаковые границы = окно на целые сутки (раньше «закрыто» не наступало никогда),
+        // переход через полночь — там же, в TimeWindow: тем же правилом живёт тихий час.
+        return TimeWindow.contains(nowMin, windowStart, windowEnd)
     }
 }

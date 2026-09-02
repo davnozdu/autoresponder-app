@@ -161,3 +161,38 @@ class CrmFlowTest {
         assertNull(f.yesWithQuestion("нет, спасибо"))
     }
 }
+
+class TimeWindowTest {
+
+    @Test fun `тихий час через полночь`() {
+        val start = 22 * 60; val end = 8 * 60
+        assertTrue(com.davnozdu.autoresponder.rules.TimeWindow.contains(23 * 60, start, end))
+        assertTrue(com.davnozdu.autoresponder.rules.TimeWindow.contains(3 * 60, start, end))
+        assertTrue(com.davnozdu.autoresponder.rules.TimeWindow.contains(start, start, end))
+        assertFalse(com.davnozdu.autoresponder.rules.TimeWindow.contains(end, start, end))
+        assertFalse(com.davnozdu.autoresponder.rules.TimeWindow.contains(12 * 60, start, end))
+    }
+
+    @Test fun `окно внутри суток и равные границы`() {
+        assertTrue(com.davnozdu.autoresponder.rules.TimeWindow.contains(13 * 60, 12 * 60, 14 * 60))
+        assertFalse(com.davnozdu.autoresponder.rules.TimeWindow.contains(14 * 60, 12 * 60, 14 * 60))
+        assertTrue(com.davnozdu.autoresponder.rules.TimeWindow.contains(5, 9 * 60, 9 * 60))
+    }
+
+    @Test fun `ближайшее наступление времени суток — сегодня или завтра`() {
+        val tw = com.davnozdu.autoresponder.rules.TimeWindow
+        val cal = java.util.Calendar.getInstance().apply {
+            set(2026, 8, 2, 23, 0, 0); set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val next8 = tw.next(8 * 60, cal.timeInMillis)
+        val c = java.util.Calendar.getInstance().apply { timeInMillis = next8 }
+        assertEquals(8, c.get(java.util.Calendar.HOUR_OF_DAY))
+        assertEquals(3, c.get(java.util.Calendar.DAY_OF_MONTH))   // уже завтра
+        assertTrue(next8 > cal.timeInMillis)
+    }
+
+    @Test fun `формат времени`() {
+        assertEquals("08:00", com.davnozdu.autoresponder.rules.TimeWindow.fmt(8 * 60))
+        assertEquals("22:30", com.davnozdu.autoresponder.rules.TimeWindow.fmt(22 * 60 + 30))
+    }
+}

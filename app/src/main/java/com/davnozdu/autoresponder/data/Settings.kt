@@ -309,6 +309,29 @@ class Settings(context: Context) {
     var backupKeep: Int
         get() = sp.getInt(K_BK_KEEP, 10)
         set(v) = sp.edit().putInt(K_BK_KEEP, v).apply()
+    // --- Тихий час (авто-SMS по отклонённым звонкам придерживается до утра) ---
+    var quietHoursOn: Boolean
+        get() = sp.getBoolean(K_QUIET_ON, false)
+        set(v) = sp.edit().putBoolean(K_QUIET_ON, v).apply()
+    var quietStartMin: Int
+        get() = sp.getInt(K_QUIET_START, 22 * 60)
+        set(v) = sp.edit().putInt(K_QUIET_START, v).apply()
+    var quietEndMin: Int
+        get() = sp.getInt(K_QUIET_END, 8 * 60)
+        set(v) = sp.edit().putInt(K_QUIET_END, v).apply()
+
+    // --- Журнал в файл ---
+    /** Дублировать журнал в /sdcard/AutoResponder/logs (иначе он живёт только в памяти). */
+    var logToFile: Boolean
+        get() = sp.getBoolean(K_LOG_FILE, true)
+        set(v) { sp.edit().putBoolean(K_LOG_FILE, v).apply()
+                 com.davnozdu.autoresponder.data.LogFile.enabled = v }
+    /** сколько суток хранить файлы журнала */
+    var logKeepDays: Int
+        get() = sp.getInt(K_LOG_KEEP, 7)
+        set(v) { sp.edit().putInt(K_LOG_KEEP, v).apply()
+                 com.davnozdu.autoresponder.data.LogFile.keepDays = v }
+
     /** час суток для бэкапа (0-23) */
     var backupHour: Int
         get() = sp.getInt(K_BK_HOUR, 3)
@@ -577,6 +600,11 @@ class Settings(context: Context) {
         private const val K_MON_APPS = "monitored_apps"
         private const val K_NOTIF_AGE = "notif_age_min"
         private const val K_UPD_CHECK = "last_upd_check"
+        private const val K_QUIET_ON = "quiet_on"
+        private const val K_QUIET_START = "quiet_start"
+        private const val K_QUIET_END = "quiet_end"
+        private const val K_LOG_FILE = "log_to_file"
+        private const val K_LOG_KEEP = "log_keep_days"
         private const val K_BK_ON = "backup_on"
         private const val K_BK_KEEP = "backup_keep"
         private const val K_BK_HOUR = "backup_hour"
