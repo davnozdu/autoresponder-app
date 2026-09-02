@@ -428,6 +428,7 @@ fun AppScreen() {
                         if (newExcl.isNotBlank()) { s.addExcluded(newExcl); excluded = s.excludedNumbers; newExcl = "" }
                     }) { Text("+") }
                 }
+                CanonicalHint(newExcl)
                 OutlinedButton(onClick = {
                     contactLauncher.launch(
                         Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
@@ -459,6 +460,7 @@ fun AppScreen() {
                         if (newExclName.isNotBlank()) { s.addExcludedName(newExclName); exclNames = s.excludedNames; newExclName = "" }
                     }) { Text("+") }
                 }
+                CanonicalHint(newExclName)
                 OutlinedButton(onClick = {
                     if (androidx.core.content.ContextCompat.checkSelfPermission(
                             ctx, Manifest.permission.READ_CONTACTS) ==
@@ -927,6 +929,15 @@ private fun updLabel(res: com.davnozdu.autoresponder.update.UpdateCheck): String
         is com.davnozdu.autoresponder.update.UpdateCheck.Failed ->
             "Не удалось проверить: ${res.reason}"
     }
+}
+
+/** Показывает, в каком виде номер ляжет в список: с «+» и без разделителей. */
+@Composable
+private fun CanonicalHint(raw: String) {
+    val canon = com.davnozdu.autoresponder.rules.PhoneMask.canonical(raw)
+    if (canon != raw.trim()) Text("Будет сохранено: $canon",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary)
 }
 
 private fun fmtMin(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)

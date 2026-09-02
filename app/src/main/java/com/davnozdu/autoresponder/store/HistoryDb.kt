@@ -9,8 +9,12 @@ data class BlackEntry(
     val id: Long, val identity: String, val name: String?,
     val viaLlm: Boolean, val prompt: String?,
     val onSms: Boolean = true, val onMsgr: Boolean = true,
-    val onCalls: Boolean = true, val callPrompt: String? = null
-)
+    val onCalls: Boolean = true, val callPrompt: String? = null,
+    /** Момент, до которого действует запись; 0 — навсегда. */
+    val untilTs: Long = 0L
+) {
+    fun expired(now: Long = System.currentTimeMillis()): Boolean = untilTs in 1..now
+}
 
 data class HistItem(
     val id: Long, val number: String, val name: String?,
@@ -20,7 +24,7 @@ data class HistItem(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 6) {
+    SQLiteOpenHelper(context.applicationContext, "history.db", null, 7) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -60,7 +64,8 @@ class HistoryDb private constructor(context: Context) :
                 "on_sms INTEGER NOT NULL DEFAULT 1," +
                 "on_msgr INTEGER NOT NULL DEFAULT 1," +
                 "on_calls INTEGER NOT NULL DEFAULT 1," +
-                "call_prompt TEXT)"
+                "call_prompt TEXT," +
+                "until_ts INTEGER NOT NULL DEFAULT 0)"
         )
     }
 
@@ -83,12 +88,21 @@ class HistoryDb private constructor(context: Context) :
         }
         if (oldV < 5) addColumn(db, "ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
         if (oldV < 6) createBlPending(db)
+        if (oldV < 7) addColumn(db, "ALTER TABLE blacklist ADD COLUMN until_ts INTEGER NOT NULL DEFAULT 0")
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
      *  По умолчанию SQLiteOpenHelper бросает SQLiteDowngradeFailedException и приложение крашится. */
     override fun onDowngrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
         createBlacklist(db); createQa(db); createBlPending(db)
+        // Таблица могла остаться из бэкапа старой схемы — CREATE IF NOT EXISTS её не тронет,
+        // а SELECT с новыми колонками упадёт. ALTER'ы безопасны: дубликат глотается.
+        addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
+        addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_msgr INTEGER NOT NULL DEFAULT 1")
+        addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_calls INTEGER NOT NULL DEFAULT 1")
+        addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt TEXT")
+        addColumn(db, "ALTER TABLE blacklist ADD COLUMN until_ts INTEGER NOT NULL DEFAULT 0")
+        addColumn(db, "ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
     }
 
     /** Выполнить блок в одной транзакции (массовые вставки на порядок быстрее). */
@@ -252,12 +266,12 @@ class HistoryDb private constructor(context: Context) :
     // --- Чёрный список ---
     fun blacklistAll(): List<BlackEntry> {
         val res = ArrayList<BlackEntry>()
-        readableDatabase.rawQuery("SELECT _id,identity,name,via_llm,prompt,on_sms,on_msgr,on_calls,call_prompt FROM blacklist ORDER BY _id DESC", null).use { c ->
+        readableDatabase.rawQuery("SELECT _id,identity,name,via_llm,prompt,on_sms,on_msgr,on_calls,call_prompt,until_ts FROM blacklist ORDER BY _id DESC", null).use { c ->
             while (c.moveToNext()) res.add(BlackEntry(
                 c.getLong(0), c.getString(1), if (c.isNull(2)) null else c.getString(2),
                 c.getInt(3) == 1, if (c.isNull(4)) null else c.getString(4),
                 c.getInt(5) == 1, c.getInt(6) == 1, c.getInt(7) == 1,
-                if (c.isNull(8)) null else c.getString(8)))
+                if (c.isNull(8)) null else c.getString(8), c.getLong(9)))
         }
         return res
     }
@@ -268,6 +282,7 @@ class HistoryDb private constructor(context: Context) :
             put("via_llm", if (e.viaLlm) 1 else 0); put("prompt", e.prompt)
             put("on_sms", if (e.onSms) 1 else 0); put("on_msgr", if (e.onMsgr) 1 else 0)
             put("on_calls", if (e.onCalls) 1 else 0); put("call_prompt", e.callPrompt)
+            put("until_ts", e.untilTs)
         }
         if (e.id > 0) writableDatabase.update("blacklist", cv, "_id=?", arrayOf(e.id.toString()))
         else writableDatabase.insert("blacklist", null, cv)
@@ -275,6 +290,12 @@ class HistoryDb private constructor(context: Context) :
     fun blacklistDelete(id: Long) {
         blCache = null
         writableDatabase.delete("blacklist", "_id=?", arrayOf(id.toString()))
+    }
+
+    /** Удалить записи с истёкшим сроком блокировки. Возвращает, сколько удалено. */
+    fun blacklistPurgeExpired(now: Long = System.currentTimeMillis()): Int {
+        blCache = null
+        return writableDatabase.delete("blacklist", "until_ts>0 AND until_ts<=?", arrayOf(now.toString()))
     }
 
     // Чёрный список читается на КАЖДЫЙ входящий звонок — в т.ч. из onScreenCall, у которого
@@ -297,7 +318,9 @@ class HistoryDb private constructor(context: Context) :
     fun blacklistMatch(number: String?, name: String?): BlackEntry? {
         val numTail = number?.filter { it.isDigit() }?.takeLast(9)
         val nm = name?.trim()?.lowercase()
+        val now = System.currentTimeMillis()
         for (e in blacklistCached()) {
+            if (e.expired(now)) continue   // срок блокировки вышел — запись больше не действует
             val id = e.identity.trim()
             if (com.davnozdu.autoresponder.rules.NameMatch.hasWildcard(id)) {
                 if (com.davnozdu.autoresponder.rules.NameMatch.matches(name, id)) return e

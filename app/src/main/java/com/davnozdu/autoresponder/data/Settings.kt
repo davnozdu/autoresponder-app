@@ -175,7 +175,9 @@ class Settings(context: Context) {
         set(v) = sp.edit().putString(K_EXCLUDED, v.joinToString(",")).apply()
 
     fun addExcluded(number: String) {
-        val n = number.trim()
+        // Номер сохраняем в каноническом виде («+420608210867»): из книги контактов и с
+        // клавиатуры он приходит с пробелами, скобками и без «+».
+        val n = com.davnozdu.autoresponder.rules.PhoneMask.canonical(number)
         if (n.isEmpty()) return
         val cur = excludedNumbers.toMutableList()
         if (cur.none { it.equals(n, true) }) { cur.add(n); excludedNumbers = cur }
@@ -202,7 +204,8 @@ class Settings(context: Context) {
         val cur = excludedNames.toMutableList()
         var added = 0
         for (raw in names) {
-            val n = raw.trim().replace("\n", " ").trim()
+            val n = com.davnozdu.autoresponder.rules.PhoneMask
+                .canonical(raw.replace("\n", " "))
             if (n.isEmpty()) continue
             // Тот же номер в другом формате («+31 6 1234 5678» и «31612345678») — не дубликат
             // по тексту, но один и тот же человек. Второй раз не добавляем.

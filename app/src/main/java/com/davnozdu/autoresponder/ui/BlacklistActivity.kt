@@ -1,5 +1,6 @@
 package com.davnozdu.autoresponder.ui
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.ContactsContract
@@ -40,13 +41,88 @@ private const val DEFAULT_BL_PROMPT =
     "\"Ваше беспокойство нам понятно\"). Если человек на эмоциях — мягко успокой, но без фанатизма. " +
     "Строго в рамках лимита символов."
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Срок блокировки: либо длительность от «сейчас», либо конкретная дата. 0/0 — навсегда. */
+private data class Term(val delta: Long = 0L, val abs: Long = 0L) {
+    /** Момент окончания для записи в БД: 0 — навсегда. */
+    fun until(): Long = when {
+        abs > 0L -> abs
+        delta > 0L -> System.currentTimeMillis() + delta
+        else -> 0L
+    }
+}
+
+private const val HOUR = 3_600_000L
+private val PRESETS = listOf(
+    "Навсегда" to Term(),
+    "1 час" to Term(delta = HOUR),
+    "3 часа" to Term(delta = 3 * HOUR),
+    "1 день" to Term(delta = 24 * HOUR),
+)
+
+private fun fmtDate(ts: Long): String =
+    java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(ts))
+
+private fun fmtLeft(ms: Long): String {
+    val min = ms / 60_000
+    return when {
+        min < 60 -> "осталось $min мин"
+        min < 24 * 60 -> "осталось ${min / 60} ч"
+        else -> "осталось ${min / (24 * 60)} дн"
+    }
+}
+
+/** Подпись срока в списке. */
+private fun fmtUntil(until: Long): String {
+    if (until <= 0L) return "Блокировка: навсегда"
+    val left = until - System.currentTimeMillis()
+    if (left <= 0L) return "Срок истёк — запись не действует"
+    return "До ${fmtDate(until)} (${fmtLeft(left)})"
+}
+
+/** Календарь системы; блокируем до конца выбранного дня (23:59). */
+private fun pickDate(ctx: Context, initial: Long, onSet: (Long) -> Unit) {
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = maxOf(initial, System.currentTimeMillis())
+    }
+    val dlg = android.app.DatePickerDialog(ctx, { _, y, mo, d ->
+        val c = java.util.Calendar.getInstance().apply {
+            set(y, mo, d, 23, 59, 0); set(java.util.Calendar.MILLISECOND, 0)
+        }
+        onSet(c.timeInMillis)
+    }, cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH),
+       cal.get(java.util.Calendar.DAY_OF_MONTH))
+    dlg.datePicker.minDate = System.currentTimeMillis()
+    dlg.show()
+}
+
+/** Ряд пресетов + «Дата…». [until] — текущее значение записи (0 — навсегда). */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun TermChips(until: Long, onPick: (Term) -> Unit) {
+    val ctx = LocalContext.current
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        PRESETS.forEach { (label, term) ->
+            // Пресеты не «залипают»: сохранённый срок — это дата, а не длительность.
+            // Отмечаем только «Навсегда», остальное видно по подписи с датой.
+            FilterChip(selected = term.delta == 0L && until == 0L,
+                onClick = { onPick(term) }, label = { Text(label) })
+        }
+        FilterChip(selected = until > 0L, onClick = { pickDate(ctx, until) { onPick(Term(abs = it)) } },
+            label = { Text(if (until > 0L) fmtDate(until) else "Дата…") })
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BlacklistScreen() {
     val ctx = LocalContext.current
     val db = remember { HistoryDb.get(ctx) }
     var items by remember { mutableStateOf(listOf<BlackEntry>()) }
     var newId by remember { mutableStateOf("") }
+    // Срок для НОВЫХ записей (как через «+», так и из контактов). Term() — навсегда.
+    // Храним длительность, а не момент: «1 час» отсчитывается от добавления, а не от выбора чипа.
+    var newTerm by remember { mutableStateOf(Term()) }
     var editing by remember { mutableStateOf<BlackEntry?>(null) }
     var editingCall by remember { mutableStateOf<BlackEntry?>(null) }
 
@@ -65,7 +141,9 @@ fun BlacklistScreen() {
                 ContactsContract.CommonDataKinds.Phone.NUMBER,
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) {
-                    db.blacklistUpsert(BlackEntry(0, it.getString(0), it.getString(1), false, null))
+                    db.blacklistUpsert(BlackEntry(0,
+                        com.davnozdu.autoresponder.rules.PhoneMask.canonical(it.getString(0)),
+                        it.getString(1), false, null, untilTs = newTerm.until()))
                     reload()
                 }
             }
@@ -88,13 +166,32 @@ fun BlacklistScreen() {
                 OutlinedTextField(newId, { newId = it }, label = { Text("Номер, имя или маска") },
                     modifier = Modifier.weight(1f), singleLine = true)
                 Button(onClick = {
-                    if (newId.isNotBlank()) { db.blacklistUpsert(BlackEntry(0, newId.trim(), null, false, null)); newId = ""; reload() }
+                    if (newId.isNotBlank()) {
+                        db.blacklistUpsert(BlackEntry(0,
+                            com.davnozdu.autoresponder.rules.PhoneMask.canonical(newId),
+                            null, false, null, untilTs = newTerm.until()))
+                        newId = ""; reload()
+                    }
                 }) { Text("+") }
             }
-            OutlinedButton(onClick = {
-                contactLauncher.launch(Intent(Intent.ACTION_PICK,
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
-            }, Modifier.padding(vertical = 4.dp)) { Text("Добавить из контактов") }
+            val canon = com.davnozdu.autoresponder.rules.PhoneMask.canonical(newId)
+            if (canon != newId.trim()) Text("Будет сохранено: $canon",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary)
+            Text("Насколько блокировать (для новой записи): ${fmtUntil(newTerm.until())}",
+                style = MaterialTheme.typography.bodySmall)
+            TermChips(newTerm.until()) { newTerm = it }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    contactLauncher.launch(Intent(Intent.ACTION_PICK,
+                        ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
+                }, Modifier.padding(vertical = 4.dp)) { Text("Добавить из контактов") }
+                val expired = items.count { it.expired() }
+                if (expired > 0) TextButton(onClick = {
+                    db.blacklistPurgeExpired(); reload()
+                }) { Text("Удалить истёкшие ($expired)") }
+            }
 
             HorizontalDivider()
             LazyColumn(Modifier.fillMaxSize()) {
@@ -106,6 +203,10 @@ fun BlacklistScreen() {
                         Text(com.davnozdu.autoresponder.rules.NameMatch.describe(e.identity),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(fmtUntil(e.untilTs), style = MaterialTheme.typography.labelSmall,
+                            color = if (e.expired()) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant)
+                        TermChips(e.untilTs) { db.blacklistUpsert(e.copy(untilTs = it.until())); reload() }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = e.viaLlm, onCheckedChange = { on ->
                                 db.blacklistUpsert(e.copy(viaLlm = on,
