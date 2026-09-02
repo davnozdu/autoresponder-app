@@ -26,7 +26,7 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
             echo "KEYSTORE_FILE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
           fi
-      - name: Unit tests (правила: номера, маски, расписание, лимиты)
+      - name: "Unit tests — правила: номера, маски, расписание, лимиты"
         run: ./gradlew testDebugUnitTest --stacktrace
       - name: Build release APK
         env:
