@@ -42,16 +42,16 @@
 
 ## Ссылки на запись (cal.com)
 
-Строка — по языку клиента, столбец — по поводу. Украинскому клиенту идут русские слоты,
-немецкому — английские: других на cal.com пока нет.
+Строка — по поводу, столбец — по языку клиента. Украинскому клиенту идут русские слоты:
+своих на cal.com пока нет.
 
-| Повод | Čeština | Русский | English | Українська | Deutsch |
-|---|---|---|---|---|---|
-| В рабочее время (бесплатно) | /bookcz | /bookru | /booken | /bookru | /booken |
-| В выходные и праздники (платно) | /hollidaycz | /hollidayru | /hollidayen | /hollidayru | /hollidayen |
-| Выезд на дом (платно) | /visithomecz | /triptohomeru | /visiten | /triptohomeru | /visiten |
-| Личная консультация (платно) | /conscz | /consru | /conen | /consru | /conen |
-| Онлайн-помощь (платно) | /helpcz | /helpru | /helpen | /helpru | /helpen |
+| Повод | Čeština | Русский | English | Українська |
+|---|---|---|---|---|
+| В рабочее время (бесплатно) | /bookcz | /bookru | /booken | /bookru |
+| В выходные и праздники (платно) | /hollidaycz | /hollidayru | /hollidayen | /hollidayru |
+| Выезд на дом (платно) | /visithomecz | /triptohomeru | /visiten | /triptohomeru |
+| Личная консультация (платно) | /conscz | /consru | /conen | /consru |
+| Онлайн-помощь (платно) | /helpcz | /helpru | /helpen | /helpru |
 
 Полный адрес — `https://cal.com/bigtweak` + слот, например `https://cal.com/bigtweak/bookru`.
 
@@ -113,20 +113,6 @@ SSD і пам’яті, чищення після залиття, видален
 
 Фрази: «Ми вас почули», «Відповімо найближчого робочого часу», «Точну ціну майстер
 назве після діагностики».
-
-# Deutsch
-
-**Big Tweak** — Servicezentrum im Zentrum von Prag. Wir reparieren Computer, Notebooks,
-MacBooks, iPhones, Android-Telefone und -Tablets sowie Spielkonsolen — Hardware und
-Software (Windows und macOS). Diagnose, Display- und Akkutausch, Mainboard-Reparatur,
-SSD- und Speicher-Austausch, Reinigung nach Flüssigkeitsschaden, Virenentfernung,
-Datenrettung, Software-Installation, Netzwerk-Einrichtung, Firmenservice.
-
-Termin: https://cal.com/bigtweak/booken (englischer Slot) · Telefon +420 608 210 867 ·
-info@bigtweak.cz
-
-Sätze: „Wir haben Ihre Nachricht erhalten“, „Wir melden uns zur nächsten Geschäftszeit“,
-„Den genauen Preis nennt der Techniker nach der Diagnose“.
 
 ---
 
