@@ -309,6 +309,15 @@ class Settings(context: Context) {
     var backupKeep: Int
         get() = sp.getInt(K_BK_KEEP, 10)
         set(v) = sp.edit().putInt(K_BK_KEEP, v).apply()
+    // --- Утренняя сводка ---
+    var digestEnabled: Boolean
+        get() = sp.getBoolean(K_DIGEST_ON, true)
+        set(v) = sp.edit().putBoolean(K_DIGEST_ON, v).apply()
+    /** час показа сводки (0-23) */
+    var digestHour: Int
+        get() = sp.getInt(K_DIGEST_HOUR, 8)
+        set(v) = sp.edit().putInt(K_DIGEST_HOUR, v).apply()
+
     // --- Тихий час (авто-SMS по отклонённым звонкам придерживается до утра) ---
     var quietHoursOn: Boolean
         get() = sp.getBoolean(K_QUIET_ON, false)
@@ -600,6 +609,8 @@ class Settings(context: Context) {
         private const val K_MON_APPS = "monitored_apps"
         private const val K_NOTIF_AGE = "notif_age_min"
         private const val K_UPD_CHECK = "last_upd_check"
+        private const val K_DIGEST_ON = "digest_on"
+        private const val K_DIGEST_HOUR = "digest_hour"
         private const val K_QUIET_ON = "quiet_on"
         private const val K_QUIET_START = "quiet_start"
         private const val K_QUIET_END = "quiet_end"

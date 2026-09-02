@@ -34,6 +34,7 @@
         <activity android:name=".ui.AppPickerActivity" android:exported="false" />
         <activity android:name=".ui.StatsActivity" android:exported="false" />
         <activity android:name=".ui.StatusActivity" android:exported="false" />
+        <activity android:name=".ui.InboxActivity" android:exported="false" />
 
         <activity
             android:name=".ui.MainActivity"

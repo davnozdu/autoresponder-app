@@ -52,6 +52,8 @@ fun AppScreen() {
 
     var enabled by remember { mutableStateOf(s.enabled) }
     var respCalls by remember { mutableStateOf(s.respondCalls) }
+    var digestOn by remember { mutableStateOf(s.digestEnabled) }
+    var digestHour by remember { mutableStateOf(s.digestHour) }
     var quietOn by remember { mutableStateOf(s.quietHoursOn) }
     var quietStart by remember { mutableStateOf(s.quietStartMin) }
     var quietEnd by remember { mutableStateOf(s.quietEndMin) }
@@ -372,6 +374,31 @@ fun AppScreen() {
                     else "Активно ${fmtMin(startMin)} → ${fmtMin(endMin)}",
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+
+            ExpandableSection("Утренняя сводка") {
+                SwitchRow("Присылать сводку за сутки", digestOn) {
+                    digestOn = it; s.digestEnabled = it
+                    com.davnozdu.autoresponder.notif.Digest.schedule(ctx)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("В")
+                    OutlinedButton(onClick = {
+                        pickTime(ctx, digestHour * 60) { m ->
+                            digestHour = m / 60; s.digestHour = m / 60
+                            com.davnozdu.autoresponder.notif.Digest.schedule(ctx)
+                        }
+                    }) { Text("%02d:00".format(digestHour)) }
+                    OutlinedButton(onClick = {
+                        com.davnozdu.autoresponder.notif.Digest.show(ctx)
+                        Toast.makeText(ctx, "Сводка показана (если было что показать)", Toast.LENGTH_SHORT).show()
+                    }) { Text("Показать сейчас") }
+                }
+                Text("Сколько было звонков и сообщений за сутки и кому вы ещё не ответили сами. "
+                    + "Ночью не приходит — в этом и смысл.",
+                    style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { ctx.startActivity(Intent(ctx, InboxActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()) { Text("📋 Требуют ответа") }
             }
 
             ExpandableSection("Тихий час (ночные SMS)") {
@@ -859,6 +886,8 @@ fun AppScreen() {
             ExpandableSection("Экраны") {
                 Button(onClick = { ctx.startActivity(Intent(ctx, StatusActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("✅ Состояние (проверка готовности)") }
+                Button(onClick = { ctx.startActivity(Intent(ctx, InboxActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()) { Text("📋 Требуют ответа") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("💬 История общения") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, HistoryChatActivity::class.java)) },

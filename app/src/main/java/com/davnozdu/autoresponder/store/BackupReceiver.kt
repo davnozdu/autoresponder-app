@@ -17,6 +17,9 @@ class BackupReceiver : BroadcastReceiver() {
                 try {
                     if (action == Backup.ACTION) Backup.run(app)
                     Backup.schedule(app)  // (пере)планируем следующий
+                    // После перезагрузки система стирает все alarms: утренняя сводка
+                    // взводится здесь же, другого BOOT_COMPLETED в приложении нет.
+                    com.davnozdu.autoresponder.notif.Digest.schedule(app)
                 } catch (_: Exception) {
                 } finally { pending.finish() }
             }.start()
