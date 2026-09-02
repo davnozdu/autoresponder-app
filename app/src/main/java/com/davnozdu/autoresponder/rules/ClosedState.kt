@@ -29,18 +29,32 @@ object ClosedState {
     private fun inSchedule(s: Settings): Boolean {
         val now = Calendar.getInstance()
         val cur = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
-        if (s.scheduleMode == 1) {
+        return closedBySchedule(
+            mode = s.scheduleMode, nowMin = cur, dayOfWeek = now.get(Calendar.DAY_OF_WEEK),
+            workDaysMask = s.workDaysMask, workStart = s.workStartMin, workEnd = s.workEndMin,
+            windowStart = s.scheduleStartMin, windowEnd = s.scheduleEndMin)
+    }
+
+    /**
+     * Чистая часть расписания: ни Context, ни Settings, ни системных часов — только числа.
+     * Вынесено ради юнит-теста: окно через полночь и совпадающие границы — ровно те места,
+     * где ошибка означает молчание для живого клиента и замечается только по жалобе.
+     *
+     * @param mode 1 — рабочие часы/дни («закрыто» вне них), иначе окно «закрыто» start..end
+     * @param dayOfWeek как в [Calendar.DAY_OF_WEEK] (вс = 1)
+     */
+    fun closedBySchedule(mode: Int, nowMin: Int, dayOfWeek: Int, workDaysMask: Int,
+                         workStart: Int, workEnd: Int,
+                         windowStart: Int, windowEnd: Int): Boolean {
+        if (mode == 1) {
             // Рабочие часы/дни: «закрыто», если НЕ рабочий день ИЛИ вне рабочих часов.
-            val dow = now.get(Calendar.DAY_OF_WEEK)
-            val isWorkDay = (s.workDaysMask and (1 shl dow)) != 0
-            val inHours = cur in s.workStartMin until s.workEndMin
+            val isWorkDay = (workDaysMask and (1 shl dayOfWeek)) != 0
+            val inHours = nowMin in workStart until workEnd
             return !(isWorkDay && inHours)
         }
-        val start = s.scheduleStartMin
-        val end = s.scheduleEndMin
         // Одинаковые границы = окно на целые сутки (раньше «закрыто» не наступало никогда).
-        if (start == end) return true
-        return if (start < end) cur in start until end
-               else cur >= start || cur < end
+        if (windowStart == windowEnd) return true
+        return if (windowStart < windowEnd) nowMin in windowStart until windowEnd
+               else nowMin >= windowStart || nowMin < windowEnd
     }
 }
