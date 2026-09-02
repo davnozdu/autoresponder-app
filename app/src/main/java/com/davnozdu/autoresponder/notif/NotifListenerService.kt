@@ -25,6 +25,7 @@ class NotifListenerService : NotificationListenerService() {
         } catch (_: Exception) {}
         AutoNotifications.onDndChanged(this)  // синхронизировать текущее состояние
         com.davnozdu.autoresponder.store.Backup.schedule(this)  // ежедневный бэкап БД
+        com.davnozdu.autoresponder.store.Heartbeat.tick(this)   // признак жизни для модуля
         // Восстановление после простоя: слушатель мог быть отвязан (падение процесса, ре-бинд
         // watchdog'ом, перезагрузка) — на переподключении система НЕ переигрывает onNotificationPosted,
         // поэтому активно подхватываем ещё свежие непрочитанные. Возрастной фильтр (5 мин) внутри
@@ -38,6 +39,8 @@ class NotifListenerService : NotificationListenerService() {
 
     companion object {
         @Volatile private var instance: NotifListenerService? = null
+        /** Подключён ли слушатель на самом деле — уходит в heartbeat для модуля. */
+        val isConnected: Boolean get() = instance != null
         /** Снять уведомление после ответа, чтобы не обрабатывать повторно. */
         fun dismiss(key: String?) {
             if (key == null) return

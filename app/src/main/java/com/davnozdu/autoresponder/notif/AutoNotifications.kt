@@ -24,7 +24,10 @@ object AutoNotifications {
     const val ACT_PAUSE_REBOOT = "com.davnozdu.autoresponder.PAUSE_REBOOT"
     const val ACT_DISABLE = "com.davnozdu.autoresponder.DISABLE"
     const val ACT_BL_NOTIFY = "com.davnozdu.autoresponder.BL_NOTIFY"
+    const val ACT_QUIET_FLUSH = "com.davnozdu.autoresponder.QUIET_FLUSH"
     const val ID_BLACKLIST = 1003
+    const val CH_DIGEST = "autoresp_digest"
+    const val ID_DIGEST = 1004
 
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)
 
@@ -35,6 +38,8 @@ object AutoNotifications {
         m.createNotificationChannel(NotificationChannel(CH_SUMMARY, "Сводка автоответа",
             NotificationManager.IMPORTANCE_DEFAULT))
         m.createNotificationChannel(NotificationChannel(CH_BLACKLIST, "Чёрный список",
+            NotificationManager.IMPORTANCE_DEFAULT))
+        m.createNotificationChannel(NotificationChannel(CH_DIGEST, "Утренняя сводка",
             NotificationManager.IMPORTANCE_DEFAULT))
     }
 
@@ -89,6 +94,22 @@ object AutoNotifications {
             .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(names))
             .setContentIntent(tap).setAutoCancel(true).build()
         nm(context)?.notify(ID_BLACKLIST, n)
+    }
+
+    /** Утренняя сводка. Ведёт в «Требуют ответа», если есть кому отвечать. */
+    fun showDigest(context: Context, title: String, text: String, pending: Int) {
+        ensureChannels(context)
+        val target = if (pending > 0) Intent(context, com.davnozdu.autoresponder.ui.InboxActivity::class.java)
+                     else Intent(context, HistoryActivity::class.java)
+        val tap = PendingIntent.getActivity(context, 12,
+            target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n = androidx.core.app.NotificationCompat.Builder(context, CH_DIGEST)
+            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setContentTitle(title).setContentText(text)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(tap).setAutoCancel(true).build()
+        nm(context)?.notify(ID_DIGEST, n)
     }
 
     private fun showSummary(context: Context, from: Long) {

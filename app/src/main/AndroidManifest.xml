@@ -21,6 +21,7 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
+        android:name=".App"
         android:allowBackup="false"
         android:icon="@android:drawable/sym_action_call"
         android:label="@string/app_name"
@@ -33,6 +34,7 @@
         <activity android:name=".ui.AppPickerActivity" android:exported="false" />
         <activity android:name=".ui.StatsActivity" android:exported="false" />
         <activity android:name=".ui.StatusActivity" android:exported="false" />
+        <activity android:name=".ui.InboxActivity" android:exported="false" />
 
         <activity
             android:name=".ui.MainActivity"

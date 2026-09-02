@@ -52,6 +52,16 @@ fun AppScreen() {
 
     var enabled by remember { mutableStateOf(s.enabled) }
     var respCalls by remember { mutableStateOf(s.respondCalls) }
+    var priceSrc by remember { mutableStateOf(com.davnozdu.autoresponder.store.Prices.source(ctx)) }
+    var priceCount by remember { mutableStateOf(com.davnozdu.autoresponder.store.Prices.rows(ctx).size) }
+    var smsCmdOn by remember { mutableStateOf(s.smsCommandsOn) }
+    var smsCmdNums by remember { mutableStateOf(s.smsCommandNumbers) }
+    var newCmdNum by remember { mutableStateOf("") }
+    var digestOn by remember { mutableStateOf(s.digestEnabled) }
+    var digestHour by remember { mutableStateOf(s.digestHour) }
+    var quietOn by remember { mutableStateOf(s.quietHoursOn) }
+    var quietStart by remember { mutableStateOf(s.quietStartMin) }
+    var quietEnd by remember { mutableStateOf(s.quietEndMin) }
     var respSms by remember { mutableStateOf(s.respondSms) }
     var notifOn by remember { mutableStateOf(s.notificationsEnabled) }
     var blnMode by remember { mutableStateOf(s.blNotifMode) }
@@ -213,6 +223,19 @@ fun AppScreen() {
             } catch (e: Exception) { Toast.makeText(ctx, "Ошибка загрузки списка", Toast.LENGTH_SHORT).show() }
         }
     }
+    val priceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val txt = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: ""
+                com.davnozdu.autoresponder.store.Prices.saveAppCopy(ctx, txt)
+                priceSrc = com.davnozdu.autoresponder.store.Prices.source(ctx)
+                priceCount = com.davnozdu.autoresponder.store.Prices.rows(ctx).size
+                Toast.makeText(ctx, "Прайс загружен: $priceCount строк", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) { Toast.makeText(ctx, "Ошибка загрузки прайса", Toast.LENGTH_SHORT).show() }
+        }
+    }
     val contactLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { res ->
@@ -369,6 +392,83 @@ fun AppScreen() {
                     else "Активно ${fmtMin(startMin)} → ${fmtMin(endMin)}",
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+
+            ExpandableSection("Управление по SMS") {
+                SwitchRow("Принимать команды с доверенных номеров", smsCmdOn) { smsCmdOn = it; s.smsCommandsOn = it }
+                Text("Команды (регистр не важен): STATUS — состояние, OFF — выключить автоответ, "
+                    + "ON — включить, PAUSE — пауза до следующего DND, DIGEST — показать сводку. "
+                    + "Русские слова тоже понимаются: статус, выкл, вкл, пауза, сводка.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Отправителя SMS подделать несложно, поэтому по умолчанию выключено, "
+                    + "а команды принимаются только с номеров из этого списка. Ответ уходит "
+                    + "той же SMS на тот же номер.",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(newCmdNum, { newCmdNum = it }, label = { Text("Доверенный номер") },
+                        modifier = Modifier.weight(1f), singleLine = true)
+                    Button(onClick = {
+                        if (newCmdNum.isNotBlank()) {
+                            s.addSmsCommandNumber(newCmdNum); smsCmdNums = s.smsCommandNumbers; newCmdNum = ""
+                        }
+                    }) { Text("+") }
+                }
+                CanonicalHint(newCmdNum)
+                smsCmdNums.forEach { n ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(n)
+                        TextButton(onClick = { s.removeSmsCommandNumber(n); smsCmdNums = s.smsCommandNumbers }) { Text("Удалить") }
+                    }
+                }
+                if (smsCmdOn && smsCmdNums.isEmpty()) Text("Список пуст — ни одна команда не будет принята.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+
+            ExpandableSection("Утренняя сводка") {
+                SwitchRow("Присылать сводку за сутки", digestOn) {
+                    digestOn = it; s.digestEnabled = it
+                    com.davnozdu.autoresponder.notif.Digest.schedule(ctx)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("В")
+                    OutlinedButton(onClick = {
+                        pickTime(ctx, digestHour * 60) { m ->
+                            digestHour = m / 60; s.digestHour = m / 60
+                            com.davnozdu.autoresponder.notif.Digest.schedule(ctx)
+                        }
+                    }) { Text("%02d:00".format(digestHour)) }
+                    OutlinedButton(onClick = {
+                        com.davnozdu.autoresponder.notif.Digest.show(ctx)
+                        Toast.makeText(ctx, "Сводка показана (если было что показать)", Toast.LENGTH_SHORT).show()
+                    }) { Text("Показать сейчас") }
+                }
+                Text("Сколько было звонков и сообщений за сутки и кому вы ещё не ответили сами. "
+                    + "Ночью не приходит — в этом и смысл.",
+                    style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { ctx.startActivity(Intent(ctx, InboxActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()) { Text("📋 Требуют ответа") }
+            }
+
+            ExpandableSection("Тихий час (ночные SMS)") {
+                SwitchRow("Не будить SMS ночью", quietOn) { quietOn = it; s.quietHoursOn = it }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("С")
+                    OutlinedButton(onClick = { pickTime(ctx, quietStart) { quietStart = it; s.quietStartMin = it } }) { Text(fmtMin(quietStart)) }
+                    Text("до")
+                    OutlinedButton(onClick = { pickTime(ctx, quietEnd) { quietEnd = it; s.quietEndMin = it } }) { Text(fmtMin(quietEnd)) }
+                }
+                Text("Звонок ночью отклоняется как обычно, но ответная SMS уходит утром — "
+                    + "и одна на номер, сколько бы раз ни звонили. Ошибся номером или звонит "
+                    + "из другого часового пояса — не разбудим.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("На SMS и сообщения мессенджеров не влияет: человек написал сам, "
+                    + "молчание в ответ выглядело бы поломкой.",
+                    style = MaterialTheme.typography.bodySmall)
+                val held = remember(quietOn) { com.davnozdu.autoresponder.store.HistoryDb.get(ctx).smsHoldCount() }
+                if (held > 0) Text("Сейчас придержано: $held", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary)
             }
 
             ExpandableSection("Маска стран и выбор SIM") {
@@ -735,6 +835,28 @@ fun AppScreen() {
                 }
             }
 
+            ExpandableSection("Прайс-лист (цены как факты)") {
+                Text("Цену модель НЕ придумывает: код подставляет в промпт строки прайса, "
+                    + "а нет подходящей — запрещает называть цифру и велит сказать, что "
+                    + "мастер уточнит после диагностики.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Формат CSV, одна услуга в строке: устройство;услуга;цена;срок. "
+                    + "«#» — комментарий. Пример: iPhone 12;замена экрана;3500 Kč;1 день",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { priceLauncher.launch(arrayOf("*/*")) }) { Text("Загрузить .csv") }
+                    if (priceSrc != null) OutlinedButton(onClick = {
+                        com.davnozdu.autoresponder.store.Prices.saveAppCopy(ctx, null)
+                        priceSrc = com.davnozdu.autoresponder.store.Prices.source(ctx)
+                        priceCount = com.davnozdu.autoresponder.store.Prices.rows(ctx).size
+                    }) { Text("Убрать копию") }
+                }
+                Text(priceSrc?.let { "Источник: $it ($priceCount строк)" }
+                    ?: "Прайс не задан — цены в ответах не называются. "
+                       + "Можно положить файл в ${com.davnozdu.autoresponder.store.Prices.PUBLIC_PATH}",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+
             ExpandableSection("Праздники (гос. выходные)") {
                 SwitchRow("Учитывать праздники", holOn) { holOn = it; s.holidaysEnabled = it }
                 Text(when {
@@ -836,6 +958,8 @@ fun AppScreen() {
             ExpandableSection("Экраны") {
                 Button(onClick = { ctx.startActivity(Intent(ctx, StatusActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("✅ Состояние (проверка готовности)") }
+                Button(onClick = { ctx.startActivity(Intent(ctx, InboxActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()) { Text("📋 Требуют ответа") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("💬 История общения") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, HistoryChatActivity::class.java)) },
@@ -875,10 +999,22 @@ fun AppScreen() {
 
             ExpandableSection("Журнал") {
                 var logText by remember { mutableStateOf(EventLog(ctx).all()) }
+                var logFileOn by remember { mutableStateOf(s.logToFile) }
+                var logSize by remember { mutableStateOf(com.davnozdu.autoresponder.data.LogFile.sizeBytes()) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { logText = EventLog(ctx).all() }) { Text("Обновить") }
                     OutlinedButton(onClick = { EventLog(ctx).clear(); logText = "" }) { Text("Очистить") }
                 }
+                SwitchRow("Писать журнал в файл", logFileOn) { logFileOn = it; s.logToFile = it }
+                Text("В памяти журнал живёт до перезагрузки. Файл нужен, когда разбираться "
+                    + "приходится через сутки: «почему клиенту не ответили вчера вечером».",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("${com.davnozdu.autoresponder.data.LogFile.DIR} — по файлу на сутки, "
+                    + "хранится ${s.logKeepDays} дней, сейчас ${logSize / 1024} КБ",
+                    style = MaterialTheme.typography.bodySmall)
+                if (logSize > 0) OutlinedButton(onClick = {
+                    com.davnozdu.autoresponder.data.LogFile.clear(); logSize = 0
+                }) { Text("Удалить файлы журнала") }
                 Text(logText.ifBlank { "пусто" }, style = MaterialTheme.typography.bodySmall)
             }
 

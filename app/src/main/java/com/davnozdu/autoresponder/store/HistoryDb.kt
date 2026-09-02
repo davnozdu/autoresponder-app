@@ -16,6 +16,12 @@ data class BlackEntry(
     fun expired(now: Long = System.currentTimeMillis()): Boolean = untilTs in 1..now
 }
 
+/** Ветка, на которую клиент ждёт ответа живого человека. */
+data class PendingItem(
+    val number: String, val name: String?, val lastIn: Long,
+    val channel: String, val body: String, val incoming: Int
+)
+
 data class HistItem(
     val id: Long, val number: String, val name: String?,
     val channel: String, val direction: String, val body: String, val ts: Long,
@@ -24,7 +30,7 @@ data class HistItem(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 7) {
+    SQLiteOpenHelper(context.applicationContext, "history.db", null, 9) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -43,6 +49,18 @@ class HistoryDb private constructor(context: Context) :
         createBlacklist(db)
         createQa(db)
         createBlPending(db)
+        createSmsHold(db)
+        createInboxDone(db)
+    }
+
+    /** Отметки «этой веткой я занялся» — чтобы разобранное не висело в списке вечно. */
+    private fun createInboxDone(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS inbox_done(number TEXT PRIMARY KEY, ts INTEGER NOT NULL)")
+    }
+
+    /** Ночные авто-SMS, придержанные до утра (тихий час). */
+    private fun createSmsHold(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS sms_hold(_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, ts INTEGER)")
     }
 
     private fun createBlPending(db: SQLiteDatabase) {
@@ -89,12 +107,14 @@ class HistoryDb private constructor(context: Context) :
         if (oldV < 5) addColumn(db, "ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
         if (oldV < 6) createBlPending(db)
         if (oldV < 7) addColumn(db, "ALTER TABLE blacklist ADD COLUMN until_ts INTEGER NOT NULL DEFAULT 0")
+        if (oldV < 8) createSmsHold(db)
+        if (oldV < 9) createInboxDone(db)
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
      *  По умолчанию SQLiteOpenHelper бросает SQLiteDowngradeFailedException и приложение крашится. */
     override fun onDowngrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
-        createBlacklist(db); createQa(db); createBlPending(db)
+        createBlacklist(db); createQa(db); createBlPending(db); createSmsHold(db); createInboxDone(db)
         // Таблица могла остаться из бэкапа старой схемы — CREATE IF NOT EXISTS её не тронет,
         // а SELECT с новыми колонками упадёт. ALTER'ы безопасны: дубликат глотается.
         addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_sms INTEGER NOT NULL DEFAULT 1")
@@ -139,6 +159,15 @@ class HistoryDb private constructor(context: Context) :
             " AND channel IN (${channels.joinToString(",") { "'" + it + "'" }})"
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM events WHERE direction='out' AND auto=1 AND ts>=?$chSql",
+            arrayOf(from.toString())).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+
+    /** Сколько ВХОДЯЩИХ пришло с момента from (для утренней сводки). */
+    fun countIncoming(from: Long, channels: List<String> = emptyList()): Int {
+        val chSql = if (channels.isEmpty()) "" else
+            " AND channel IN (${channels.joinToString(",") { "'" + it + "'" }})"
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM events WHERE direction='in' AND ts>=?$chSql",
             arrayOf(from.toString())).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
 
@@ -219,6 +248,51 @@ class HistoryDb private constructor(context: Context) :
             keys.toTypedArray()
         ).use { c -> while (c.moveToNext()) res.add(row(c)) }
         return res.asReversed()
+    }
+
+    /**
+     * Ветки, где последнее слово осталось за клиентом, — «требуют ответа».
+     *
+     * Авто-ответ ответом НЕ считается: в том и смысл, что робот подержал разговор, а
+     * человеку всё равно надо перезвонить. Ответом считается наше исходящее, сделанное
+     * руками (`auto=0`) — отправленная SMS или исходящий звонок из журнала.
+     *
+     * [since] отсекает древность: неделю назад «не ответили» — это уже не задача, а история.
+     */
+    fun needsAnswer(since: Long): List<PendingItem> {
+        val res = ArrayList<PendingItem>()
+        val sql = """
+            SELECT g.number, g.last_in, g.cnt,
+                   (SELECT name FROM events WHERE number=g.number AND name IS NOT NULL
+                     ORDER BY ts DESC LIMIT 1) AS nm,
+                   (SELECT channel FROM events WHERE number=g.number AND ts=g.last_in LIMIT 1) AS ch,
+                   (SELECT body FROM events WHERE number=g.number AND ts=g.last_in LIMIT 1) AS bd
+              FROM (SELECT number,
+                           MAX(CASE WHEN direction='in' THEN ts END) AS last_in,
+                           MAX(CASE WHEN direction='out' AND auto=0 THEN ts END) AS last_out,
+                           SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS cnt
+                      FROM events GROUP BY number) g
+              LEFT JOIN inbox_done d ON d.number = g.number
+             WHERE g.last_in IS NOT NULL AND g.last_in >= ?
+               AND g.last_in > COALESCE(g.last_out, 0)
+               AND g.last_in > COALESCE(d.ts, 0)
+             ORDER BY g.last_in DESC
+        """.trimIndent()
+        readableDatabase.rawQuery(sql, arrayOf(since.toString())).use { c ->
+            while (c.moveToNext()) res.add(PendingItem(
+                number = c.getString(0), lastIn = c.getLong(1), incoming = c.getInt(2),
+                name = if (c.isNull(3)) null else c.getString(3),
+                channel = if (c.isNull(4)) "" else c.getString(4),
+                body = if (c.isNull(5)) "" else c.getString(5)))
+        }
+        return res
+    }
+
+    /** «Я этим занялся»: ветка уходит из списка, пока клиент не напишет снова. */
+    fun inboxDone(number: String, ts: Long = System.currentTimeMillis()) {
+        val cv = ContentValues().apply { put("number", number); put("ts", ts) }
+        writableDatabase.insertWithOnConflict("inbox_done", null, cv,
+            SQLiteDatabase.CONFLICT_REPLACE)
     }
 
     /** Сколько раз этот адресат звонил начиная с [since] (мс). */
@@ -352,6 +426,25 @@ class HistoryDb private constructor(context: Context) :
         readableDatabase.rawQuery("SELECT COUNT(*) FROM bl_pending", null).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
     fun blPendingClear() { writableDatabase.delete("bl_pending", null, null) }
+
+    // --- Придержанные до утра авто-SMS (тихий час) ---
+    fun smsHoldAdd(number: String) {
+        val cv = ContentValues().apply { put("number", number); put("ts", System.currentTimeMillis()) }
+        writableDatabase.insert("sms_hold", null, cv)
+    }
+    /** Номера без повторов: три ночных звонка с одного номера — одна утренняя SMS. */
+    fun smsHoldNumbers(): List<String> {
+        val res = ArrayList<String>()
+        readableDatabase.rawQuery("SELECT DISTINCT number FROM sms_hold ORDER BY ts", null).use { c ->
+            while (c.moveToNext()) c.getString(0)?.let { res.add(it) }
+        }
+        return res
+    }
+    fun smsHoldCount(): Int {
+        readableDatabase.rawQuery("SELECT COUNT(*) FROM sms_hold", null).use { c ->
+            return if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+    fun smsHoldClear() { writableDatabase.delete("sms_hold", null, null) }
 
     /** Принудительный WAL-checkpoint перед копированием файла БД (для бэкапа). */
     fun checkpoint() {
