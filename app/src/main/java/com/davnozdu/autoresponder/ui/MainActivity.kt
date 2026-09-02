@@ -512,12 +512,15 @@ fun AppScreen() {
                     OutlinedButton(onClick = {
                         crmStatus = "Проверяю…"
                         scope.launch {
-                            val ok = withContext(Dispatchers.IO) {
-                                com.davnozdu.autoresponder.crm.CrmRoster.sync(ctx, force = true)
+                            // Причина отказа почти всегда есть в ответе — показываем её,
+                            // а не перечисляем всё, что могло пойти не так.
+                            val err = withContext(Dispatchers.IO) {
+                                com.davnozdu.autoresponder.crm.CrmRoster.check(ctx)
                             }
-                            crmStatus = if (ok)
-                                "Связь есть. В реестре ${com.davnozdu.autoresponder.crm.CrmRoster.size(ctx)} номеров с активными записями."
-                            else "Не вышло. Проверь адрес, токен и что в CRM включён приём (и что приложению разрешена сеть в файрволе)."
+                            crmStatus = err
+                                ?: ("Связь есть. В реестре "
+                                    + com.davnozdu.autoresponder.crm.CrmRoster.size(ctx)
+                                    + " номеров с активными записями.")
                         }
                     }) { Text("Проверить связь") }
                     OutlinedButton(onClick = {

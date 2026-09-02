@@ -103,6 +103,67 @@ object CrmRoster {
         }
     }
 
+    /**
+     * Проверка связи для кнопки в настройках — с человеческим объяснением, что не так.
+     *
+     * Раньше кнопка отвечала «не вышло, проверь адрес, токен и приём» — то есть перечисляла
+     * всё сразу. Между тем причина в ответе есть почти всегда, надо только её показать.
+     *
+     * @return null, если всё в порядке, иначе — что именно случилось.
+     */
+    fun check(context: Context): String? {
+        val s = Settings(context)
+        if (!s.crmEnabled) return "Функция выключена — включите переключатель выше."
+        if (s.crmBaseUrl.isBlank()) return "Не указан адрес CRM."
+        if (s.crmToken.isBlank()) return "Не вписан токен."
+        if (!com.davnozdu.autoresponder.respond.NetworkUtil.isOnline(context))
+            return "Нет интернета."
+
+        return when (val res = CrmApi.roster(context, "")) {
+            is RosterResult.Ok -> {
+                save(context, res.phones)
+                s.crmRosterEtag = res.etag
+                s.crmRosterAt = System.currentTimeMillis()
+                null
+            }
+            // Пустого ETag мы не посылали, так что 304 сюда прийти не может; на всякий
+            // случай считаем связь исправной.
+            RosterResult.NotModified -> { s.crmRosterAt = System.currentTimeMillis(); null }
+            is RosterResult.Error -> explain(res.why)
+        }
+    }
+
+    /** Ответ сервера → что с этим делать. */
+    private fun explain(why: String): String = when {
+        // Защита хостинга отдаёт свою страницу вместо ответа CRM.
+        why.contains("antirobot", true) || why.contains("hostia", true) ||
+        why.contains("HTTP 416") ->
+            "Запрос перехватила защита хостинга («я не робот»). Попросите хостинг исключить " +
+            "из проверки адрес index.php?r=bot. или User-Agent приложения."
+
+        // Оба случая CRM отвечает одинаково намеренно — но подсказать, где смотреть, можно.
+        why.contains("not_found") || why.contains("HTTP 404") ->
+            "CRM ответила «не найдено». Это либо не тот токен, либо в CRM не включён приём " +
+            "(Настройки → Автоответчик → «Принимать запросы»). Что именно — видно там же в журнале."
+
+        why.contains("HTTP 429") ->
+            "CRM ограничила частоту запросов. Подождите минуту."
+
+        why.contains("UnknownHost", true) ->
+            "Адрес не разрешается — проверьте написание адреса CRM."
+
+        why.contains("Timeout", true) || why.contains("timed out", true) ->
+            "CRM не ответила вовремя. Возможно, приложению закрыт доступ в сеть в файрволе."
+
+        why.contains("SSL", true) || why.contains("Trust", true) || why.contains("Certificate", true) ->
+            "Не проходит проверка сертификата — адрес должен начинаться с https://."
+
+        why.contains("не JSON") || why.contains("<!") || why.contains("<html", true) ->
+            "Вместо ответа CRM пришла веб-страница: $why"
+
+        else -> "Не вышло: $why"
+    }
+
     fun clear(context: Context) {
         try { file(context).delete() } catch (_: Exception) {}
         cache = null
