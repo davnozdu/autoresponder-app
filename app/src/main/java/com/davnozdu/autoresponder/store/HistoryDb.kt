@@ -162,7 +162,7 @@ class HistoryDb private constructor(context: Context) :
             arrayOf(from.toString())).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
 
-    /** Сколько ВХОДЯЩИХ пришло с момента from (для утренней сводки). */
+    /** Сколько ВХОДЯЩИХ пришло с момента from (для сводки после DND). */
     fun countIncoming(from: Long, channels: List<String> = emptyList()): Int {
         val chSql = if (channels.isEmpty()) "" else
             " AND channel IN (${channels.joinToString(",") { "'" + it + "'" }})"

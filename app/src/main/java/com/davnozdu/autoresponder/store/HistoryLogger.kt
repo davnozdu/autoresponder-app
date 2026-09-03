@@ -33,5 +33,7 @@ object HistoryLogger {
                 HistoryDb.get(app).insert(identity.trim(), identity.trim(), channel, direction, body, auto = auto)
             }
         }
+        // Через record проходят все каналы — отсюда и тикает счётчик живого уведомления DND.
+        com.davnozdu.autoresponder.notif.DndStats.onEvent(app, channel, direction, auto)
     }
 }

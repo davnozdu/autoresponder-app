@@ -17,7 +17,8 @@ class NotifActionReceiver : BroadcastReceiver() {
             }
             AutoNotifications.ACT_BL_NOTIFY -> BlacklistNotifier.onAlarm(context)
             AutoNotifications.ACT_QUIET_FLUSH -> com.davnozdu.autoresponder.respond.QuietHours.onAlarm(context)
-            Digest.ACTION -> Digest.onAlarm(context)
+            // Сводка теперь приходит при выключении DND; старый будильник — снимаем.
+            Digest.ACTION -> Digest.cancelLegacyAlarm(context)
             com.davnozdu.autoresponder.store.Heartbeat.ACTION ->
                 com.davnozdu.autoresponder.store.Heartbeat.tick(context)
         }

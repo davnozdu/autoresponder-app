@@ -9,16 +9,13 @@ import com.davnozdu.autoresponder.R
 import com.davnozdu.autoresponder.data.Settings
 import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.ClosedState
-import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.ui.HistoryActivity
 import com.davnozdu.autoresponder.ui.StatsActivity
 
 object AutoNotifications {
     const val CH_DND = "autoresp_dnd"
-    const val CH_SUMMARY = "autoresp_summary"
     const val CH_BLACKLIST = "autoresp_blacklist"
     const val ID_DND = 1001
-    const val ID_SUMMARY = 1002
 
     const val ACT_PAUSE_NEXT = "com.davnozdu.autoresponder.PAUSE_NEXT_DND"
     const val ACT_PAUSE_REBOOT = "com.davnozdu.autoresponder.PAUSE_REBOOT"
@@ -35,11 +32,12 @@ object AutoNotifications {
         val m = nm(context) ?: return
         m.createNotificationChannel(NotificationChannel(CH_DND, "Автоответ активен",
             NotificationManager.IMPORTANCE_LOW).apply { setSound(null, null); enableVibration(false) })
-        m.createNotificationChannel(NotificationChannel(CH_SUMMARY, "Сводка автоответа",
-            NotificationManager.IMPORTANCE_DEFAULT))
+        // Отдельный канал «Сводка автоответа» слился со сводкой после DND — это одно и то же
+        // уведомление. Старый канал удаляем, иначе он висит пустым в настройках телефона.
+        m.deleteNotificationChannel("autoresp_summary")
         m.createNotificationChannel(NotificationChannel(CH_BLACKLIST, "Чёрный список",
             NotificationManager.IMPORTANCE_DEFAULT))
-        m.createNotificationChannel(NotificationChannel(CH_DIGEST, "Утренняя сводка",
+        m.createNotificationChannel(NotificationChannel(CH_DIGEST, "Сводка после «Не беспокоить»",
             NotificationManager.IMPORTANCE_DEFAULT))
     }
 
@@ -48,14 +46,24 @@ object AutoNotifications {
         val app = context.applicationContext
         val s = Settings(app)
         val dndOn = ClosedState.isDndOn(app)
-        if (dndOn && !s.dndWasOn) {
-            s.dndWasOn = true; s.lastDndOnTime = System.currentTimeMillis()
-            if (s.notificationsEnabled) showDndActive(app)
-        } else if (!dndOn && s.dndWasOn) {
+        if (dndOn) {
+            if (!s.dndWasOn) {
+                s.dndWasOn = true; s.lastDndOnTime = System.currentTimeMillis()
+                DndStats.startSession(app)
+            }
+            // Показываем и на повторных срабатываниях: после перезагрузки система чистит
+            // панель, а счётчики лежат в настройках — уведомление надо вернуть.
+            // Выключенный автоответ ничего не делает: «Автоответ работает» в панели было бы
+            // враньём, а раньше уведомление появлялось и после кнопки «Выключить».
+            if (s.notificationsEnabled && s.enabled) showDndActive(app, s)
+        } else if (s.dndWasOn) {
+            val from = s.lastDndOnTime
             s.dndWasOn = false
             AutoReplyState.onDndOff(app)
             cancelDnd(app)
-            if (s.notificationsEnabled) showSummary(app, s.lastDndOnTime)
+            // Сводка — здесь, а не в назначенный час: телефон только что взяли в руки,
+            // и видно, что случилось за только что закончившийся сеанс.
+            if (s.notificationsEnabled && s.digestEnabled) Digest.show(app, s, from)
         }
     }
 
@@ -65,14 +73,28 @@ object AutoNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
-    fun showDndActive(context: Context) {
+    /**
+     * Постоянное уведомление на время DND. Показывает не «работает», а что уже случилось:
+     * сколько звонков и сообщений пришло и сколько ответов ушло. Текст пересобирается
+     * только в момент события (см. [DndStats]) — никакого таймера, телефон не будим.
+     */
+    fun showDndActive(context: Context, s: Settings = Settings(context)) {
         ensureChannels(context)
         val paused = AutoReplyState.isPaused(context)
+        val stats = DndStats.line(s)
+        val tap = PendingIntent.getActivity(context, 13,
+            Intent(context, StatsActivity::class.java)
+                .putExtra("from", s.lastDndOnTime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val n = androidx.core.app.NotificationCompat.Builder(context, CH_DND)
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(if (paused) "Автоответ на паузе" else "Автоответ работает")
-            .setContentText(if (paused) "Пауза активна" else "Отвечаю на звонки и сообщения (DND)")
-            .setOngoing(true).setSilent(true)
+            .setContentText(stats)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(
+                if (paused) "$stats\nПауза активна — новым никто не отвечает."
+                else "$stats\nОтвечаю на звонки и сообщения, пока включён «Не беспокоить»."))
+            .setContentIntent(tap)
+            .setOngoing(true).setSilent(true).setOnlyAlertOnce(true)
             .addAction(0, "До след. DND", action(context, ACT_PAUSE_NEXT, 1))
             .addAction(0, "До перезагрузки", action(context, ACT_PAUSE_REBOOT, 2))
             .addAction(0, "Выключить", action(context, ACT_DISABLE, 3))
@@ -96,7 +118,7 @@ object AutoNotifications {
         nm(context)?.notify(ID_BLACKLIST, n)
     }
 
-    /** Утренняя сводка. Ведёт в «Требуют ответа», если есть кому отвечать. */
+    /** Сводка после DND. Ведёт в «Требуют ответа», если есть кому отвечать. */
     fun showDigest(context: Context, title: String, text: String, pending: Int) {
         ensureChannels(context)
         val target = if (pending > 0) Intent(context, com.davnozdu.autoresponder.ui.InboxActivity::class.java)
@@ -110,23 +132,5 @@ object AutoNotifications {
             .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(tap).setAutoCancel(true).build()
         nm(context)?.notify(ID_DIGEST, n)
-    }
-
-    private fun showSummary(context: Context, from: Long) {
-        val db = HistoryDb.get(context)
-        val sms = db.countAuto(from, listOf("sms"))
-        val calls = db.countAuto(from, listOf("call"))
-        val total = db.countAuto(from)
-        val msgr = (total - sms - calls).coerceAtLeast(0)
-        if (total == 0) return
-        val tap = PendingIntent.getActivity(context, 10,
-            Intent(context, StatsActivity::class.java).putExtra("from", from).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val n = androidx.core.app.NotificationCompat.Builder(context, CH_SUMMARY)
-            .setSmallIcon(android.R.drawable.sym_action_email)
-            .setContentTitle("Автоответ: сводка за DND")
-            .setContentText("Отвечено: $sms SMS, $msgr сообщений, $calls звонков")
-            .setContentIntent(tap).setAutoCancel(true).build()
-        nm(context)?.notify(ID_SUMMARY, n)
     }
 }

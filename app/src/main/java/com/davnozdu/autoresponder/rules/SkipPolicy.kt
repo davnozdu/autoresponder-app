@@ -7,8 +7,14 @@ import com.davnozdu.autoresponder.data.Settings
 object SkipPolicy {
 
     fun reason(context: Context, number: String?, s: Settings, isCall: Boolean): String? {
-        // 1) Ручной список «Избранные»
-        if (PhoneMask.isExcluded(number, s.excludedNumbers)) return "в Избранных"
+        // 1) Ручной список «Избранные» — общий для всех каналов.
+        //    Номер и маска сверяются с самим номером, запись-имя — с именем контакта из книги:
+        //    список один, и человек, вписанный как «Мама Прага», должен молчать и в звонке.
+        if (PhoneMask.isExcluded(number, s.favorites)) return "в Избранных"
+        if (s.favoritesHaveNames()) {
+            val name = ContactUtil.nameFor(context, number)
+            if (!name.isNullOrBlank() && s.isFavorite(name)) return "в Избранных «$name»"
+        }
         // 2) Звёздный контакт телефона
         if (s.excludeStarred && ContactUtil.isStarred(context, number)) return "звёздный контакт"
         // 3) Любой контакт из книги
@@ -23,17 +29,17 @@ object SkipPolicy {
      * То же для мессенджеров (WhatsApp/Telegram), где номера нет.
      *
      * В уведомлении приходит имя из телефонной книги, а для незнакомцев — номер в формате
-     * самого мессенджера. Поэтому: сначала список избранного мессенджеров (имена и маски),
-     * затем — либо правила по номеру, либо поиск контакта по имени, чтобы переключатели
-     * «не отвечать звёздным / всем контактам» действовали и здесь.
+     * самого мессенджера. Список избранных тот же самый: [Settings.isFavorite] сравнивает
+     * запись и как имя, и как номер, и как маску. Дальше — либо правила по номеру, либо
+     * поиск контакта по имени, чтобы переключатели «не отвечать звёздным / всем контактам»
+     * действовали и здесь.
      */
     fun reasonForSender(context: Context, sender: String?, s: Settings): String? {
         val raw = sender?.trim().orEmpty()
         if (raw.isEmpty()) return null
-        if (s.isExcludedName(raw)) return "в Избранных мессенджеров"
+        if (s.isFavorite(raw)) return "в Избранных"
 
         if (PhoneMask.looksLikeNumber(raw)) {
-            if (PhoneMask.isExcluded(raw, s.excludedNumbers)) return "в Избранных (номер)"
             if (s.excludeStarred && ContactUtil.isStarred(context, raw)) return "звёздный контакт"
             if (s.excludeContacts && ContactUtil.isKnownContact(context, raw)) return "контакт из книги"
             return null

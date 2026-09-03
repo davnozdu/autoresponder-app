@@ -168,42 +168,37 @@ class Settings(context: Context) {
         }
     }
 
-    // --- Избранные: номера-исключения (автоответ НЕ применять) ---
-    var excludedNumbers: List<String>
-        get() = sp.getString(K_EXCLUDED, "")!!
-            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        set(v) = sp.edit().putString(K_EXCLUDED, v.joinToString(",")).apply()
-
-    fun addExcluded(number: String) {
-        // Номер сохраняем в каноническом виде («+420608210867»): из книги контактов и с
-        // клавиатуры он приходит с пробелами, скобками и без «+».
-        val n = com.davnozdu.autoresponder.rules.PhoneMask.canonical(number)
-        if (n.isEmpty()) return
-        val cur = excludedNumbers.toMutableList()
-        if (cur.none { it.equals(n, true) }) { cur.add(n); excludedNumbers = cur }
-    }
-    fun removeExcluded(number: String) {
-        excludedNumbers = excludedNumbers.filterNot { it.equals(number.trim(), true) }
-    }
-
-    // --- Избранные для мессенджеров: имена из телефонной книги, номера и маски ---
-    // WhatsApp/Telegram подставляют в уведомление имя контакта из книги (не @username
-    // и не никнейм профиля), а для незнакомцев — номер в своём формате.
-    var excludedNames: List<String>
-        get() = sp.getString(K_EXCL_NAMES, "")!!
-            .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    // --- Избранные: ОДИН список на все каналы (звонки, SMS, WhatsApp, Telegram) ---
+    // Раньше номера и имена жили в двух списках, и одного человека приходилось вписывать
+    // дважды: в SMS приходит номер, а WhatsApp/Telegram кладут в уведомление имя контакта
+    // из книги (не @username и не никнейм профиля), для незнакомца — номер в своём формате.
+    // Запись — имя, номер или маска; как именно она сопоставляется, показывает NameMatch.
+    var favorites: List<String>
+        get() {
+            if (sp.contains(K_EXCLUDED)) mergeLegacyNumbers()
+            return sp.getString(K_EXCL_NAMES, "")!!
+                .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        }
         set(v) = sp.edit().putString(K_EXCL_NAMES, v.joinToString("\n")).apply()
 
-    fun addExcludedName(name: String) { addExcludedNames(listOf(name)) }
+    /** Разовый перенос старого списка номеров в общий; старый ключ после этого не нужен. */
+    private fun mergeLegacyNumbers() {
+        val old = sp.getString(K_EXCLUDED, "")!!
+            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        sp.edit().remove(K_EXCLUDED).apply()   // синхронно в памяти — рекурсии в геттере нет
+        if (old.isNotEmpty()) addFavorites(old)
+    }
+
+    fun addFavorite(entry: String) { addFavorites(listOf(entry)) }
 
     /**
      * Добавить сразу несколько записей (импорт из телефонной книги). Возвращает,
      * сколько реально добавлено — остальные уже были в списке.
      */
-    fun addExcludedNames(names: List<String>): Int {
-        val cur = excludedNames.toMutableList()
+    fun addFavorites(entries: List<String>): Int {
+        val cur = favorites.toMutableList()
         var added = 0
-        for (raw in names) {
+        for (raw in entries) {
             val n = com.davnozdu.autoresponder.rules.PhoneMask
                 .canonical(raw.replace("\n", " "))
             if (n.isEmpty()) continue
@@ -215,25 +210,30 @@ class Settings(context: Context) {
             }
             if (!exists) { cur.add(n); added++ }
         }
-        if (added > 0) excludedNames = cur
+        if (added > 0) favorites = cur
         return added
     }
-    fun removeExcludedName(name: String) {
-        excludedNames = excludedNames.filterNot { it.equals(name.trim(), true) }
+
+    fun removeFavorite(entry: String) {
+        favorites = favorites.filterNot { it.equals(entry.trim(), true) }
     }
+
     /**
-     * Отправитель-мессенджер в списке избранных.
+     * Отправитель в списке избранных: имя, номер или маска.
      *
      * Сравнение без учёта регистра и префикса @, с поддержкой масок (`*`, `?`) — см.
-     * [com.davnozdu.autoresponder.rules.NameMatch]. В список можно вписать и НОМЕР:
-     * мессенджер показывает телефон вместо имени, если контакта нет в книге, причём
-     * форматирование у него своё («+7 900 123-45-67»). Поэтому если обе стороны похожи на
-     * номер — сравниваем по цифрам, а не посимвольно.
+     * [com.davnozdu.autoresponder.rules.NameMatch]. Если обе стороны похожи на номер —
+     * сравниваем по цифрам, а не посимвольно: формат у книги, мессенджера и ручного
+     * ввода разный.
      */
-    fun isExcludedName(sender: String?): Boolean {
+    fun isFavorite(sender: String?): Boolean {
         if (sender.isNullOrBlank()) return false
-        return excludedNames.any { com.davnozdu.autoresponder.rules.NameMatch.matches(sender, it) }
+        return favorites.any { com.davnozdu.autoresponder.rules.NameMatch.matches(sender, it) }
     }
+
+    /** Есть ли в списке записи, которые сопоставляются как имя (тогда нужен поиск в книге). */
+    fun favoritesHaveNames(): Boolean =
+        favorites.any { !com.davnozdu.autoresponder.rules.PhoneMask.looksLikeNumber(it) }
 
     /** не отвечать звёздным (избранным) контактам телефона */
     var excludeStarred: Boolean
@@ -327,14 +327,31 @@ class Settings(context: Context) {
         smsCommandNumbers = smsCommandNumbers.filterNot { it.equals(number.trim(), true) }
     }
 
-    // --- Утренняя сводка ---
+    // --- Сводка после «Не беспокоить» ---
+    // Приходит в момент выключения DND, а не в назначенный час: сводка нужна, когда
+    // человек взял телефон в руки, — тогда видно, что случилось за только что
+    // закончившийся сеанс, и по горячим следам понятно, кому перезвонить.
     var digestEnabled: Boolean
         get() = sp.getBoolean(K_DIGEST_ON, true)
         set(v) = sp.edit().putBoolean(K_DIGEST_ON, v).apply()
-    /** час показа сводки (0-23) */
-    var digestHour: Int
-        get() = sp.getInt(K_DIGEST_HOUR, 8)
-        set(v) = sp.edit().putInt(K_DIGEST_HOUR, v).apply()
+
+    // --- Счётчики текущего сеанса DND ---
+    // Тикают в момент события (см. notif.DndStats). Ради живого уведомления не заводим
+    // ни таймера, ни периодического опроса БД — процесс просыпается только тогда, когда
+    // звонок или сообщение и так его разбудили.
+    var dndInCalls: Int
+        get() = sp.getInt(K_DND_C_CALLS, 0)
+        set(v) = sp.edit().putInt(K_DND_C_CALLS, v).apply()
+    var dndInMsgs: Int
+        get() = sp.getInt(K_DND_C_MSGS, 0)
+        set(v) = sp.edit().putInt(K_DND_C_MSGS, v).apply()
+    var dndAutoReplies: Int
+        get() = sp.getInt(K_DND_C_AUTO, 0)
+        set(v) = sp.edit().putInt(K_DND_C_AUTO, v).apply()
+
+    fun resetDndCounters() {
+        sp.edit().putInt(K_DND_C_CALLS, 0).putInt(K_DND_C_MSGS, 0).putInt(K_DND_C_AUTO, 0).apply()
+    }
 
     // --- Тихий час (авто-SMS по отклонённым звонкам придерживается до утра) ---
     var quietHoursOn: Boolean
@@ -630,7 +647,9 @@ class Settings(context: Context) {
         private const val K_SMSCMD_ON = "smscmd_on"
         private const val K_SMSCMD_NUM = "smscmd_numbers"
         private const val K_DIGEST_ON = "digest_on"
-        private const val K_DIGEST_HOUR = "digest_hour"
+        private const val K_DND_C_CALLS = "dnd_c_calls"
+        private const val K_DND_C_MSGS = "dnd_c_msgs"
+        private const val K_DND_C_AUTO = "dnd_c_auto"
         private const val K_QUIET_ON = "quiet_on"
         private const val K_QUIET_START = "quiet_start"
         private const val K_QUIET_END = "quiet_end"

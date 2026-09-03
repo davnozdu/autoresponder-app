@@ -58,7 +58,6 @@ fun AppScreen() {
     var smsCmdNums by remember { mutableStateOf(s.smsCommandNumbers) }
     var newCmdNum by remember { mutableStateOf("") }
     var digestOn by remember { mutableStateOf(s.digestEnabled) }
-    var digestHour by remember { mutableStateOf(s.digestHour) }
     var quietOn by remember { mutableStateOf(s.quietHoursOn) }
     var quietStart by remember { mutableStateOf(s.quietStartMin) }
     var quietEnd by remember { mutableStateOf(s.quietEndMin) }
@@ -80,8 +79,6 @@ fun AppScreen() {
     var llmCap by remember { mutableStateOf(s.llmDailyCap.toString()) }
     var startMin by remember { mutableStateOf(s.scheduleStartMin) }
     var endMin by remember { mutableStateOf(s.scheduleEndMin) }
-    var excluded by remember { mutableStateOf(s.excludedNumbers) }
-    var newExcl by remember { mutableStateOf("") }
     var exStarred by remember { mutableStateOf(s.excludeStarred) }
     var exContacts by remember { mutableStateOf(s.excludeContacts) }
     var respectDnd by remember { mutableStateOf(s.respectDndPriority) }
@@ -96,8 +93,8 @@ fun AppScreen() {
     var notifAge by remember { mutableStateOf(s.notifMaxAgeMin.toString()) }
     var smsSlot by remember { mutableStateOf(s.smsSlot) }
     var warnOn by remember { mutableStateOf(s.warnEnabled) }
-    var exclNames by remember { mutableStateOf(s.excludedNames) }
-    var newExclName by remember { mutableStateOf("") }
+    var favorites by remember { mutableStateOf(s.favorites) }
+    var newFav by remember { mutableStateOf("") }
     var crmOn by remember { mutableStateOf(s.crmEnabled) }
     var crmUrl by remember { mutableStateOf(s.crmBaseUrl) }
     var crmToken by remember { mutableStateOf(s.crmToken) }
@@ -151,12 +148,12 @@ fun AppScreen() {
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {}
-    // Импорт избранных (звёздных) контактов в список исключений мессенджеров.
+    // Импорт избранных (звёздных) контактов в общий список.
     // Мессенджер показывает в уведомлении имя из телефонной книги — импортируем именно имена.
     fun importStarredContacts() {
         val names = com.davnozdu.autoresponder.rules.ContactUtil.starredNames(ctx)
-        val added = s.addExcludedNames(names)
-        exclNames = s.excludedNames
+        val added = s.addFavorites(names)
+        favorites = s.favorites
         Toast.makeText(ctx, when {
             names.isEmpty() -> "В телефонной книге нет избранных (звёздных) контактов"
             added == 0 -> "Все ${names.size} избранных уже в списке"
@@ -244,7 +241,7 @@ fun AppScreen() {
             ctx.contentResolver.query(uri,
                 arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER), null, null, null)?.use {
                 if (it.moveToFirst()) {
-                    s.addExcluded(it.getString(0)); excluded = s.excludedNumbers
+                    s.addFavorite(it.getString(0)); favorites = s.favorites
                 }
             }
         }
@@ -328,13 +325,24 @@ fun AppScreen() {
             }
 
             ExpandableSection("Основное", initiallyOpen = true) {
-                SwitchRow("Включён", enabled) { enabled = it; s.enabled = it }
+                SwitchRow("Включён", enabled) {
+                    enabled = it; s.enabled = it
+                    // Постоянное уведомление DND зависит от этого тумблера — иначе оно ждало бы
+                    // следующей смены режима и панель расходилась бы с настройкой.
+                    if (it) com.davnozdu.autoresponder.notif.AutoNotifications.onDndChanged(ctx)
+                    else com.davnozdu.autoresponder.notif.AutoNotifications.cancelDnd(ctx)
+                }
                 SwitchRow("Отвечать на звонки", respCalls) { respCalls = it; s.respondCalls = it }
                 SwitchRow("Отвечать на SMS", respSms) { respSms = it; s.respondSms = it }
                 SwitchRow("Уведомления (сводка, статус DND)", notifOn) {
                     notifOn = it; s.notificationsEnabled = it
                     if (!it) com.davnozdu.autoresponder.notif.AutoNotifications.cancelDnd(ctx)
                 }
+                OutlinedTextField(defLang, { defLang = it.trim(); s.defaultLang = it.trim() },
+                    label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
+                Text("На этом языке отвечаем, когда язык входящего определить не удалось — "
+                    + "коротким «ок» или одними цифрами. Касается и шаблонов, и LLM.",
+                    style = MaterialTheme.typography.bodySmall)
             }
 
             ExpandableSection("Уведомления о чёрном списке") {
@@ -426,27 +434,18 @@ fun AppScreen() {
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
 
-            ExpandableSection("Утренняя сводка") {
-                SwitchRow("Присылать сводку за сутки", digestOn) {
+            ExpandableSection("Сводка после «Не беспокоить»") {
+                SwitchRow("Присылать сводку при выключении режима", digestOn) {
                     digestOn = it; s.digestEnabled = it
-                    com.davnozdu.autoresponder.notif.Digest.schedule(ctx)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("В")
-                    OutlinedButton(onClick = {
-                        pickTime(ctx, digestHour * 60) { m ->
-                            digestHour = m / 60; s.digestHour = m / 60
-                            com.davnozdu.autoresponder.notif.Digest.schedule(ctx)
-                        }
-                    }) { Text("%02d:00".format(digestHour)) }
-                    OutlinedButton(onClick = {
-                        com.davnozdu.autoresponder.notif.Digest.show(ctx)
-                        Toast.makeText(ctx, "Сводка показана (если было что показать)", Toast.LENGTH_SHORT).show()
-                    }) { Text("Показать сейчас") }
-                }
-                Text("Сколько было звонков и сообщений за сутки и кому вы ещё не ответили сами. "
-                    + "Ночью не приходит — в этом и смысл.",
+                Text("Сколько было звонков и сообщений, пока телефон молчал, и кому вы ещё не "
+                    + "ответили сами. Приходит в момент выключения «Не беспокоить», а не в "
+                    + "назначенный час: видно, что случилось за только что закончившийся сеанс.",
                     style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = {
+                    com.davnozdu.autoresponder.notif.Digest.show(ctx)
+                    Toast.makeText(ctx, "Сводка за сутки показана (если было что показать)", Toast.LENGTH_SHORT).show()
+                }) { Text("Показать за сутки") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, InboxActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("📋 Требуют ответа") }
             }
@@ -471,10 +470,10 @@ fun AppScreen() {
                     color = MaterialTheme.colorScheme.primary)
             }
 
-            ExpandableSection("Маска стран и выбор SIM") {
+            ExpandableSection("Маска стран и SIM") {
                 Text("Номеру отвечаем, если он попал в список включённой карты. Отвечает та карта, "
                     + "чьё правило точнее (самый длинный подходящий префикс). Если правил нет — "
-                    + "SIM по умолчанию из раздела «SIM и язык».",
+                    + "SIM по умолчанию (ниже, в этом же разделе).",
                     style = MaterialTheme.typography.bodySmall)
 
                 // Имя по системе, без номера слота — он уже в подписи тумблера.
@@ -511,6 +510,26 @@ fun AppScreen() {
                     Text("У включённых карт нет префиксов — автоответ не сработает ни для одного номера.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error)
+
+                // SIM по умолчанию жила в отдельном разделе «SIM и язык», через четыре чужих
+                // раздела от префиксов, и оба раздела ссылались друг на друга. Это одна
+                // настройка карт — держим её в одном месте.
+                Text("SIM по умолчанию", style = MaterialTheme.typography.titleSmall)
+                Text("Для номеров, не попавших ни в одно правило выше.",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = smsSlot == 0, enabled = sim1On,
+                        onClick = { smsSlot = 0; s.smsSlot = 0 }, label = { Text("SIM 1") })
+                    FilterChip(selected = smsSlot == 1, enabled = sim2On,
+                        onClick = { smsSlot = 1; s.smsSlot = 1 }, label = { Text("SIM 2") })
+                }
+                if ((smsSlot == 0 && !sim1On) || (smsSlot == 1 && !sim2On))
+                    Text("Карта по умолчанию выключена выше — ответы уйдут с включённой.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                if (sims.isEmpty()) Text("SIM не определены (нужно READ_PHONE_STATE)",
+                    style = MaterialTheme.typography.bodySmall)
+                else sims.forEach { Text(it.label, style = MaterialTheme.typography.bodySmall) }
             }
 
             ExpandableSection("Избранные (не отвечать)") {
@@ -520,28 +539,14 @@ fun AppScreen() {
                     + "из уведомления, потому что номера WhatsApp и Telegram не передают.",
                     style = MaterialTheme.typography.bodySmall)
                 SwitchRow("Уважать приоритетных в «Не беспокоить»", respectDnd) { respectDnd = it; s.respectDndPriority = it }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(newExcl, { newExcl = it }, label = { Text("Номер или маска") },
-                        modifier = Modifier.weight(1f))
-                    Button(onClick = {
-                        if (newExcl.isNotBlank()) { s.addExcluded(newExcl); excluded = s.excludedNumbers; newExcl = "" }
-                    }) { Text("+") }
-                }
-                CanonicalHint(newExcl)
-                OutlinedButton(onClick = {
-                    contactLauncher.launch(
-                        Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
-                }) { Text("Добавить из контактов") }
-                excluded.forEach { num ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Text(num)
-                        TextButton(onClick = { s.removeExcluded(num); excluded = s.excludedNumbers }) { Text("Удалить") }
-                    }
-                }
-                Text("Мессенджеры (WhatsApp, Telegram): имя из книги, номер или маска",
+
+                Text("Список один на все каналы: звонки, SMS, WhatsApp, Telegram",
                     style = MaterialTheme.typography.titleSmall)
+                Text("Запись — имя из телефонной книги, номер или маска. Номер сверяется с "
+                    + "номером звонка или SMS, имя — с именем контакта; в мессенджерах "
+                    + "наоборот, потому что номер туда не приходит. Раньше списка было два, "
+                    + "и одного человека приходилось вписывать дважды.",
+                    style = MaterialTheme.typography.bodySmall)
                 Text("@username в уведомление НЕ попадает. Мессенджер подставляет имя, под "
                     + "которым человек записан в вашей телефонной книге («Пётр Новак»). "
                     + "Если контакта в книге нет: Telegram покажет имя из профиля собеседника, "
@@ -553,21 +558,29 @@ fun AppScreen() {
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(newExclName, { newExclName = it },
+                    OutlinedTextField(newFav, { newFav = it },
                         label = { Text("Имя, номер или маска") },
                         modifier = Modifier.weight(1f))
                     Button(onClick = {
-                        if (newExclName.isNotBlank()) { s.addExcludedName(newExclName); exclNames = s.excludedNames; newExclName = "" }
+                        if (newFav.isNotBlank()) { s.addFavorite(newFav); favorites = s.favorites; newFav = "" }
                     }) { Text("+") }
                 }
-                CanonicalHint(newExclName)
+                CanonicalHint(newFav)
+                OutlinedButton(onClick = {
+                    contactLauncher.launch(
+                        Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
+                }) { Text("Добавить из контактов") }
                 OutlinedButton(onClick = {
                     if (androidx.core.content.ContextCompat.checkSelfPermission(
                             ctx, Manifest.permission.READ_CONTACTS) ==
                         android.content.pm.PackageManager.PERMISSION_GRANTED) importStarredContacts()
                     else contactsPermLauncher.launch(Manifest.permission.READ_CONTACTS)
                 }) { Text("Импортировать избранные контакты из книги") }
-                exclNames.forEach { nm ->
+                Text("Импорт нужен, только если переключатель «Не отвечать звёздным контактам» "
+                    + "выключен, а закрыть надо не всех звёздных, а некоторых: он делает снимок "
+                    + "имён, который дальше можно править руками.",
+                    style = MaterialTheme.typography.bodySmall)
+                favorites.forEach { nm ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         // Показываем, КАК запись будет сопоставляться — иначе номер с припиской
@@ -580,7 +593,7 @@ fun AppScreen() {
                                        MaterialTheme.colorScheme.error
                                        else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        TextButton(onClick = { s.removeExcludedName(nm); exclNames = s.excludedNames }) { Text("Удалить") }
+                        TextButton(onClick = { s.removeFavorite(nm); favorites = s.favorites }) { Text("Удалить") }
                     }
                 }
             }
@@ -658,26 +671,6 @@ fun AppScreen() {
                     label = { Text("Не отвечать на сообщения старше, мин") }, modifier = Modifier.fillMaxWidth(),
                     supportingText = { Text("Защита от старых/восстановленных после перезагрузки. По умолчанию 5") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            }
-
-            ExpandableSection("SIM и язык") {
-                Text("SIM по умолчанию — для номеров, не попавших ни в одно правило выше.",
-                    style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = smsSlot == 0, enabled = sim1On,
-                        onClick = { smsSlot = 0; s.smsSlot = 0 }, label = { Text("SIM 1") })
-                    FilterChip(selected = smsSlot == 1, enabled = sim2On,
-                        onClick = { smsSlot = 1; s.smsSlot = 1 }, label = { Text("SIM 2") })
-                }
-                if ((smsSlot == 0 && !sim1On) || (smsSlot == 1 && !sim2On))
-                    Text("Карта по умолчанию выключена выше — ответы уйдут с включённой.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error)
-                if (sims.isEmpty()) Text("SIM не определены (нужно READ_PHONE_STATE)",
-                    style = MaterialTheme.typography.bodySmall)
-                else sims.forEach { Text(it.label, style = MaterialTheme.typography.bodySmall) }
-                OutlinedTextField(defLang, { defLang = it.trim(); s.defaultLang = it.trim() },
-                    label = { Text("Язык по умолчанию (en/ru/cs)") }, modifier = Modifier.fillMaxWidth())
             }
 
             ExpandableSection("Шаблоны — ответ БЕЗ LLM (заглушка)") {
@@ -955,7 +948,7 @@ fun AppScreen() {
                 }) { Text("Отключить оптимизацию батареи") }
             }
 
-            ExpandableSection("Экраны") {
+            ExpandableSection("Списки и приложения") {
                 Button(onClick = { ctx.startActivity(Intent(ctx, StatusActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("✅ Состояние (проверка готовности)") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, InboxActivity::class.java)) },
