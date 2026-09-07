@@ -100,6 +100,12 @@ object NotifResponder {
             }
         }
 
+        // Сообщение прошло чёрный список, маску и «Избранных» — робот берёт его на себя.
+        // Счётчик живого уведомления DND тикает только отсюда: раньше он считал всё, что
+        // попадало в журнал, то есть и переписку с роднёй, к которой автоответчик не имеет
+        // отношения.
+        DndStats.onIncoming(context, isCall = false)
+
         val inCh = if (channel == Channel.MESSAGES) "rcs" else tag
         val inId = if (channel == Channel.MESSAGES) number else sender
 
@@ -140,6 +146,7 @@ object NotifResponder {
                 if (tryRemoteInputReply(context, sbn, outText)) {
                     store0(context).markReplied(key, s.timeoutHours)
                     HistoryLogger.record(context, inId, inCh, "out", outText, auto = true)
+                    DndStats.onAutoReply(context)
                     NotifListenerService.dismiss(sbn.key)
                     log.add("NOTIF[$tag] $key — ответ по CRM: $outText")
                 } else {
@@ -185,6 +192,7 @@ object NotifResponder {
             if (tryRemoteInputReply(context, sbn, reply)) {
                 store.markReplied(key, s.timeoutHours)
                 HistoryLogger.record(context, inId, inCh, "out", reply, auto = true)
+                DndStats.onAutoReply(context)
                 NotifListenerService.dismiss(sbn.key)
                 log.add("NOTIF[$tag] $key — ответ (#${store.count(key, s.timeoutHours)}/${s.maxReplies}): $reply")
                 return@withKey
@@ -193,7 +201,7 @@ object NotifResponder {
             if (channel == Channel.MESSAGES && number != null) {
                 val subId = SimUtil.resolveSubId(context, s.slotForNumber(number))
                 val segs = SmsSender.send(context, key, reply, subId)
-                if (segs >= 0) { store.markReplied(key, s.timeoutHours); HistoryLogger.record(context, key, "sms", "out", reply, auto = true); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return@withKey }
+                if (segs >= 0) { store.markReplied(key, s.timeoutHours); HistoryLogger.record(context, key, "sms", "out", reply, auto = true); DndStats.onAutoReply(context); log.add("NOTIF[$tag] $key — запасной SMS ($segs сег): $reply"); return@withKey }
             }
             log.add("NOTIF[$tag] $key — ответить не удалось (нет кнопки Reply)")
         }

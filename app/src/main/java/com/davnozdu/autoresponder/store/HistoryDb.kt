@@ -163,12 +163,22 @@ class HistoryDb private constructor(context: Context) :
     }
 
     /** Сколько ВХОДЯЩИХ пришло с момента from (для сводки после DND). */
-    fun countIncoming(from: Long, channels: List<String> = emptyList()): Int {
+    fun countIncoming(from: Long, channels: List<String> = emptyList(),
+                      handledOnly: Boolean = false): Int {
         val chSql = if (channels.isEmpty()) "" else
             " AND channel IN (${channels.joinToString(",") { "'" + it + "'" }})"
+        // Сводку смотрят, чтобы понять, сколько дел робот взял на себя. Родня из «Избранных»,
+        // банковские рассылки и всё, на что автоответчик не отвечал, в журнале есть (контекст
+        // разговора нужен целиком), но в статистику попадать не должны — иначе цифра «12
+        // звонков» не значит ничего. «Взято в работу» = по этой ветке за тот же период ушёл
+        // авто-ответ: другого следа решение робота в БД не оставляет.
+        val handled = if (!handledOnly) "" else
+            " AND number IN (SELECT number FROM events WHERE direction='out' AND auto=1 AND ts>=?)"
+        val args = if (handledOnly) arrayOf(from.toString(), from.toString())
+                   else arrayOf(from.toString())
         readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM events WHERE direction='in' AND ts>=?$chSql",
-            arrayOf(from.toString())).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
+            "SELECT COUNT(*) FROM events WHERE direction='in' AND ts>=?$chSql$handled",
+            args).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
 
     fun clearEvents() {

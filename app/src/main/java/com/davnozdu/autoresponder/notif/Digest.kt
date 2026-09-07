@@ -35,8 +35,9 @@ object Digest {
     fun show(context: Context, s: Settings = Settings(context), from: Long = 0L) {
         val db = HistoryDb.get(context)
         val since = if (from > 0L) from else System.currentTimeMillis() - FALLBACK_MS
-        val calls = db.countIncoming(since, listOf("call"))
-        val msgs = db.countIncoming(since) - calls
+        // Только то, на что робот сработал: см. HistoryDb.countIncoming(handledOnly).
+        val calls = db.countIncoming(since, listOf("call"), handledOnly = true)
+        val msgs = db.countIncoming(since, handledOnly = true) - calls
         val answered = db.countAuto(since)
         val pending = db.needsAnswer(since)
         if (calls == 0 && msgs == 0 && pending.isEmpty()) return   // тихий сеанс — молчим

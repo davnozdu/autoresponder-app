@@ -21,19 +21,35 @@ object DndStats {
     fun startSession(context: Context) { Settings(context).resetDndCounters() }
 
     /**
-     * Событие произошло. Вызывается из [com.davnozdu.autoresponder.store.HistoryLogger] —
-     * через него проходят все каналы, и звонки, и авто-ответы.
+     * Входящее, которое РОБОТ ВЗЯЛ В РАБОТУ: прошло главный тумблер, чёрный список, маску
+     * стран и «Избранных».
+     *
+     * Раньше счётчики тикали из [com.davnozdu.autoresponder.store.HistoryLogger], то есть на
+     * каждую запись в журнале. В уведомлении получалось общее число звонков и сообщений за
+     * вечер — вместе с роднёй из «Избранных» и рассылками, к которым автоответчик не имеет
+     * отношения. Смотрят же это уведомление ровно затем, чтобы понять, сколько дел робот
+     * взял на себя, а сколько ждёт живого ответа.
+     *
+     * Журнал по-прежнему пишет всё: контекст разговора нужен целиком, статистика — нет.
      */
-    fun onEvent(context: Context, channel: String, direction: String, auto: Boolean) {
+    fun onIncoming(context: Context, isCall: Boolean) {
         val app = context.applicationContext
         val s = Settings(app)
         if (!s.dndWasOn) return          // вне сеанса считать нечего
-        when {
-            direction == "in" && channel == "call" -> s.dndInCalls = s.dndInCalls + 1
-            direction == "in" -> s.dndInMsgs = s.dndInMsgs + 1
-            direction == "out" && auto -> s.dndAutoReplies = s.dndAutoReplies + 1
-            else -> return               // ручной ответ владельца — не наша статистика
-        }
+        if (isCall) s.dndInCalls = s.dndInCalls + 1 else s.dndInMsgs = s.dndInMsgs + 1
+        refresh(app, s)
+    }
+
+    /** Ответ действительно ушёл клиенту. */
+    fun onAutoReply(context: Context) {
+        val app = context.applicationContext
+        val s = Settings(app)
+        if (!s.dndWasOn) return
+        s.dndAutoReplies = s.dndAutoReplies + 1
+        refresh(app, s)
+    }
+
+    private fun refresh(app: Context, s: Settings) {
         if (s.notificationsEnabled && s.enabled) AutoNotifications.showDndActive(app, s)
     }
 

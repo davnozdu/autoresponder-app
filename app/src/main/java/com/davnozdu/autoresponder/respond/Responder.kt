@@ -120,6 +120,11 @@ object Responder {
             }
         }
 
+        // Событие прошло все фильтры — робот берёт его на себя. Только отсюда тикает счётчик
+        // живого уведомления DND: раньше он считал вообще всё, что попадало в журнал, и в
+        // уведомлении стояло общее число звонков за вечер, включая родню из «Избранных».
+        com.davnozdu.autoresponder.notif.DndStats.onIncoming(context, kind == Kind.CALL)
+
         // Тихий час — последним из гейтов: придерживаем только то, на что реально ответили бы.
         if (kind == Kind.CALL && QuietHours.holdIfQuiet(context, s, norm)) return
 
@@ -174,6 +179,7 @@ object Responder {
                 if (segsCrm >= 0) {
                     store.markReplied(norm, s.timeoutHours)
                     HistoryLogger.record(context, norm, "sms", "out", outText, auto = true)
+                    com.davnozdu.autoresponder.notif.DndStats.onAutoReply(context)
                     log.add("$tag $norm — ответ по CRM ($segsCrm сег): $outText")
                 } else {
                     log.add("$tag $norm — ОШИБКА отправки ответа по CRM")
@@ -206,6 +212,7 @@ object Responder {
             if (segs >= 0) {
                 store.markReplied(norm, s.timeoutHours)
                 HistoryLogger.record(context, norm, if (kind == Kind.CALL) "call" else "sms", "out", clamped, auto = true)
+                com.davnozdu.autoresponder.notif.DndStats.onAutoReply(context)
                 val label = if (warn) "предупреждение" else (closedReason ?: "ЧС")
                 log.add("$tag $norm — ответ ($label, $segs сег, #${store.count(norm, s.timeoutHours)}/${s.maxReplies}): $clamped")
             } else {
