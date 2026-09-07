@@ -197,22 +197,32 @@ class HistoryDb private constructor(context: Context) :
      * То же сообщение уже записано другим путём?
      *
      * У одного события два источника с разными ключами и разным временем: WhatsApp-сообщение
-     * пишет и слушатель уведомлений (ключ — имя из книги, время получения уведомления), и
-     * root-мост (ключ — настоящий номер, время из базы мессенджера). То же с SMS: наш
-     * авто-ответ пишется при отправке, а потом ещё раз приезжает из `content://sms`.
-     * По ключу и точному времени такой дубль не поймать, поэтому сверяем по содержимому
-     * в окне [windowMs].
+     * пишет и слушатель уведомлений (ключ — имя из книги или номер как его показал мессенджер,
+     * время — момент получения уведомления), и root-мост (ключ — канонический номер, время —
+     * отметка сервера из базы мессенджера). Ни по ключу, ни по точному времени такой дубль
+     * не поймать, поэтому сверяем по содержимому в окне [windowMs].
      *
      * [keys] — ветки ОДНОГО человека (см. [PersonThreads]), и они обязательны. Сверять один
      * текст по всей базе нельзя: шаблон авто-ответа у всех клиентов одинаковый, и запись
-     * второму человеку, которому за те же три минуты ушёл тот же текст, просто пропала бы.
+     * второму человеку, которому за те же минуты ушёл тот же текст, просто пропала бы.
+     *
+     * [excludeKey] — ключ, под которым пишет сам вызывающий; строки под ним в сверку не идут.
+     * Это разделяет два несовместимых случая:
+     *  - у мессенджеров источники всегда под РАЗНЫМИ ключами, и дубль ищется только между
+     *    ними. Без этого два одинаковых коротких сообщения подряд («Ок», «😂» — в базе
+     *    Telegram у них разные mid, это правда две реплики) второе бы потеряли;
+     *  - у SMS оба источника пишут под ОДНИМ нормализованным номером, и там [excludeKey]
+     *    не передаётся — иначе не поймался бы собственный авто-ответ, приехавший обратно
+     *    из `content://sms`.
      */
     fun existsNear(keys: List<String>, channel: String, direction: String, body: String,
-                   ts: Long, windowMs: Long = 180_000L): Boolean {
+                   ts: Long, windowMs: Long = 180_000L, excludeKey: String? = null): Boolean {
         val b = body.trim()
-        if (b.isEmpty() || keys.isEmpty()) return false
-        val ph = keys.joinToString(",") { "?" }
-        val args = keys.toMutableList()
+        if (b.isEmpty()) return false
+        val use = if (excludeKey == null) keys else keys.filter { it != excludeKey }
+        if (use.isEmpty()) return false
+        val ph = use.joinToString(",") { "?" }
+        val args = use.toMutableList()
         args += listOf(channel, direction, b, (ts - windowMs).toString(), (ts + windowMs).toString())
         readableDatabase.rawQuery(
             "SELECT 1 FROM events WHERE number IN ($ph) AND channel=? AND direction=? " +
@@ -502,6 +512,13 @@ class HistoryDb private constructor(context: Context) :
     }
 
     companion object {
+        /**
+         * Окно сверки дублей для мессенджеров. Отметка времени у мессенджера серверная, а
+         * уведомление приходит с задержкой доставки: на устройстве наблюдались расхождения
+         * до семи минут (293, 299 и 413 секунд), и трёх минут не хватало — дубли проходили.
+         */
+        const val MSGR_WINDOW_MS = 600_000L
+
         @Volatile private var inst: HistoryDb? = null
         fun get(context: Context): HistoryDb =
             inst ?: synchronized(this) { inst ?: HistoryDb(context.applicationContext).also { inst = it } }

@@ -98,7 +98,11 @@ object WaImporter {
                         if (!PhoneMask.looksLikeNumber(num)) continue
                         if (hist.existsAt(num, ts, dir)) continue
                         val keys = threads.getOrPut(num) { PersonThreads.keysFor(context, num) }
-                        if (hist.existsNear(keys, channel, dir, body, ts)) continue
+                        // Дубль ищем только среди ЧУЖИХ ключей — то есть в записях пути
+                        // уведомлений. Свои прошлые строки (под тем же номером) исключены:
+                        // два одинаковых коротких сообщения подряд — обычное дело.
+                        if (hist.existsNear(keys, channel, dir, body, ts,
+                                HistoryDb.MSGR_WINDOW_MS, excludeKey = num)) continue
                         val name = names.getOrPut(num) { ContactUtil.nameFor(context, num) }
                         // Робот свои ответы шлёт с префиксом ИИ. Без этой пометки экран
                         // «Требуют ответа» счёл бы авто-ответ живым ответом и убрал ветку

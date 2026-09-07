@@ -30,12 +30,22 @@ object HistoryLogger {
         if (identity.isNullOrBlank()) return
         val app = context.applicationContext
         val db = HistoryDb.get(app)
-        // Тот же текст мог прийти другим путём — от root-моста с ключом-номером вместо
-        // имени и со своим временем. По ключу такой дубль не поймать, только по содержимому
-        // и в пределах веток одного человека. Журнал звонков сюда не входит: у него один
-        // источник, а два звонка подряд с одинаковой подписью — обычное дело.
-        if (channel != "call" &&
-            db.existsNear(PersonThreads.keysFor(app, identity), channel, direction, body, ts)) return
+        // Тот же текст мог прийти другим путём — от root-моста, с ключом-номером вместо
+        // имени и с серверной отметкой времени. Ни по ключу, ни по времени такой дубль не
+        // поймать, только по содержимому и в пределах веток одного человека.
+        //
+        // Журнал звонков сюда не входит: у него один источник, а два звонка подряд с
+        // одинаковой подписью — обычное дело.
+        //
+        // У мессенджеров сверяемся только с ЧУЖИМИ ключами и в широком окне: у моста ключ
+        // всегда другой, а расхождение серверного времени с моментом уведомления доходило
+        // до семи минут. У SMS наоборот — оба источника пишут под одним нормализованным
+        // номером, поэтому там исключать свой ключ нельзя.
+        val msgr = channel != "sms" && channel != "rcs" && channel != "call"
+        if (channel != "call" && db.existsNear(
+                PersonThreads.keysFor(app, identity), channel, direction, body, ts,
+                if (msgr) HistoryDb.MSGR_WINDOW_MS else 180_000L,
+                excludeKey = if (msgr) identity.trim() else null)) return
         when (channel) {
             "sms", "rcs", "call" -> {
                 if (!isRealNumber(identity)) return

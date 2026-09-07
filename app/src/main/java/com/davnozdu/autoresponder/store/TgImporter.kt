@@ -69,7 +69,10 @@ object TgImporter {
                         val ts = dateSec * 1000L
                         if (hist.existsAt(person.key, ts, dir)) continue
                         val keys = threads.getOrPut(person.key) { PersonThreads.keysFor(context, person.key) }
-                        if (hist.existsNear(keys, "telegram", dir, body, ts)) continue
+                        // Только чужие ключи — см. WaImporter: свои повторы это настоящие
+                        // реплики (в базе Telegram у них разные mid).
+                        if (hist.existsNear(keys, "telegram", dir, body, ts,
+                                HistoryDb.MSGR_WINDOW_MS, excludeKey = person.key)) continue
                         // Робот свои ответы шлёт с префиксом ИИ. Без этой пометки экран
                         // «Требуют ответа» счёл бы авто-ответ живым ответом и убрал ветку
                         // из списка — обещание «ответим в рабочее время» осталось бы ничьим.
