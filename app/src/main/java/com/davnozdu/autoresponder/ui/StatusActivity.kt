@@ -88,6 +88,22 @@ private fun buildChecks(ctx: Context): List<Check> {
         ctx.startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
             android.net.Uri.parse("package:" + ctx.packageName)))
     })
+    // Мост к базам мессенджеров: без него в контексте LLM остаётся только то, что показали
+    // уведомления, то есть половина разговора. Строка нужна затем, что снаружи «мост не
+    // работает» выглядит ровно как «робот отвечает однообразно» — и без подсказки эти два
+    // состояния не различить. Кнопка «Исправить» просит модуль обновить копии прямо сейчас.
+    val bridgeAt = com.davnozdu.autoresponder.store.MsgrBridge.lastSync(ctx)
+    val bridgeFresh = bridgeAt > 0 &&
+        System.currentTimeMillis() - bridgeAt < 60 * 60 * 1000L
+    list.add(Check(
+        if (bridgeAt == 0L) "Журнал мессенджеров: модуль не отвечает"
+        else "Журнал мессенджеров: обновлён " +
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(bridgeAt)),
+        bridgeFresh) {
+        Thread { com.davnozdu.autoresponder.store.MsgrBridge.sync(ctx, force = true) }.start()
+    })
+
     val perms = listOf(
         "SMS приём" to Manifest.permission.RECEIVE_SMS,
         "SMS отправка" to Manifest.permission.SEND_SMS,

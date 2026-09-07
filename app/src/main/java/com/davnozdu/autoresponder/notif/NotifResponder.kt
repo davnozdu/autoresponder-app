@@ -57,12 +57,8 @@ object NotifResponder {
         if (channel != Channel.MESSAGES && !hasReply) {
             log.add("NOTIF[$tag] ${sender.take(16)} — нет кнопки «Ответить» в уведомлении, пропуск"); return
         }
-        // История входящего мессенджера — ВСЕГДА (в том числе в рабочее время и для «избранных»),
-        // но ровно один раз: одно сообщение WhatsApp приходит несколькими уведомлениями.
-        if (channel == Channel.MESSENGER &&
-            Dedup.claim("hist:$tag:${sender.trim().lowercase()}:${text.trim()}")) {
-            HistoryLogger.record(context, sender, tag, "in", text)
-        }
+        // Историю мессенджера пишет logHistory ещё до этих проверок — сюда доходит не всё,
+        // а разговор в журнале должен быть целым (см. NotifListenerService.handlePosted).
         // Ключ для лимита/анти-петли и правила по номеру (только для Messages).
         val key: String
         val number: String?
@@ -223,13 +219,23 @@ object NotifResponder {
     }
 
     private val placeholderRe = Regex("^\\s*\\d+\\s+(new\\s+)?messages?\\s*$", RegexOption.IGNORE_CASE)
-    private fun isPlaceholder(text: String): Boolean {
+
+    /** Не текст сообщения, а счётчик непрочитанных («3 new messages») — содержания в нём нет. */
+    private fun isBundleCount(text: String): Boolean {
         val t = text.trim()
-        return t.isEmpty() || placeholderRe.matches(t) ||
-            t.equals("new message", true) || t.equals("Фото", true) || t.equals("Photo", true) ||
+        return placeholderRe.matches(t) || t.equals("new message", true)
+    }
+
+    /** Вложение вместо текста: отвечать не на что, но в переписке оно своё место занимает. */
+    private fun isAttachment(text: String): Boolean {
+        val t = text.trim()
+        return t.equals("Фото", true) || t.equals("Photo", true) ||
             t.equals("Видео", true) || t.equals("Video", true) || t.equals("Sticker", true) ||
             t.equals("GIF", true) || t.equals("Voice message", true)
     }
+
+    private fun isPlaceholder(text: String): Boolean =
+        text.isBlank() || isBundleCount(text) || isAttachment(text)
 
     private fun extractNumber(sender: String): String? {
         val c = sender.trim()
@@ -238,18 +244,32 @@ object NotifResponder {
         return if (looksNumber) PhoneMask.normalize(c) else null
     }
 
+    /** Разобранное уведомление мессенджера. */
+    data class Extracted(
+        val sender: String,
+        /** Последнее ВХОДЯЩЕЕ сообщение и его время. */
+        val text: String,
+        val ts: Long,
+        val isGroup: Boolean,
+        /** Наши собственные сообщения из этого же уведомления (время, текст). */
+        val ours: List<Pair<Long, String>> = emptyList()
+    )
+
     /**
-     * (отправитель, текст, группа?) из уведомления.
+     * Разбор уведомления мессенджера.
      *
      * Текст — РОВНО последнее ВХОДЯЩЕЕ сообщение, без склейки соседних. Склейка ломала две вещи:
      *  1) дедуп SMS↔RCS (ключ «номер+текст» переставал совпадать с SMS-путём, и на одно входящее
      *     уходило два ответа), и
      *  2) промпт LLM — в «Customer's SMS» попадали и наши собственные ответы.
      * Контекст переписки берётся не отсюда, а из БД истории (см. Responder.historyBlock).
-     * Свои сообщения отсеиваются по владельцу стиля (style.user), а не только по пустому
-     * person: WhatsApp помечает наш ответ отправителем «You».
+     *
+     * Свои сообщения по-прежнему не путаются с клиентскими (WhatsApp помечает наш ответ
+     * отправителем «You», а не пустым person), но и НЕ выбрасываются: они уходят в [ours] и
+     * попадают в журнал как исходящие. Раньше их отбрасывали совсем, и в контексте оставался
+     * односторонний монолог клиента — робот отвечал так, будто разговора не было.
      */
-    fun extract(n: Notification): Triple<String, String, Boolean>? {
+    fun extract(n: Notification): Extracted? {
         val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
         if (style != null && style.messages.isNotEmpty()) {
             // Кто «мы» в этом чате. WhatsApp дописывает наш собственный ответ обратно в
@@ -261,18 +281,103 @@ object NotifResponder {
                 val who = m.person?.name?.toString()?.trim() ?: return true  // null = «от себя»
                 return !self.isNullOrBlank() && who.equals(self, ignoreCase = true)
             }
+            val ours = style.messages
+                .filter { fromSelf(it) }
+                .mapNotNull { m ->
+                    val t = m.text?.toString()?.trim().orEmpty()
+                    if (t.isEmpty()) null else m.timestamp to t
+                }
             // Последнее сообщение КЛИЕНТА с текстом. Пустой текст (картинка/стикер) не должен
             // обнулять разбор — иначе уведомление молча отбрасывается ещё до журнала.
             val last = style.messages.lastOrNull { !fromSelf(it) && !it.text.isNullOrBlank() }
-                ?: return null   // в уведомлении только наши сообщения — отвечать не на что
-            val who = last.person?.name?.toString() ?: style.conversationTitle?.toString() ?: "?"
-            val body = last.text?.toString()?.trim() ?: ""
-            return Triple(who, body, style.isGroupConversation)
+            val who = last?.person?.name?.toString()
+                ?: style.conversationTitle?.toString()
+                ?: return null
+            // Уведомление только с нашими сообщениями отвечать не на что, но записать в
+            // журнал есть что — поэтому возвращаем его с пустым текстом, а не null.
+            return Extracted(
+                sender = who,
+                text = last?.text?.toString()?.trim() ?: "",
+                ts = last?.timestamp?.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                isGroup = style.isGroupConversation,
+                ours = ours + remoteInputHistory(n)
+            )
         }
         val ex = n.extras
         val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return null
         val text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: return null
-        return Triple(title, text, false)
+        return Extracted(title, text, System.currentTimeMillis(), false, remoteInputHistory(n))
+    }
+
+    /**
+     * Ответы, отправленные ПРЯМО ИЗ ШТОРКИ — нами или владельцем.
+     *
+     * Раньше непустая история удалённого ввода означала «уже отвечено, уведомление пропустить»,
+     * и текст ответа терялся. Для решения «отвечать ли» она по-прежнему стоп-сигнал, но сам
+     * ответ — часть разговора и должен быть в журнале.
+     *
+     * Своей отметки времени у этих строк нет; ставим «сейчас» — они всегда самые свежие
+     * в уведомлении.
+     */
+    private fun remoteInputHistory(n: Notification): List<Pair<Long, String>> {
+        val hist = n.extras.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY)
+            ?: return emptyList()
+        val now = System.currentTimeMillis()
+        return hist.mapNotNull { it?.toString()?.trim()?.ifEmpty { null } }.map { now to it }
+    }
+
+    /**
+     * Запись разговора в журнал — ДО всех правил ответа.
+     *
+     * Раньше история писалась внутри [process], то есть после цепочки ранних выходов: старое
+     * уведомление, нет кнопки «Ответить», робот выключен или на паузе, «Фото» вместо текста.
+     * В каждом из этих случаев сообщение не попадало в журнал вообще, и в контексте
+     * следующего ответа зияла дыра. Записывать нужно всегда — решать, отвечать ли, отдельно.
+     */
+    fun logHistory(context: Context, ex: Extracted, tag: String) {
+        if (ex.isGroup) return
+        val who = ex.sender.trim()
+        if (who.isEmpty() || isServiceNotification(who, ex.text)) return
+        val app = context.applicationContext
+        // В журнале — только текст. Вложение («Фото», «Voice message») текстом не является:
+        // ни ответить по нему, ни понять из него что-либо LLM не может. Счётчик непрочитанных
+        // («3 new messages») — тем более: содержания в нём нет, а ветку он засоряет.
+        val body = if (isPlaceholder(ex.text)) "" else ex.text
+        if (body.isNotEmpty() &&
+            Dedup.claim("hist:$tag:${who.lowercase()}:${body.trim()}")) {
+            HistoryLogger.record(app, who, tag, "in", body, ts = ex.ts)
+        }
+        // Наш собственный ответ возвращается в уведомление как «отвечено из шторки», и по виду
+        // он неотличим от ответа владельца. Различаем по префиксу ИИ: без этого экран
+        // «Требуют ответа» считал бы авто-ответ живым ответом и убирал ветку из списка —
+        // то есть ровно то обещание «ответим в рабочее время» осталось бы невыполненным.
+        val prefix = Settings(app).aiPrefix.trim()
+        for ((ts, text) in ex.ours) {
+            if (text.isBlank()) continue
+            if (!Dedup.claim("histout:$tag:${who.lowercase()}:${text.trim()}")) continue
+            val auto = prefix.isNotEmpty() && text.trimStart().startsWith(prefix, ignoreCase = true)
+            HistoryLogger.record(app, who, tag, "out", text, auto = auto,
+                ts = ts.takeIf { it > 0 } ?: ex.ts)
+        }
+    }
+
+    /**
+     * Уведомление мессенджера, которое сообщением НЕ является.
+     *
+     * WhatsApp постит под видом чата свои служебные строки: ход резервного копирования,
+     * «содержимое скрыто» на заблокированном экране, пропущенный звонок. Пропущенный звонок
+     * доходил до ответа — клиент получал «Сейчас нерабочее время» на то, что вообще не писал.
+     */
+    fun isServiceNotification(sender: String, text: String): Boolean {
+        val s = sender.trim().lowercase()
+        val t = text.trim().lowercase()
+        if (s.startsWith("backup ") || s.startsWith("резервное копирование")) return true
+        val junk = listOf(
+            "missed voice call", "missed video call", "пропущенный звонок",
+            "sensitive notification content hidden", "содержимое уведомления скрыто",
+            "checking for new messages", "preparing backup", "backup in progress"
+        )
+        return junk.any { s == it || t == it || t.startsWith(it) }
     }
 }

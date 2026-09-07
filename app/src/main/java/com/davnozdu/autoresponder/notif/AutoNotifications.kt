@@ -50,6 +50,14 @@ object AutoNotifications {
             if (!s.dndWasOn) {
                 s.dndWasOn = true; s.lastDndOnTime = System.currentTimeMillis()
                 DndStats.startSession(app)
+                // Момент, ради которого мост и нужен: владелец закончил день и включил
+                // «Не беспокоить». Всё, что он писал клиентам руками, уведомлений не
+                // порождало — подбираем это разом, пока никто не ждёт ответа. Иначе
+                // клиент отвечает на дневное сообщение, а робот здоровается заново.
+                Thread {
+                    com.davnozdu.autoresponder.store.SmsWatcher.drain(app)
+                    com.davnozdu.autoresponder.store.MsgrBridge.sync(app, force = true)
+                }.start()
             }
             // Показываем и на повторных срабатываниях: после перезагрузки система чистит
             // панель, а счётчики лежат в настройках — уведомление надо вернуть.

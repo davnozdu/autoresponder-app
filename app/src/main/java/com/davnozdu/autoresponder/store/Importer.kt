@@ -17,6 +17,9 @@ object Importer {
     /** Имя контакта кэшируем на время импорта: запрос к книге на каждую строку делал импорт
      *  нескольких тысяч SMS многоминутным. */
     private val nameCache = HashMap<String, String?>()
+    /** Ветки человека на время импорта — по той же причине, что и имена: PersonThreads
+     *  на каждый промах перебирает все ключи БД. */
+    private val threadCache = HashMap<String, List<String>>()
     private fun nameFor(context: Context, num: String): String? =
         nameCache.getOrPut(num) { ContactUtil.nameFor(context, num) }
 
@@ -28,23 +31,53 @@ object Importer {
         // Одна транзакция на весь импорт вместо отдельной на каждую вставку.
         return db.inTransaction {
             importSms(app, db) + importCalls(app, db)
-        }.also { nameCache.clear() }
+        }.also { nameCache.clear(); threadCache.clear() }
     }
 
-    private fun importSms(context: Context, db: HistoryDb): Int {
+    /**
+     * Добор свежих SMS из системной базы — то, что робот не отправлял сам.
+     *
+     * Раньше исходящие попадали в журнал только через кнопку «Импорт», то есть один раз
+     * за всё время. Всё, что владелец писал клиенту руками, для LLM не существовало: она
+     * видела подряд «Client: …, Client: …» и отвечала так, будто разговора не было —
+     * клиент отвечает на вчерашнее сообщение, а робот здоровается заново.
+     *
+     * @param since брать записи новее этого момента (мс).
+     * @return число добавленных записей.
+     */
+    fun importSmsSince(context: Context, since: Long): Int {
+        val app = context.applicationContext
+        val db = HistoryDb.get(app)
+        return db.inTransaction { importSms(app, db, since) }
+            .also { nameCache.clear(); threadCache.clear() }
+    }
+
+    private fun importSms(context: Context, db: HistoryDb, since: Long = 0L): Int {
         var n = 0
+        val aiPrefix = com.davnozdu.autoresponder.data.Settings(context).aiPrefix.trim()
         val uri = Uri.parse("content://sms")
+        val sel = if (since > 0) "date>?" else null
+        val args = if (since > 0) arrayOf(since.toString()) else null
         context.contentResolver.query(uri,
-            arrayOf("address", "body", "date", "type"), null, null, "date DESC")?.use { c ->
+            arrayOf("address", "body", "date", "type"), sel, args, "date DESC")?.use { c ->
             val iA = c.getColumnIndex("address"); val iB = c.getColumnIndex("body")
             val iD = c.getColumnIndex("date"); val iT = c.getColumnIndex("type")
             while (c.moveToNext()) {
                 val num = realNumber(c.getString(iA)) ?: continue
                 val ts = c.getLong(iD)
                 val dir = if (c.getInt(iT) == 2) "out" else "in"
+                val body = c.getString(iB) ?: ""
                 if (db.existsAt(num, ts, dir)) continue
+                // Наши собственные ответы система тоже кладёт в content://sms, но со своей
+                // отметкой времени — по точному совпадению их не отсечь, сверяем по тексту.
+                val keys = threadCache.getOrPut(num) { PersonThreads.keysFor(context, num) }
+                if (db.existsNear(keys, "sms", dir, body, ts)) continue
                 val name = nameFor(context, num)
-                db.insert(num, name, "sms", dir, c.getString(iB) ?: "", ts)
+                // Свои же ответы (ушли через SmsManager, но лежат и в системной базе)
+                // помечаем как авто — иначе «Требуют ответа» примет их за живой ответ.
+                val auto = dir == "out" && aiPrefix.isNotEmpty() &&
+                    body.startsWith(aiPrefix, ignoreCase = true)
+                db.insert(num, name, "sms", dir, body, ts, auto = auto)
                 n++
             }
         }

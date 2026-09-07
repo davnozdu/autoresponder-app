@@ -15,7 +15,9 @@ import com.davnozdu.autoresponder.rules.SkipPolicy
 import com.davnozdu.autoresponder.store.AboutInfo
 import com.davnozdu.autoresponder.store.HistoryDb
 import com.davnozdu.autoresponder.store.HistoryLogger
+import com.davnozdu.autoresponder.store.MsgrBridge
 import com.davnozdu.autoresponder.store.PersonThreads
+import com.davnozdu.autoresponder.store.SmsWatcher
 import com.davnozdu.autoresponder.rules.SimUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -290,6 +292,13 @@ object Responder {
                              limit: Int = 12): String {
         if (key.isNullOrBlank()) return ""
         return try {
+            // Подобрать то, что робот не отправлял сам: исходящие SMS владельца из провайдера
+            // и обе стороны переписки мессенджеров из копий, которые кладёт модуль. Без
+            // ожидания модуля — здесь клиент ждёт ответа, а копии обновляются и по таймеру,
+            // и при включении «Не беспокоить». Просьба обновить всё равно уходит: следующий
+            // ответ увидит уже свежие копии.
+            SmsWatcher.drain(context)
+            MsgrBridge.sync(context, wait = false)
             val db = HistoryDb.get(context)
             val keys = PersonThreads.keysFor(context, key)
             var items = db.threadTail(keys, limit, skipCalls = true)

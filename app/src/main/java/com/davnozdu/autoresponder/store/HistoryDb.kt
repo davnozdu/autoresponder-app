@@ -183,6 +183,34 @@ class HistoryDb private constructor(context: Context) :
         ).use { c -> return c.moveToFirst() }
     }
 
+    /**
+     * То же сообщение уже записано другим путём?
+     *
+     * У одного события два источника с разными ключами и разным временем: WhatsApp-сообщение
+     * пишет и слушатель уведомлений (ключ — имя из книги, время получения уведомления), и
+     * root-мост (ключ — настоящий номер, время из базы мессенджера). То же с SMS: наш
+     * авто-ответ пишется при отправке, а потом ещё раз приезжает из `content://sms`.
+     * По ключу и точному времени такой дубль не поймать, поэтому сверяем по содержимому
+     * в окне [windowMs].
+     *
+     * [keys] — ветки ОДНОГО человека (см. [PersonThreads]), и они обязательны. Сверять один
+     * текст по всей базе нельзя: шаблон авто-ответа у всех клиентов одинаковый, и запись
+     * второму человеку, которому за те же три минуты ушёл тот же текст, просто пропала бы.
+     */
+    fun existsNear(keys: List<String>, channel: String, direction: String, body: String,
+                   ts: Long, windowMs: Long = 180_000L): Boolean {
+        val b = body.trim()
+        if (b.isEmpty() || keys.isEmpty()) return false
+        val ph = keys.joinToString(",") { "?" }
+        val args = keys.toMutableList()
+        args += listOf(channel, direction, b, (ts - windowMs).toString(), (ts + windowMs).toString())
+        readableDatabase.rawQuery(
+            "SELECT 1 FROM events WHERE number IN ($ph) AND channel=? AND direction=? " +
+                "AND TRIM(body)=? AND ts BETWEEN ? AND ? LIMIT 1",
+            args.toTypedArray()
+        ).use { c -> return c.moveToFirst() }
+    }
+
     /** Различные ветки (по номеру), с последним сообщением — для списка/поиска. */
     fun conversations(query: String, channels: List<String> = emptyList(), autoOnly: Boolean = false, limit: Int = 100): List<HistItem> {
         val res = ArrayList<HistItem>()
