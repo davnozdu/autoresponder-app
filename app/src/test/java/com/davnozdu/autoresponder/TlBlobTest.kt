@@ -9,7 +9,8 @@ import org.junit.Test
  * Разбор TL-блобов Telegram (`messages_v2.data`).
  *
  * Образцы сняты с реального устройства (`cache4.db`) и обрезаны до значимой части.
- * Проверялось на всей базе: 25 534 записи, ни одного сбоя разбора.
+ * Проверялось на всей базе устройства: 25 534 записи, ни одного сбоя разбора и ни одного
+ * mime-мусора после перехода на правило «первое вхождение даты».
  */
 class TlBlobTest {
 
@@ -41,6 +42,33 @@ class TlBlobTest {
     @Test fun `текст читается по якорю date`() {
         assertEquals("Я уже спать ложусь.", TlBlob.messageText(outgoing, 1788719811))
         assertEquals("Нет, сидим с алексом", TlBlob.messageText(outgoing2, 1788715567))
+    }
+
+    /**
+     * Медиа без подписи: `message` пуст, а сразу за ним лежит объект вложения со своей
+     * датой — и та же дата встречается второй раз. Правило «последнее вхождение» уезжало
+     * внутрь вложения и отдавало его mime-тип: на устройстве так появилось 29 записей
+     * «application/pdf», «video/mp4», «image/png».
+     */
+    @Test fun `у вложения без подписи текста нет, а не mime-тип`() {
+        val date = 1788719811
+        val blob = hex("D3B90076") + intLe(date) +
+            byteArrayOf(0, 0, 0, 0) +          // message: пустая строка + выравнивание
+            hex("11223344") + intLe(date) +    // объект вложения со своей (той же) датой
+            byteArrayOf(15) + "application/pdf".toByteArray()
+        assertNull(TlBlob.messageText(blob, date))
+    }
+
+    /** Подпись к фото — это текст, и она сохраняется. */
+    @Test fun `подпись к вложению читается`() {
+        val date = 1788719811
+        val caption = "вот экран, что с ним?"
+        val body = caption.toByteArray()
+        val pad = (4 - ((1 + body.size) % 4)) % 4
+        val blob = hex("D3B90076") + intLe(date) +
+            byteArrayOf(body.size.toByte()) + body + ByteArray(pad) +
+            hex("11223344") + intLe(date) + byteArrayOf(9) + "image/png".toByteArray()
+        assertEquals(caption, TlBlob.messageText(blob, date))
     }
 
     @Test fun `чужая дата не даёт текста`() {
