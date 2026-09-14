@@ -141,6 +141,21 @@ object ContactUtil {
         numbersOf(context, lookupByName(context, name).contactId)
 
     /**
+     * Номера контакта по ссылке на него.
+     *
+     * Уведомление мессенджера кладёт собеседника в `Person`, и для сохранённого контакта
+     * там стоит не номер, а ссылка вида `content://com.android.contacts/contacts/lookup/…`.
+     * Ссылка переживает переименование контакта и слияние дублей — по ней и спрашиваем,
+     * вместо поиска по отображаемому имени.
+     */
+    fun numbersForContactUri(context: Context, uri: Uri): List<String> = try {
+        context.contentResolver.query(
+            uri, arrayOf(ContactsContract.Contacts._ID), null, null, null
+        )?.use { c -> if (c.moveToFirst()) numbersOf(context, c.getLong(0)) else emptyList() }
+            ?: emptyList()
+    } catch (e: Exception) { emptyList() }
+
+    /**
      * Имена звёздных (избранных) контактов — для импорта в список избранного мессенджеров.
      * Именно эти строки WhatsApp и Telegram показывают в уведомлении.
      */

@@ -80,6 +80,29 @@ object MsgrBridge {
     fun lastSync(context: Context): Long = File(dir(context), "response").lastModifiedSafe()
 
     /**
+     * Обновить копии баз и НЕ импортировать.
+     *
+     * Нужен там, где базу спрашивают напрямую: номер отправителя RCS ищется в копии
+     * `bugle_db` по тексту сообщения (см. [RcsFinder]), и копия должна быть свежее этого
+     * сообщения. Импорт в этот момент лишний — клиент ждёт ответа.
+     */
+    fun refresh(context: Context) {
+        val app = context.applicationContext
+        val d = dir(app)
+        if (!d.isDirectory) return
+        if (!lock.tryLock()) return
+        try {
+            val resp = File(d, "response")
+            val before = resp.lastModifiedSafe()
+            try { File(d, "request").writeText(System.currentTimeMillis().toString()) }
+            catch (e: Exception) {
+                EventLog(app).add("Мост: не удалось попросить обновление (${e.message})"); return
+            }
+            waitForResponse(resp, before)
+        } finally { lock.unlock() }
+    }
+
+    /**
      * Синхронизацию ведём по одному. Замок, а не `@Synchronized`, потому что вызывающие
      * разные: фоновый будильник может ждать модуль до [WAIT_MS], а путь ответа клиенту
      * ждать не должен вовсе — он просто пропускает проход, если синхронизация уже идёт.
