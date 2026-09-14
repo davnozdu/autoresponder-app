@@ -17,12 +17,38 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.animateContentSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccessTime
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.ImportExport
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SimCard
+import androidx.compose.material.icons.outlined.Sms
+import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -247,10 +273,27 @@ fun AppScreen() {
         }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("AutoResponder") }) }) { pad ->
+    Scaffold(
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("AutoResponder", style = MaterialTheme.typography.titleLarge)
+                        Text("автоматические ответы", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                navigationIcon = {
+                    Icon(Icons.Outlined.SmartToy, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary)
+                }
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { pad ->
         Column(
-            Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            Modifier.padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             update?.let { u ->
                 Card(Modifier.fillMaxWidth()) {
@@ -271,6 +314,16 @@ fun AppScreen() {
                     }
                 }
             }
+
+            StatusOverviewCard(
+                enabled = enabled,
+                calls = respCalls,
+                sms = respSms,
+                notifications = notifOn,
+                onStatus = { ctx.startActivity(Intent(ctx, StatusActivity::class.java)) },
+                onInbox = { ctx.startActivity(Intent(ctx, InboxActivity::class.java)) },
+                onHistory = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) }
+            )
 
             ExpandableSection("Версия приложения") {
                 Text(com.davnozdu.autoresponder.update.Updater.currentVersion,
@@ -1017,21 +1070,119 @@ fun AppScreen() {
 }
 
 @Composable
+private fun StatusOverviewCard(
+    enabled: Boolean,
+    calls: Boolean,
+    sms: Boolean,
+    notifications: Boolean,
+    onStatus: () -> Unit,
+    onInbox: () -> Unit,
+    onHistory: () -> Unit
+) {
+    val tone = if (enabled) MaterialTheme.colorScheme.primaryContainer
+               else MaterialTheme.colorScheme.surfaceVariant
+    val toneContent = if (enabled) MaterialTheme.colorScheme.onPrimaryContainer
+                      else MaterialTheme.colorScheme.onSurfaceVariant
+    val title = if (enabled) "Автоответчик работает" else "Автоответчик выключен"
+    val subtitle = if (enabled) "Новые звонки и сообщения обрабатываются по правилам"
+                   else "Включите автоответчик в разделе «Основное»"
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = tone)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = if (enabled) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline
+                ) {
+                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(12.dp).size(24.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleLarge,
+                        color = toneContent)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                        color = toneContent.copy(alpha = .78f))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusPill("Звонки", calls)
+                StatusPill("SMS", sms)
+                StatusPill("Сводка", notifications)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()) {
+                FilledTonalButton(onClick = onStatus, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.Security, contentDescription = null,
+                        modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp)); Text("Состояние")
+                }
+                FilledTonalButton(onClick = onInbox, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.Notifications, contentDescription = null,
+                        modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp)); Text("Входящие")
+                }
+                FilledTonalButton(onClick = onHistory, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.History, contentDescription = null,
+                        modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp)); Text("История")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(label: String, on: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (on) MaterialTheme.colorScheme.surface.copy(alpha = .72f)
+                else MaterialTheme.colorScheme.surface.copy(alpha = .35f)
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(if (on) "●" else "○", style = MaterialTheme.typography.labelSmall,
+                color = if (on) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(label, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+@Composable
 private fun ExpandableSection(
     title: String,
     initiallyOpen: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     var open by rememberSaveable(title) { mutableStateOf(initiallyOpen) }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Card(
+        Modifier.fillMaxWidth().animateContentSize(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 Modifier.fillMaxWidth().clickable { open = !open },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(if (open) "▲" else "▼")
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)) {
+                    Icon(sectionIcon(title), contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary)
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                }
+                Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (open) "Свернуть" else "Развернуть",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (open) content()
         }
@@ -1040,11 +1191,44 @@ private fun ExpandableSection(
 
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically) {
-        Text(label)
-        Switch(checked = checked, onCheckedChange = onChange)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .42f)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge)
+            Switch(checked = checked, onCheckedChange = onChange)
+        }
     }
+}
+
+private fun sectionIcon(title: String): ImageVector = when {
+    title.startsWith("Версия") -> Icons.Outlined.Info
+    title == "Основное" -> Icons.Outlined.Settings
+    title.contains("Уведомления") -> Icons.Outlined.Notifications
+    title.contains("расписание") -> Icons.Outlined.Schedule
+    title.contains("SMS") -> Icons.Outlined.Sms
+    title.contains("Сводка") -> Icons.Outlined.Article
+    title.contains("Тихий") -> Icons.Outlined.AccessTime
+    title.contains("SIM") -> Icons.Outlined.SimCard
+    title.contains("Избранные") -> Icons.Outlined.Star
+    title.contains("CRM") -> Icons.Outlined.Cloud
+    title.contains("Лимиты") -> Icons.Outlined.Tune
+    title.contains("Шаблоны") -> Icons.Outlined.Article
+    title.contains("LLM") -> Icons.Outlined.SmartToy
+    title.contains("О компании") -> Icons.Outlined.Info
+    title.contains("Прайс") -> Icons.Outlined.Article
+    title.contains("Праздники") -> Icons.Outlined.Event
+    title.contains("бэкап") -> Icons.Outlined.Backup
+    title.contains("Разрешения") -> Icons.Outlined.Security
+    title.contains("Списки") -> Icons.Outlined.Apps
+    title.contains("Импорт") -> Icons.Outlined.ImportExport
+    title.contains("Журнал") -> Icons.Outlined.Article
+    else -> Icons.Outlined.Settings
 }
 
 /** Человеческий текст результата проверки обновления (ошибку не выдаём за «актуально»). */
@@ -1075,4 +1259,3 @@ private fun pickTime(ctx: Context, minutes: Int, onSet: (Int) -> Unit) {
     val h = minutes / 60; val m = minutes % 60
     android.app.TimePickerDialog(ctx, { _, hh, mm -> onSet(hh * 60 + mm) }, h, m, true).show()
 }
-

@@ -12,8 +12,13 @@ import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,25 +46,54 @@ fun StatusScreen() {
     val checks = remember(refresh) { buildChecks(ctx) }
 
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Состояние") },
-            actions = { TextButton(onClick = { refresh++ }) { Text("Обновить") } })
-    }) { pad ->
+            TopAppBar(title = { Text("Состояние") },
+            actions = { IconButton(onClick = { refresh++ }) {
+                Icon(Icons.Outlined.Refresh, contentDescription = "Обновить")
+            } })
+    }, containerColor = MaterialTheme.colorScheme.background) { pad ->
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val allOk = checks.all { it.ok }
-            Text(if (allOk) "Всё готово ✓" else "Есть проблемы",
-                style = MaterialTheme.typography.titleLarge,
-                color = if (allOk) Color(0xFF2E7D32) else Color(0xFFC62828))
-            checks.forEach { c ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (c.ok) "✓" else "✗",
-                        color = if (c.ok) Color(0xFF2E7D32) else Color(0xFFC62828),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(end = 10.dp))
-                    Text(c.name, Modifier.weight(1f))
-                    if (!c.ok && c.fix != null) TextButton(onClick = { c.fix.invoke(); refresh++ }) { Text("Исправить") }
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (allOk) MaterialTheme.colorScheme.primaryContainer
+                                     else MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(if (allOk) Icons.Outlined.CheckCircle else Icons.Outlined.ErrorOutline,
+                        contentDescription = null,
+                        tint = if (allOk) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(32.dp))
+                    Column {
+                        Text(if (allOk) "Всё готово" else "Нужна настройка",
+                            style = MaterialTheme.typography.titleLarge)
+                        Text(if (allOk) "Автоответчик может работать без вмешательства"
+                             else "Исправьте пункты ниже, чтобы ответы не пропускались",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                 }
-                HorizontalDivider()
+            }
+            checks.forEach { c ->
+                Card(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (c.ok) Icons.Outlined.CheckCircle else Icons.Outlined.ErrorOutline,
+                            contentDescription = null,
+                            tint = if (c.ok) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(end = 12.dp).size(22.dp))
+                        Text(c.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        if (!c.ok && c.fix != null) {
+                            TextButton(onClick = { c.fix.invoke(); refresh++ }) { Text("Исправить") }
+                        }
+                    }
+                }
             }
         }
     }
