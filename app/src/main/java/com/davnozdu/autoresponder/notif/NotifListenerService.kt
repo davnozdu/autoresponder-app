@@ -146,7 +146,8 @@ class NotifListenerService : NotificationListenerService() {
 
             val hasReply = n.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true
             EventLog(this).add("NOTIF[$tag] from='${sender.take(20)}' group=${ex.isGroup} reply=$hasReply text='${text.take(36)}'")
-            NotifResponder.handle(this, sbn, sender, text, channel, tag, ex.isGroup, hasReply)
+            NotifResponder.handle(this, sbn, sender, text, channel, tag, ex.isGroup, hasReply,
+                ex.senderUris, ex.ts)
         } catch (e: Exception) {
             EventLog(this).add("NOTIF error: ${e.message}")
         }

@@ -22,6 +22,7 @@ import com.davnozdu.autoresponder.store.HistoryLogger
 import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.PhoneMask
+import com.davnozdu.autoresponder.rules.SenderNumber
 import com.davnozdu.autoresponder.rules.SimUtil
 import com.davnozdu.autoresponder.rules.SkipPolicy
 import kotlinx.coroutines.delay
@@ -32,13 +33,17 @@ enum class Channel { MESSAGES, MESSENGER }
 object NotifResponder {
 
     fun handle(context: Context, sbn: StatusBarNotification, sender: String, text: String,
-               channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean) {
+               channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean,
+               senderUris: List<String> = emptyList(), ts: Long = System.currentTimeMillis()) {
         val app = context.applicationContext
-        EventQueue.submitMsg { process(app, sbn, sender, text, channel, tag, isGroup, hasReply) }
+        EventQueue.submitMsg {
+            process(app, sbn, sender, text, channel, tag, isGroup, hasReply, senderUris, ts)
+        }
     }
 
     private suspend fun process(context: Context, sbn: StatusBarNotification, sender: String,
-                        text: String, channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean) {
+                        text: String, channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean,
+                        senderUris: List<String>, msgTs: Long) {
         val s = Settings(context)
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
@@ -63,8 +68,15 @@ object NotifResponder {
         val key: String
         val number: String?
         if (channel == Channel.MESSAGES) {
-            number = extractNumber(sender)
-            if (number == null) { log.add("NOTIF[$tag] ${sender.take(16)} — контакт без номера, пропуск"); return }
+            // Номер спрашиваем у всех источников по очереди, а не только у строки отправителя:
+            // по RCS клиент приходит под именем своего профиля, а сохранённый контакт — под
+            // именем из книги. И в том, и в другом случае номер в уведомлении есть, просто
+            // не на виду (см. SenderNumber).
+            val found = SenderNumber.resolve(context, sender, senderUris, text, msgTs)
+            if (found == null) { log.add("NOTIF[$tag] ${sender.take(16)} — номер не определить, пропуск"); return }
+            number = found.number
+            if (found.source != "отправитель")
+                log.add("NOTIF[$tag] ${sender.take(16)} -> $number (источник: ${found.source})")
             key = PhoneMask.normalize(number)!!
         } else {
             number = null
@@ -145,7 +157,7 @@ object NotifResponder {
                 val outText = Responder.finish(s, crmReply)
                 if (tryRemoteInputReply(context, sbn, outText)) {
                     store0(context).markReplied(key, s.timeoutHours)
-                    HistoryLogger.record(context, inId, inCh, "out", outText, auto = true)
+                    recordOut(context, inId, inCh, outText)
                     DndStats.onAutoReply(context)
                     NotifListenerService.dismiss(sbn.key)
                     log.add("NOTIF[$tag] $key — ответ по CRM: $outText")
@@ -188,10 +200,20 @@ object NotifResponder {
             val returning = store.everReplied(key)
             val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null, histKey, warn)
 
+            // Слово в слово то же самое, что уже ушло минуту назад, второй раз не отправляем.
+            //
+            // Анти-дубль выше сверяет ВХОДЯЩИЙ текст, и этого не хватает: WhatsApp обновляет
+            // одно уведомление по мере того, как клиент досылает фото («1 photo» → «2 photos»),
+            // а бывает и что на одну реплику приходит два уведомления подряд. Клиент в итоге
+            // получал один и тот же ответ дважды-трижды. Сверка по ИСХОДЯЩЕМУ тексту закрывает
+            // это независимо от того, чем различались входящие.
+            if (justSent(context, inId, inCh, reply)) {
+                log.add("NOTIF[$tag] $key — такой же ответ уже отправлен, пропуск"); return@withKey
+            }
             // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
             if (tryRemoteInputReply(context, sbn, reply)) {
                 store.markReplied(key, s.timeoutHours)
-                HistoryLogger.record(context, inId, inCh, "out", reply, auto = true)
+                recordOut(context, inId, inCh, reply)
                 DndStats.onAutoReply(context)
                 NotifListenerService.dismiss(sbn.key)
                 log.add("NOTIF[$tag] $key — ответ (#${store.count(key, s.timeoutHours)}/${s.maxReplies}): $reply")
@@ -210,6 +232,41 @@ object NotifResponder {
     /** ReplyStore до основной ветки: CRM-ответ уходит раньше, чем создаётся общий store. */
     private fun store0(context: Context) = ReplyStore(context)
 
+    /**
+     * Насколько назад считаем ответ «только что отправленным».
+     *
+     * Наблюдавшиеся дубли укладывались в секунды — мессенджер обновляет уведомление, пока
+     * клиент досылает файлы. Окно взято с запасом, но не шире: если через полчаса клиент
+     * спросит снова и модель ответит теми же словами, ответ ему всё-таки нужен.
+     */
+    private const val REPEAT_WINDOW_MS = 5 * 60_000L
+
+    /**
+     * Такой же ответ этому же человеку уже ушёл в пределах [REPEAT_WINDOW_MS]?
+     *
+     * Смотрим в журнал, а не в память процесса: он переживает перезапуск, и ветки всех
+     * каналов одного человека там уже склеены (см. PersonThreads).
+     */
+    private fun justSent(context: Context, inId: String?, channel: String, text: String): Boolean =
+        try {
+            val keys = com.davnozdu.autoresponder.store.PersonThreads.keysFor(context, inId)
+            keys.isNotEmpty() && HistoryDb.get(context).existsNear(
+                keys, channel, "out", text, System.currentTimeMillis(), REPEAT_WINDOW_MS)
+        } catch (_: Exception) { false }
+
+    /**
+     * Записать наш ответ в журнал один раз.
+     *
+     * Мессенджер возвращает наш же ответ обратно в уведомлении, и оттуда его подбирает
+     * [logHistory] — в журнале появлялась вторая копия. Дедуп в HistoryLogger её не ловил:
+     * для мессенджеров он сверяется только с ЧУЖИМИ ключами, а тут ключ тот же самый.
+     * Столбим текст тем же ключом, которым пользуется [logHistory], — эхо не пройдёт.
+     */
+    private fun recordOut(context: Context, inId: String?, channel: String, text: String) {
+        Dedup.claim("histout:$channel:${inId?.trim()?.lowercase()}:${text.trim()}")
+        HistoryLogger.record(context, inId, channel, "out", text, auto = true)
+    }
+
     private fun tryRemoteInputReply(context: Context, sbn: StatusBarNotification, text: String): Boolean {
         return try {
             val n = sbn.notification ?: return false
@@ -226,31 +283,11 @@ object NotifResponder {
         }
     }
 
-    private val placeholderRe = Regex("^\\s*\\d+\\s+(new\\s+)?messages?\\s*$", RegexOption.IGNORE_CASE)
-
-    /** Не текст сообщения, а счётчик непрочитанных («3 new messages») — содержания в нём нет. */
-    private fun isBundleCount(text: String): Boolean {
-        val t = text.trim()
-        return placeholderRe.matches(t) || t.equals("new message", true)
-    }
-
-    /** Вложение вместо текста: отвечать не на что, но в переписке оно своё место занимает. */
-    private fun isAttachment(text: String): Boolean {
-        val t = text.trim()
-        return t.equals("Фото", true) || t.equals("Photo", true) ||
-            t.equals("Видео", true) || t.equals("Video", true) || t.equals("Sticker", true) ||
-            t.equals("GIF", true) || t.equals("Voice message", true)
-    }
-
-    private fun isPlaceholder(text: String): Boolean =
-        text.isBlank() || isBundleCount(text) || isAttachment(text)
-
-    private fun extractNumber(sender: String): String? {
-        val c = sender.trim()
-        val digits = c.count { it.isDigit() }
-        val looksNumber = digits >= 6 && c.all { it.isDigit() || it in "+()- " }
-        return if (looksNumber) PhoneMask.normalize(c) else null
-    }
+    /**
+     * Отвечать не на что: вложение без подписи, счётчик непрочитанных или реакция.
+     * Правила и причины — в [NotifText], там же тесты.
+     */
+    private fun isPlaceholder(text: String): Boolean = NotifText.isNotAMessage(text)
 
     /** Разобранное уведомление мессенджера. */
     data class Extracted(
@@ -260,7 +297,15 @@ object NotifResponder {
         val ts: Long,
         val isGroup: Boolean,
         /** Наши собственные сообщения из этого же уведомления (время, текст). */
-        val ours: List<Pair<Long, String>> = emptyList()
+        val ours: List<Pair<Long, String>> = emptyList(),
+        /**
+         * Ссылки на собеседника из уведомления: `Person.uri` и список `EXTRA_PEOPLE`.
+         *
+         * Там лежит `tel:<номер>` для незнакомца и ссылка на карточку книги для
+         * сохранённого контакта — единственное место, где номер есть, когда в заголовке
+         * уведомления стоит имя (см. [com.davnozdu.autoresponder.rules.SenderNumber]).
+         */
+        val senderUris: List<String> = emptyList()
     )
 
     /**
@@ -308,14 +353,34 @@ object NotifResponder {
                 text = last?.text?.toString()?.trim() ?: "",
                 ts = last?.timestamp?.takeIf { it > 0 } ?: System.currentTimeMillis(),
                 isGroup = style.isGroupConversation,
-                ours = ours + remoteInputHistory(n)
+                ours = ours + remoteInputHistory(n),
+                senderUris = listOfNotNull(last?.person?.uri) + peopleUris(n)
             )
         }
         val ex = n.extras
         val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return null
         val text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: return null
-        return Extracted(title, text, System.currentTimeMillis(), false, remoteInputHistory(n))
+        return Extracted(title, text, System.currentTimeMillis(), false,
+            remoteInputHistory(n), peopleUris(n))
+    }
+
+    /**
+     * Ссылки на собеседников из общих полей уведомления.
+     *
+     * `EXTRA_PEOPLE_LIST` хранит `Person`, устаревший `EXTRA_PEOPLE` — те же ссылки строками;
+     * разные прошивки заполняют разное, поэтому берём оба. Это запасной источник номера, и
+     * стоит он дёшево: уведомление уже в руках.
+     */
+    @Suppress("DEPRECATION")
+    private fun peopleUris(n: Notification): List<String> {
+        val out = ArrayList<String>()
+        try {
+            n.extras.getParcelableArray(Notification.EXTRA_PEOPLE_LIST)
+                ?.forEach { p -> (p as? android.app.Person)?.uri?.let { out.add(it) } }
+            n.extras.getStringArray(Notification.EXTRA_PEOPLE)?.forEach { out.add(it) }
+        } catch (_: Exception) { /* чужие поля — не повод падать */ }
+        return out
     }
 
     /**
