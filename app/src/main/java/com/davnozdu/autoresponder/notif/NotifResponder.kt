@@ -232,8 +232,14 @@ object NotifResponder {
     /** ReplyStore до основной ветки: CRM-ответ уходит раньше, чем создаётся общий store. */
     private fun store0(context: Context) = ReplyStore(context)
 
-    /** Насколько назад считаем ответ «только что отправленным». */
-    private const val REPEAT_WINDOW_MS = 10 * 60_000L
+    /**
+     * Насколько назад считаем ответ «только что отправленным».
+     *
+     * Наблюдавшиеся дубли укладывались в секунды — мессенджер обновляет уведомление, пока
+     * клиент досылает файлы. Окно взято с запасом, но не шире: если через полчаса клиент
+     * спросит снова и модель ответит теми же словами, ответ ему всё-таки нужен.
+     */
+    private const val REPEAT_WINDOW_MS = 5 * 60_000L
 
     /**
      * Такой же ответ этому же человеку уже ушёл в пределах [REPEAT_WINDOW_MS]?
@@ -362,19 +368,16 @@ object NotifResponder {
     /**
      * Ссылки на собеседников из общих полей уведомления.
      *
-     * `EXTRA_PEOPLE_LIST` появился в Android 9 и хранит `Person`; на старых прошивках то же
-     * лежит в `EXTRA_PEOPLE` строками. Берём оба: это запасной источник номера, и стоит он
-     * дёшево — уведомление уже в руках.
+     * `EXTRA_PEOPLE_LIST` хранит `Person`, устаревший `EXTRA_PEOPLE` — те же ссылки строками;
+     * разные прошивки заполняют разное, поэтому берём оба. Это запасной источник номера, и
+     * стоит он дёшево: уведомление уже в руках.
      */
+    @Suppress("DEPRECATION")
     private fun peopleUris(n: Notification): List<String> {
         val out = ArrayList<String>()
         try {
-            if (android.os.Build.VERSION.SDK_INT >= 28) {
-                @Suppress("DEPRECATION")
-                val list = n.extras.getParcelableArray(Notification.EXTRA_PEOPLE_LIST)
-                list?.forEach { p -> (p as? android.app.Person)?.uri?.let { out.add(it) } }
-            }
-            @Suppress("DEPRECATION")
+            n.extras.getParcelableArray(Notification.EXTRA_PEOPLE_LIST)
+                ?.forEach { p -> (p as? android.app.Person)?.uri?.let { out.add(it) } }
             n.extras.getStringArray(Notification.EXTRA_PEOPLE)?.forEach { out.add(it) }
         } catch (_: Exception) { /* чужие поля — не повод падать */ }
         return out
