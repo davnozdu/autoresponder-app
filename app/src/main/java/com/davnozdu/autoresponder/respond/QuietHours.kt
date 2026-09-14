@@ -45,14 +45,18 @@ object QuietHours {
     /** Утро: разослать то, что накопилось. */
     fun onAlarm(context: Context) {
         val s = Settings(context)
-        val db = HistoryDb.get(context)
-        val numbers = db.smsHoldNumbers()
-        db.smsHoldClear()
+        val numbers = HistoryDb.get(context).smsHoldNumbers()
+        // Очередь удаляется только после успешной постановки SMS в отправку.
+        // Responder работает асинхронно и может отказать из-за лимита, настроек
+        // или временной ошибки сети/оператора.
         if (numbers.isEmpty()) return
         EventLog(context).add("Тихий час закончился: отвечаю на ${numbers.size} ночных звонков")
         // Через обычный конвейер: лимиты, ЧС и выбор SIM должны сработать как всегда,
         // а тихий час к этому времени уже не активен, и событие пройдёт дальше.
         numbers.forEach { Responder.handle(context, it, null, Kind.CALL) }
+        // AlarmManager-будильник одноразовый; оставляем следующий запуск для
+        // номеров, которые не удалось обработать с первой попытки.
+        schedule(context, s)
     }
 
     private fun intent(context: Context) =

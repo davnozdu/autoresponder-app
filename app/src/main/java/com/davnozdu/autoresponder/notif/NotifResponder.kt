@@ -144,7 +144,13 @@ object NotifResponder {
             context, s, histKeyEarly, crmPhones, text, inCh, closedReason != null)
         if (crmReply != null) {
             NumberLock.withKey(key) {
-                if (!Dedup.claim("crm:$key:${text.trim()}")) {
+                // RCS и SMS Google Messages могут доставить одно сообщение двумя путями;
+                // CRM должен использовать тот же namespace, что и SmsReceiver.
+                val crmDedupKey = if (channel == Channel.MESSAGES)
+                    "sms:$key:${text.trim()}"
+                else
+                    "crm:$key:${text.trim()}"
+                if (!Dedup.claim(crmDedupKey)) {
                     log.add("NOTIF[$tag] $key — дубль, ответ по CRM пропущен"); return@withKey
                 }
                 // Лимит действует и на ответы по CRM — иначе одинаковые «ну что там?»

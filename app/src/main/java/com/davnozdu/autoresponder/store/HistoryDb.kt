@@ -500,6 +500,9 @@ class HistoryDb private constructor(context: Context) :
         }
         return res
     }
+    fun smsHoldRemove(number: String) {
+        writableDatabase.delete("sms_hold", "number = ?", arrayOf(number))
+    }
     fun smsHoldCount(): Int {
         readableDatabase.rawQuery("SELECT COUNT(*) FROM sms_hold", null).use { c ->
             return if (c.moveToFirst()) c.getInt(0) else 0 }

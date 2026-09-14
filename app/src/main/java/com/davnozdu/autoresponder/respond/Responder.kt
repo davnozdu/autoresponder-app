@@ -210,6 +210,7 @@ object Responder {
                     "(правило префикса; входящая subId=$incomingSubId; по умолчанию слот${s.smsSlot + 1})")
             val segs = SmsSender.send(context, norm, clamped, subId)
             if (segs >= 0) {
+                if (kind == Kind.CALL) HistoryDb.get(context).smsHoldRemove(norm)
                 store.markReplied(norm, s.timeoutHours)
                 HistoryLogger.record(context, norm, if (kind == Kind.CALL) "call" else "sms", "out", clamped, auto = true)
                 com.davnozdu.autoresponder.notif.DndStats.onAutoReply(context)

@@ -44,7 +44,7 @@ object RcsFinder {
         WHERE TRIM(pa.text) = ?
           AND m.received_timestamp BETWEEN ? AND ?
         ORDER BY m.received_timestamp DESC
-        LIMIT 1
+        LIMIT 16
     """
 
     /**
@@ -92,9 +92,16 @@ object RcsFinder {
         return try {
             db.rawQuery(SQL, arrayOf(body, (ts - WINDOW_MS).toString(), (ts + WINDOW_MS).toString()))
                 .use { c ->
-                    if (!c.moveToFirst()) null
-                    else PhoneMask.canonical(c.getString(0)?.trim())
-                        .takeIf { PhoneMask.looksLikeNumber(it) }
+                    // Одинаковый текст в одном окне может принадлежать нескольким людям.
+                    // Возвращаем номер только при единственном кандидате.
+                    val candidates = LinkedHashSet<String>()
+                    while (c.moveToNext()) {
+                        PhoneMask.canonical(c.getString(0)?.trim())
+                            .takeIf { PhoneMask.looksLikeNumber(it) }
+                            ?.let { candidates.add(it) }
+                        if (candidates.size > 1) return@use null
+                    }
+                    candidates.singleOrNull()
                 }
         } catch (e: Exception) {
             // Схему Google Messages меняет без предупреждения — это не повод падать.

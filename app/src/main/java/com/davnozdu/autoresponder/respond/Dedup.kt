@@ -14,7 +14,9 @@ object Dedup {
     /** true, если этот текст ещё не обрабатывался в окне TTL (и помечает его). */
     @Synchronized
     fun claim(text: String?): Boolean {
-        val key = (text ?: "").replace(WS, " ").trim().lowercase().hashCode().toString()
+        // Не сворачиваем строку в 32-битный hashCode: разные сообщения с одинаковым
+        // Java-хешем (например, «Aa» и «BB») иначе ошибочно считались бы дублем.
+        val key = (text ?: "").replace(WS, " ").trim().lowercase()
         val now = System.currentTimeMillis()
         // очистка старого
         seen.entries.removeAll { now - it.value > TTL }

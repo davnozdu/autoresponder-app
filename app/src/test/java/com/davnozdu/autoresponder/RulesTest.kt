@@ -105,6 +105,12 @@ class LangDetectTest {
 
 class DedupTest {
 
+    @Test fun `разные сообщения с одинаковым Java hash не схлопываются`() {
+        // Эти две строки имеют одинаковый String.hashCode() уже после lowercase.
+        assertTrue(Dedup.claim("gojnwrph"))
+        assertTrue(Dedup.claim("qjfxjcql"))
+    }
+
     @Test fun `один и тот же текст второй раз не проходит`() {
         val t = "Здравствуйте, когда будет готов заказ ${System.nanoTime()}"
         assertTrue(Dedup.claim(t))
