@@ -16,6 +16,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
@@ -69,7 +71,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AppScreen() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -340,8 +342,8 @@ fun AppScreen() {
                 Text("Само приложение проверяет обновление раз в сутки при открытии настроек. "
                     + "Здесь можно проверить вручную в любой момент.",
                     style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !updBusy, onClick = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(enabled = !updBusy, modifier = Modifier.fillMaxWidth(), onClick = {
                         updStatus = "Проверяю…"
                         scope.launch {
                             val res = withContext(Dispatchers.IO) {
@@ -355,7 +357,7 @@ fun AppScreen() {
                     // Кнопка установки нужна и здесь: баннер сверху легко пролистать мимо,
                     // а искать его обратно после проверки — лишний шаг.
                     update?.let { u ->
-                        Button(enabled = !updBusy, onClick = {
+                        Button(enabled = !updBusy, modifier = Modifier.fillMaxWidth(), onClick = {
                             updBusy = true
                             scope.launch {
                                 val ok = withContext(Dispatchers.IO) {
@@ -399,7 +401,8 @@ fun AppScreen() {
             }
 
             ExpandableSection("Уведомления о чёрном списке") {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     FilterChip(blnMode == 0, { blnMode = 0; s.blNotifMode = 0 }, { Text("Выкл") })
                     FilterChip(blnMode == 1, { blnMode = 1; s.blNotifMode = 1 }, { Text("Через N мин") })
                     FilterChip(blnMode == 2, { blnMode = 2; s.blNotifMode = 2 }, { Text("Сводка за день") })
@@ -416,7 +419,8 @@ fun AppScreen() {
             ExpandableSection("Когда «закрыто» (расписание)") {
                 SwitchRow("По системному режиму «Не беспокоить»", trigDnd) { trigDnd = it; s.triggerOnDnd = it }
                 SwitchRow("По расписанию", trigSched) { trigSched = it; s.triggerOnSchedule = it }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     FilterChip(schedMode == 0, { schedMode = 0; s.scheduleMode = 0 }, { Text("Окно «закрыто»") })
                     FilterChip(schedMode == 1, { schedMode = 1; s.scheduleMode = 1 }, { Text("Рабочие часы/дни") })
                 }
@@ -429,7 +433,8 @@ fun AppScreen() {
                     }
                     Text("Рабочие дни:", style = MaterialTheme.typography.labelMedium)
                     val days = listOf(2 to "Пн", 3 to "Вт", 4 to "Ср", 5 to "Чт", 6 to "Пт", 7 to "Сб", 1 to "Вс")
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         days.forEach { (d, lbl) ->
                             FilterChip(selected = (workDays and (1 shl d)) != 0, onClick = {
                                 workDays = workDays xor (1 shl d); s.workDaysMask = workDays
@@ -570,7 +575,8 @@ fun AppScreen() {
                 Text("SIM по умолчанию", style = MaterialTheme.typography.titleSmall)
                 Text("Для номеров, не попавших ни в одно правило выше.",
                     style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     FilterChip(selected = smsSlot == 0, enabled = sim1On,
                         onClick = { smsSlot = 0; s.smsSlot = 0 }, label = { Text("SIM 1") })
                     FilterChip(selected = smsSlot == 1, enabled = sim2On,
@@ -676,7 +682,8 @@ fun AppScreen() {
                     + "переключателе днём отвечаем только известному клиенту и только на "
                     + "вопрос о заказе.",
                     style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     OutlinedButton(onClick = {
                         crmStatus = "Проверяю…"
                         scope.launch {
@@ -748,7 +755,8 @@ fun AppScreen() {
                     "Вкл: модель думает (большой бюджет токенов, таймаут до 95с), ответ обрезается под лимит SMS. Для reasoning-моделей (deepseek и т.п.)."
                     else "Выкл: прямой краткий ответ, быстрый фолбэк ~13с. Подходит всем моделям (рекомендуется, напр. gemma).",
                     style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf("ollama", "openai", "gemini", "deepseek").forEach { p ->
                         FilterChip(selected = provider == p, onClick = {
                             if (provider != p) {
@@ -809,7 +817,8 @@ fun AppScreen() {
 
             ExpandableSection("LLM — резервная модель") {
                 SwitchRow("Использовать резервную", llm2On) { llm2On = it; s.llm2Enabled = it }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf("ollama", "openai", "gemini", "deepseek").forEach { p ->
                         FilterChip(selected = provider2 == p, onClick = {
                             if (provider2 != p) {
@@ -871,13 +880,14 @@ fun AppScreen() {
                     aboutSrc!!.contains("/files/") -> "Активен загруженный файл (в приложении). Он важнее полей выше."
                     else -> "Активен файл: $aboutSrc"
                 }, style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { mdLauncher.launch(arrayOf("text/markdown", "text/plain", "*/*")) }) { Text("Загрузить .md") }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { mdLauncher.launch(arrayOf("text/markdown", "text/plain", "*/*")) },
+                        modifier = Modifier.fillMaxWidth()) { Text("Загрузить .md") }
                     OutlinedButton(onClick = {
                         com.davnozdu.autoresponder.store.AboutInfo.saveAppCopy(ctx, null)
                         aboutSrc = com.davnozdu.autoresponder.store.AboutInfo.source(ctx)
                         Toast.makeText(ctx, "Загруженный файл удалён", Toast.LENGTH_SHORT).show()
-                    }) { Text("Убрать загруженный") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Убрать загруженный файл") }
                 }
             }
 
@@ -889,13 +899,13 @@ fun AppScreen() {
                 Text("Формат CSV, одна услуга в строке: устройство;услуга;цена;срок. "
                     + "«#» — комментарий. Пример: iPhone 12;замена экрана;3500 Kč;1 день",
                     style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { priceLauncher.launch(arrayOf("*/*")) }) { Text("Загрузить .csv") }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { priceLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Загрузить CSV") }
                     if (priceSrc != null) OutlinedButton(onClick = {
                         com.davnozdu.autoresponder.store.Prices.saveAppCopy(ctx, null)
                         priceSrc = com.davnozdu.autoresponder.store.Prices.source(ctx)
                         priceCount = com.davnozdu.autoresponder.store.Prices.rows(ctx).size
-                    }) { Text("Убрать копию") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Убрать загруженную копию") }
                 }
                 Text(priceSrc?.let { "Источник: $it ($priceCount строк)" }
                     ?: "Прайс не задан — цены в ответах не называются. "
@@ -913,13 +923,13 @@ fun AppScreen() {
                 }, style = MaterialTheme.typography.bodySmall)
                 Text("Формат: одна дата в строке. MM-DD — ежегодно (01-01 Новый год); YYYY-MM-DD — конкретная дата (2026-04-06 Пасха). # — комментарий.",
                     style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { holLauncher.launch(arrayOf("text/plain", "*/*")) }) { Text("Загрузить список") }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { holLauncher.launch(arrayOf("text/plain", "*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Загрузить список") }
                     OutlinedButton(onClick = {
                         com.davnozdu.autoresponder.store.Holidays.saveAppCopy(ctx, null)
                         holSrc = com.davnozdu.autoresponder.store.Holidays.source(ctx)
                         Toast.makeText(ctx, "Загруженный список удалён", Toast.LENGTH_SHORT).show()
-                    }) { Text("Убрать загруженный") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Убрать загруженный список") }
                 }
             }
 
@@ -1022,12 +1032,12 @@ fun AppScreen() {
                     "Ключи попадут в буфер обмена / файл в открытом виде — включайте только для переноса на своё устройство."
                     else "Ключи LLM не выгружаются (безопасно). На новом устройстве введите их вручную.",
                     style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(onClick = {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cm.setPrimaryClip(ClipData.newPlainText("autoresp", s.exportJson(exportKeys)))
                         Toast.makeText(ctx, "Скопировано в буфер", Toast.LENGTH_SHORT).show()
-                    }) { Text("Копировать") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Копировать настройки") }
                     OutlinedButton(onClick = {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val txt = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString() ?: ""
@@ -1035,11 +1045,11 @@ fun AppScreen() {
                             Toast.makeText(ctx, "Загружено из буфера", Toast.LENGTH_SHORT).show()
                             (ctx as? Activity)?.recreate()
                         } else Toast.makeText(ctx, "В буфере нет валидных настроек", Toast.LENGTH_SHORT).show()
-                    }) { Text("Вставить") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Вставить настройки") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { exportFileLauncher.launch("autoresp-settings.json") }) { Text("Сохранить в файл") }
-                    OutlinedButton(onClick = { importFileLauncher.launch(arrayOf("application/json", "text/*")) }) { Text("Загрузить из файла") }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { exportFileLauncher.launch("autoresp-settings.json") }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить в файл") }
+                    OutlinedButton(onClick = { importFileLauncher.launch(arrayOf("application/json", "text/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Загрузить из файла") }
                 }
             }
 
@@ -1115,19 +1125,21 @@ private fun StatusOverviewCard(
                 StatusPill("SMS", sms)
                 StatusPill("Сводка", notifications)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth()) {
-                FilledTonalButton(onClick = onStatus, modifier = Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    FilledTonalButton(onClick = onStatus, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.Security, contentDescription = null,
                         modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp)); Text("Состояние")
-                }
-                FilledTonalButton(onClick = onInbox, modifier = Modifier.weight(1f)) {
+                    }
+                    FilledTonalButton(onClick = onInbox, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.Notifications, contentDescription = null,
                         modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp)); Text("Входящие")
+                    }
                 }
-                FilledTonalButton(onClick = onHistory, modifier = Modifier.weight(1f)) {
+                FilledTonalButton(onClick = onHistory, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.History, contentDescription = null,
                         modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp)); Text("История")
