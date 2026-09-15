@@ -120,7 +120,13 @@ class NotifListenerService : NotificationListenerService() {
             // а порядок «сначала записали, потом ответили» обязан сохраниться.
             if (channel == Channel.MESSENGER)
                 com.davnozdu.autoresponder.respond.EventQueue.submitMsg {
-                    NotifResponder.logHistory(applicationContext, ex, tag)
+                    try { NotifResponder.logHistory(applicationContext, ex, tag) }
+                    catch (t: Throwable) {
+                        if (t !is kotlinx.coroutines.CancellationException)
+                            EventLog(applicationContext)
+                                .add("NOTIF[$tag] сбой записи в журнал: ${t.javaClass.simpleName}: ${t.message}")
+                        throw t
+                    }
                 }
 
             // Игнорируем старые/восстановленные уведомления (после перезагрузки система

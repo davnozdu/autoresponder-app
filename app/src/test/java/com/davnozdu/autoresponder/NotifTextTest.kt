@@ -66,4 +66,21 @@ class NotifTextTest {
         assertTrue(NotifText.isNotAMessage(""))
         assertTrue(NotifText.isNotAMessage("   "))
     }
+
+    /**
+     * Стража от повтора поломки 14.09.
+     *
+     * Юнит-тесты идут на десктопной JVM, а на телефоне `java.util.regex` реализован поверх
+     * ICU. ICU не знает встроенного флага `U`, и шаблон `(?iuU)…` там не компилируется вовсе:
+     * объект `NotifText` падал на инициализации, а вместе с ним молча умирала вся обработка
+     * сообщений мессенджеров. Поведенческий тест этого не ловит — ловит только запрет на
+     * конструкции, которые у двух движков значат разное.
+     */
+    @Test fun `шаблоны не зависят от флага UNICODE_CHARACTER_CLASS`() {
+        NotifText.patternSources.forEach { p ->
+            assertFalse("встроенные флаги ICU не поддерживает: $p", Regex("""\(\?[a-zA-Z]*[uU]""").containsMatchIn(p))
+            assertFalse("""\w значит разное на ICU и JVM: $p""", p.contains("""\w"""))
+            assertFalse("""\b значит разное на ICU и JVM: $p""", p.contains("""\b"""))
+        }
+    }
 }

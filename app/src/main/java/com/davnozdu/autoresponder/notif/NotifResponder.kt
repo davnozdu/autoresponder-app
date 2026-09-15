@@ -37,7 +37,17 @@ object NotifResponder {
                senderUris: List<String> = emptyList(), ts: Long = System.currentTimeMillis()) {
         val app = context.applicationContext
         EventQueue.submitMsg {
-            process(app, sbn, sender, text, channel, tag, isGroup, hasReply, senderUris, ts)
+            // Полоса глушит ошибку задачи, чтобы не встать целиком, — но молча.
+            // 14.09 обработка умирала на NoClassDefFoundError (см. NotifText), и сутки
+            // в журнале было ровно одно «from=…» без единого следа отказа. Причину
+            // отказа пишем здесь; полоса всё так же переживает падение задачи.
+            try {
+                process(app, sbn, sender, text, channel, tag, isGroup, hasReply, senderUris, ts)
+            } catch (t: Throwable) {
+                if (t !is kotlinx.coroutines.CancellationException)
+                    EventLog(app).add("NOTIF[$tag] сбой обработки: ${t.javaClass.simpleName}: ${t.message}")
+                throw t
+            }
         }
     }
 
