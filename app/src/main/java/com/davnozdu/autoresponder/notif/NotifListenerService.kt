@@ -116,6 +116,20 @@ class NotifListenerService : NotificationListenerService() {
             if (ex == null) { drop("не удалось разобрать (нет MessagingStyle/title/text)"); return }
             val channel = if (pkg == messagesPkg) Channel.MESSAGES else Channel.MESSENGER
 
+            // Боты Telegram — ни в журнал, ни в ответ.
+            //
+            // Проверка стоит ДО записи в журнал, потому что импортёр переписки ботов туда
+            // тоже не пускает: иначе одна и та же лента попадала бы в контекст LLM через
+            // уведомления и не попадала через базу. Прежняя проверка смотрела на
+            // ОТОБРАЖАЕМОЕ имя и не ловила почти никого: у @bigtweak_post_bot уведомление
+            // приходит от «BigTweak autopost», у @hermes_nascz_bot — от «NAS-Hermes»,
+            // и 13.09 «NAS-Hermes» получил три автоответа подряд. Теперь username
+            // спрашивается у копии базы Telegram (см. TgBots).
+            if (pkg == "org.telegram.messenger" &&
+                com.davnozdu.autoresponder.store.TgBots.isBot(applicationContext, ex.sender)) {
+                drop("Telegram: бот (${ex.sender.take(20)}), не человек"); return
+            }
+
             // ЖУРНАЛ — раньше всех правил ответа.
             //
             // Раньше история писалась внутри NotifResponder.process, то есть после проверок
@@ -155,8 +169,6 @@ class NotifListenerService : NotificationListenerService() {
             if (NotifResponder.isServiceNotification(sender, text)) {
                 drop("служебное уведомление мессенджера, не сообщение"); return
             }
-            // Отсекаем Telegram-ботов (имя оканчивается на "bot").
-            if (pkg == "org.telegram.messenger" && sender.trim().lowercase().endsWith("bot")) return
 
             val hasReply = n.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true
             EventLog(this).add("NOTIF[$tag] from='${sender.take(20)}' group=${ex.isGroup} reply=$hasReply text='${text.take(36)}'")
