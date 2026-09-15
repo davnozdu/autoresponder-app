@@ -20,9 +20,14 @@ import java.io.File
  *
  * Протокол — три файла в приватной папке приложения (на `/sdcard` переписка клиентов
  * была бы видна любому приложению с доступом к хранилищу):
- *   `bridge/request`   трогаем — просим обновить копии
+ *   `bridge/request`   пишем «<epoch>» — обычный прогон, «<epoch> <метки>» — только эти базы
  *   `bridge/<канал>/`  копии баз
  *   `bridge/response`  «<epoch> ok|partial|none <каналы>»
+ *
+ * Сами копии модуль держит в ОЗУ (tmpfs поверх этой папки) и переписывает только те файлы,
+ * что изменились у источника. Копия одноразовая: после перезагрузки её нет, модуль снимает
+ * её заново при старте. Отсюда и правило здесь — просить обновление там, где свежесть
+ * действительно нужна, а не по таймеру каждые несколько минут.
  *
  * Модуля может не быть (приложение поставили без него) или он может быть старым — тогда
  * `request` никто не читает, ответ не обновляется, и мы просто работаем по тому, что есть.
@@ -42,8 +47,25 @@ object MsgrBridge {
     private const val WAIT_MS = 12_000L
     private const val POLL_MS = 300L
 
-    /** Чаще этого не дёргаем: клиент пишет очередями, а копия базы — это запись на flash. */
-    private const val MIN_GAP_MS = 120_000L
+    /**
+     * Сколько ждём на пути ответа клиенту.
+     *
+     * Там ожидание идёт поверх запроса к LLM, поэтому бюджет отдельный и короткий: копии
+     * теперь лежат в ОЗУ и обновляются только по изменившимся файлам, обычный прогон
+     * укладывается в доли секунды. Не успел — отвечаем по тому, что есть, как и раньше.
+     */
+    private const val REPLY_WAIT_MS = 4_000L
+
+    /**
+     * Фоновый проход — не чаще раза в час.
+     *
+     * Раньше было две минуты, и будильник heartbeat дёргал мост каждые десять минут:
+     * 144 полных копирования в сутки, около 26 ГБ записи на флеш ради нескольких новых
+     * сообщений. Свежесть от этого не зависит — там, где она нужна (перед ответом клиенту,
+     * при включении «Не беспокоить», на экране состояния), проход идёт принудительно и
+     * с ожиданием. Час — это страховка на случай, если ни одно из событий не случилось.
+     */
+    private const val MIN_GAP_MS = 60 * 60_000L
 
     /**
      * Насколько отступаем назад от водяного знака при следующем чтении.
@@ -54,6 +76,9 @@ object MsgrBridge {
      * повторы отсекает дедуп в [HistoryDb].
      */
     private const val OVERLAP_MS = 900_000L
+
+    /** Бюджет ожидания для пути ответа клиенту — см. [REPLY_WAIT_MS]. */
+    fun replyWaitMs(): Long = REPLY_WAIT_MS
 
     private fun dir(context: Context) = File(context.filesDir, DIR)
 
@@ -86,7 +111,7 @@ object MsgrBridge {
      * `bugle_db` по тексту сообщения (см. [RcsFinder]), и копия должна быть свежее этого
      * сообщения. Импорт в этот момент лишний — клиент ждёт ответа.
      */
-    fun refresh(context: Context) {
+    fun refresh(context: Context, vararg tags: String) {
         val app = context.applicationContext
         val d = dir(app)
         if (!d.isDirectory) return
@@ -94,12 +119,23 @@ object MsgrBridge {
         try {
             val resp = File(d, "response")
             val before = resp.lastModifiedSafe()
-            try { File(d, "request").writeText(System.currentTimeMillis().toString()) }
+            try { File(d, "request").writeText(ask(tags)) }
             catch (e: Exception) {
                 EventLog(app).add("Мост: не удалось попросить обновление (${e.message})"); return
             }
-            waitForResponse(resp, before)
+            waitForResponse(resp, before, WAIT_MS)
         } finally { lock.unlock() }
+    }
+
+    /**
+     * Текст просьбы: `<epoch>` — обычный прогон, `<epoch> <метки>` — только названные базы.
+     *
+     * Адресность нужна тяжёлым базам, которые в обычный прогон не входят: копия Google
+     * Messages весит 17 МБ, а нужна редко — когда RCS-отправитель пришёл без номера.
+     */
+    private fun ask(tags: Array<out String>): String {
+        val now = System.currentTimeMillis()
+        return if (tags.isEmpty()) now.toString() else "$now ${tags.joinToString(" ")}"
     }
 
     /**
@@ -114,19 +150,20 @@ object MsgrBridge {
      *
      * @param force игнорировать [MIN_GAP_MS] — для ручной кнопки и для включения «Не беспокоить»,
      *              когда нужно разом подобрать всё, что владелец написал за день.
-     * @param wait ждать, пока модуль обновит копии. На пути ответа клиенту — false: там
-     *             задержка идёт поверх запроса к LLM, а копии и так свежие (модуль обновляет
-     *             их сам и при включении «Не беспокоить»).
+     * @param wait ждать, пока модуль обновит копии.
+     * @param waitMs бюджет ожидания; на пути ответа клиенту — короткий [REPLY_WAIT_MS],
+     *               потому что там ожидание ложится поверх запроса к LLM.
      * @return число добавленных записей, -1 если моста нет.
      */
-    fun sync(context: Context, force: Boolean = false, wait: Boolean = true): Int {
+    fun sync(context: Context, force: Boolean = false, wait: Boolean = true,
+             waitMs: Long = WAIT_MS): Int {
         if (wait) lock.lock() else if (!lock.tryLock()) return 0
         try {
-            return syncLocked(context, force, wait)
+            return syncLocked(context, force, wait, waitMs)
         } finally { lock.unlock() }
     }
 
-    private fun syncLocked(context: Context, force: Boolean, wait: Boolean): Int {
+    private fun syncLocked(context: Context, force: Boolean, wait: Boolean, waitMs: Long): Int {
         val app = context.applicationContext
         val log = EventLog(app)
         val d = dir(app)
@@ -148,7 +185,7 @@ object MsgrBridge {
         } catch (e: Exception) {
             log.add("Мост: не удалось попросить обновление (${e.message})"); false
         }
-        if (asked && wait) waitForResponse(resp, before)
+        if (asked && wait) waitForResponse(resp, before, waitMs)
 
         var total = 0
         importOne(app, File(d, "whatsapp/msgstore.db"), "whatsapp", K_WA, p)?.let { total += it }
@@ -161,8 +198,8 @@ object MsgrBridge {
     }
 
     /** Ждём, пока модуль перепишет response. Нет ответа — работаем по прошлым копиям. */
-    private fun waitForResponse(resp: File, before: Long) {
-        val until = System.currentTimeMillis() + WAIT_MS
+    private fun waitForResponse(resp: File, before: Long, budget: Long) {
+        val until = System.currentTimeMillis() + budget
         while (System.currentTimeMillis() < until) {
             if (resp.lastModifiedSafe() > before) return
             try { Thread.sleep(POLL_MS) } catch (_: InterruptedException) { return }

@@ -22,6 +22,10 @@ import java.io.File
  * Базы под чужим uid с правами 0600 — приложению их не открыть, копирование делает модуль
  * (`bridge.sh`). Модуля может не быть или он может быть старым: тогда копии нет, метод
  * возвращает `null`, и сообщение просто пропускается, как и раньше.
+ *
+ * Копию модуль делает только по просьбе отсюда и убирает на следующем обычном прогоне:
+ * `bugle_db` весит 17 МБ, а нужен из неё один столбец и в редком случае. Возить её по
+ * таймеру круглые сутки — расход батареи и ресурса памяти на пустом месте.
  */
 object RcsFinder {
 
@@ -56,26 +60,32 @@ object RcsFinder {
         val body = text.trim()
         if (body.isEmpty()) return null
         val app = context.applicationContext
+        // Копия «по требованию»: в обычный прогон моста база Google Messages не входит,
+        // поэтому чаще всего её тут просто нет. Если есть — она осталась с прошлого
+        // разбирательства и вполне может содержать нужное сообщение.
         val f = dbFile(app)
-        if (!f.exists()) return null
-        // Сначала смотрим в том, что уже лежит: модуль обновляет копии сам, и чаще всего
-        // сообщение там уже есть.
-        lookup(app, f, body, ts)?.let { return it }
-        // Нет — копия могла отстать. Просим модуль обновить и смотрим ещё раз.
+        if (f.exists()) {
+            lookup(app, f, body, ts)?.let { return it }
+            // Копия старше самого сообщения — искать в ней больше нечего.
+            if (f.lastModified() >= ts) return null
+        }
+        // Просим модуль снять копию именно этой базы и смотрим ещё раз.
         //
         // Не на каждый промах: сюда попадают и рассылки («CeskaPosta», «Allegro»), у которых
         // номера нет в принципе. Без ограничения каждая из них заставляла бы ждать модуль,
         // а копировать он должен из-за настоящего клиента, не из-за трекинга посылки.
-        if (f.lastModified() >= ts) return null
         val now = System.currentTimeMillis()
         synchronized(this) {
             if (now - lastRefresh < REFRESH_GAP_MS) return null
             lastRefresh = now
         }
-        MsgrBridge.refresh(app)
+        MsgrBridge.refresh(app, TAG)
         val fresh = dbFile(app)
         return if (fresh.exists()) lookup(app, fresh, body, ts) else null
     }
+
+    /** Метка этой базы в протоколе моста — она же имя подпапки с копией. */
+    private const val TAG = "rcs"
 
     /** Чаще этого модуль из-за одного ненайденного отправителя не тревожим. */
     private const val REFRESH_GAP_MS = 30_000L
