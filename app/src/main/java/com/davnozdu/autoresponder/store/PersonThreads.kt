@@ -20,6 +20,7 @@ import com.davnozdu.autoresponder.rules.PhoneMask
 object PersonThreads {
 
     private const val TTL_MS = 60_000L
+    private const val MAX_CACHE = 128
     private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<String>>>()
 
     fun keysFor(context: Context, key: String?): List<String> {
@@ -50,7 +51,13 @@ object PersonThreads {
         } catch (_: Exception) { /* БД недоступна — работаем по одному ключу */ }
 
         val res = out.toList()
-        if (cache.size > 128) cache.entries.removeAll { now - it.value.first > TTL_MS }
+        // Сначала выкидываем просроченное, и только если и после этого кэш велик — чистим
+        // целиком. Раньше чистка снимала лишь просроченное: при потоке новых собеседников
+        // в пределах минуты (рассылка, импорт) не удалялось НИЧЕГО, и карта росла без предела.
+        if (cache.size > MAX_CACHE) {
+            cache.entries.removeAll { now - it.value.first > TTL_MS }
+            if (cache.size > MAX_CACHE) cache.clear()
+        }
         cache[seed] = now to res
         return res
     }
