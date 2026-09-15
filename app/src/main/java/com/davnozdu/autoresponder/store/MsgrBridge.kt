@@ -36,9 +36,16 @@ import java.io.File
 object MsgrBridge {
 
     private const val DIR = "bridge"
-    /** Время последней ПОПЫТКИ — только для ограничения частоты. Признак «мост жив» —
-     *  это время файла ответа, см. [lastSync]. */
-    private const val K_LAST_TRY = "bridge_last_sync"
+    /**
+     * Время, РАНЬШЕ которого фоновый проход не делаем.
+     *
+     * Раньше хранилось время последней попытки, и отсчёт шёл от неё независимо от исхода.
+     * После перезагрузки это стоило часа простоя: модуль поднимает копии при старте, а
+     * приложение подключается раньше (15.09 — на 44 секунды), не застаёт ничего и всё
+     * равно откладывает следующий проход на час. Теперь час отсчитывается только от
+     * УДАЧНОГО прохода, а после неудачного пробуем снова через [RETRY_GAP_MS].
+     */
+    private const val K_NEXT_TRY = "bridge_next_sync"
     private const val K_WA = "bridge_wm_wa"
     private const val K_WA2 = "bridge_wm_wa2"
     private const val K_TG = "bridge_wm_tg"
@@ -66,6 +73,14 @@ object MsgrBridge {
      * с ожиданием. Час — это страховка на случай, если ни одно из событий не случилось.
      */
     private const val MIN_GAP_MS = 60 * 60_000L
+
+    /**
+     * Через сколько пробовать снова, если модуль не ответил.
+     *
+     * Совпадает с периодом будильника heartbeat — значит следующая же его отработка и будет
+     * повторной попыткой, отдельного будильника не нужно.
+     */
+    private const val RETRY_GAP_MS = 10 * 60_000L
 
     /**
      * Насколько отступаем назад от водяного знака при следующем чтении.
@@ -171,7 +186,7 @@ object MsgrBridge {
 
         val p = prefs(app)
         val now = System.currentTimeMillis()
-        if (!force && now - p.getLong(K_LAST_TRY, 0L) < MIN_GAP_MS) return 0
+        if (!force && now < p.getLong(K_NEXT_TRY, 0L)) return 0
 
         val resp = File(d, "response")
         val before = resp.lastModifiedSafe()
@@ -192,7 +207,15 @@ object MsgrBridge {
         importOne(app, File(d, "whatsapp2/msgstore.db"), "whatsapp", K_WA2, p)?.let { total += it }
         importTelegram(app, File(d, "telegram/cache4.db"), p)?.let { total += it }
 
-        p.edit().putLong(K_LAST_TRY, now).apply()
+        // Модуль ответил — значит копии свежие, и целый час трогать его незачем. Не ответил
+        // (не запущен, раздел ещё не расшифрован, просьба не записалась) — пробуем снова
+        // скоро: иначе после перезагрузки журнал стоит до следующего часа.
+        val answered = when {
+            !asked -> false
+            !wait -> true
+            else -> resp.lastModifiedSafe() > before
+        }
+        p.edit().putLong(K_NEXT_TRY, now + if (answered) MIN_GAP_MS else RETRY_GAP_MS).apply()
         if (total > 0) log.add("Мост: добавлено $total сообщений в журнал")
         return total
     }
