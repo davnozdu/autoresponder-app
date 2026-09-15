@@ -16,7 +16,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # packages: '' — иначе действие по умолчанию ставит пакет `tools`, а Google его
+      # убрал: 15.09 сборка встала на «Failed to find package 'tools'». Платформа и
+      # build-tools и так есть в образе ubuntu-latest, действию остаётся принять лицензии.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
       - run: chmod +x ./gradlew
       - name: Decode keystore
         env:
