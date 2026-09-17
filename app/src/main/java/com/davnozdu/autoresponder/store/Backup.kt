@@ -47,8 +47,10 @@ object Backup {
 
     fun validate(file: File) {
         check(file.isFile && file.length() > 0) { "Пустой бэкап" }
-        android.database.sqlite.SQLiteDatabase.openDatabase(file.absolutePath, null,
-            android.database.sqlite.SQLiteDatabase.OPEN_READONLY).use { db ->
+        android.database.sqlite.SQLiteDatabase.openDatabase(file,
+            android.database.sqlite.SQLiteDatabase.OpenParams.Builder()
+                .setOpenFlags(android.database.sqlite.SQLiteDatabase.OPEN_READONLY)
+                .setSynchronousMode("FULL").build()).use { db ->
             db.rawQuery("PRAGMA integrity_check", null).use { c ->
                 check(c.moveToFirst() && c.getString(0) == "ok" && !c.moveToNext()) { "Бэкап повреждён" }
             }

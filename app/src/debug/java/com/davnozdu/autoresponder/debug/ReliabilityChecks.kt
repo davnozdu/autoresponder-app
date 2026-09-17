@@ -12,8 +12,12 @@ import java.io.File
 object ReliabilityChecks {
     @JvmStatic fun main(args: Array<String>) {
         try {
+            if(android.os.Looper.getMainLooper()==null) android.os.Looper.prepareMainLooper()
+            val type=Class.forName("android.app.ActivityThread")
+            val thread=type.getMethod("systemMain").invoke(null)
+            val systemContext=type.getMethod("getSystemContext").invoke(thread) as Context
             val root=File(args.single()).apply { mkdirs() }
-            val context=object: ContextWrapper(null) {
+            val context=object: ContextWrapper(systemContext) {
                 override fun getApplicationContext(): Context = this
                 override fun getDatabasePath(name: String) = File(root,name)
                 override fun openOrCreateDatabase(name: String, mode: Int, factory: SQLiteDatabase.CursorFactory?): SQLiteDatabase = SQLiteDatabase.openOrCreateDatabase(getDatabasePath(name),factory)
@@ -21,7 +25,10 @@ object ReliabilityChecks {
                 override fun getSystemService(name: String): Any? = null
                 override fun getSystemServiceName(serviceClass: Class<*>): String? = if(serviceClass==android.app.NotificationManager::class.java) Context.NOTIFICATION_SERVICE else null
             }
+            val params=SQLiteDatabase.OpenParams.Builder().addOpenFlags(SQLiteDatabase.CREATE_IF_NECESSARY)
+                .setJournalMode("DELETE").setSynchronousMode("FULL").build()
             val runtime=RuntimeDb.get(context)
+            runtime.setOpenParams(params)
             val a=runtime.enqueue("a","alice","SMS","{}",60000)
             val a2=runtime.enqueue("a2","alice","SMS","{}",60000)
             val b=runtime.enqueue("b","bob","SMS","{}",60000)
@@ -38,6 +45,7 @@ object ReliabilityChecks {
             println("PASS durable FIFO, dedup, independent customers, recovery, handoff")
 
             val history=HistoryDb(context,"fixture.db")
+            history.setOpenParams(params)
             history.insert("test",null,"sms","in","before snapshot",1)
             val snapshot=File(root,"snapshot.db")
             Backup.snapshotDatabase(history.writableDatabase,snapshot)
