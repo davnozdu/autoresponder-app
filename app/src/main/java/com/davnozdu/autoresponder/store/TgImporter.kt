@@ -74,6 +74,7 @@ object TgImporter {
                         val body = TlBlob.messageText(blob, dateSec)?.trim().orEmpty()
                         if (body.isEmpty()) continue           // медиа без подписи
                         val ts = dateSec * 1000L
+                        if (dir == "out") com.davnozdu.autoresponder.respond.Outgoing.observed(context, person.key, "telegram", body, ts)
                         if (hist.existsAt(person.key, ts, dir)) continue
                         val keys = threads.getOrPut(person.key) { PersonThreads.keysFor(context, person.key) }
                         // Только чужие ключи — см. WaImporter: свои повторы это настоящие

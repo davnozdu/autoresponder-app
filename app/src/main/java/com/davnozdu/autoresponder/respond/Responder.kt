@@ -129,6 +129,7 @@ object Responder {
         com.davnozdu.autoresponder.notif.DndStats.onIncoming(context, kind == Kind.CALL)
 
         // Тихий час — последним из гейтов: придерживаем только то, на что реально ответили бы.
+        if (kind == Kind.CALL && Handoff.blocked(context, norm, "sms", receivedAt)) return
         if (kind == Kind.CALL && QuietHours.holdIfQuiet(context, s, norm)) return
 
         val store = ReplyStore(context)
@@ -216,8 +217,9 @@ object Responder {
             log.add("$tag $norm — SIM отправки: слот${slot + 1} subId=$subId " +
                     "(правило префикса; входящая subId=$incomingSubId; по умолчанию слот${s.smsSlot + 1})")
             if (!Settings(context).enabled || AutoReplyState.isPaused(context) ||
-                Handoff.blocked(context, norm, "sms", receivedAt)) {
-                log.add("$tag $norm — пауза во время подготовки, ответ отменён"); return@withKey
+                Handoff.blocked(context, norm, "sms", receivedAt) ||
+                HistoryDb.get(context).humanReplyAfter(norm, receivedAt)) {
+                log.add("$tag $norm — пауза или ручной ответ во время подготовки, ответ отменён"); return@withKey
             }
             val segs = SmsSender.send(context, norm, clamped, subId, jobId = jobId,
                 historyChannel = if (kind == Kind.CALL) "call" else "sms", limitKey = norm, timeoutHours = s.timeoutHours)

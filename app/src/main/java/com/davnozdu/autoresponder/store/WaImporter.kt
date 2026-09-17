@@ -96,6 +96,7 @@ object WaImporter {
                         // иначе PersonThreads не склеит ветки одного человека.
                         val num = PhoneMask.canonical(raw)
                         if (!PhoneMask.looksLikeNumber(num)) continue
+                        if (dir == "out") com.davnozdu.autoresponder.respond.Outgoing.observed(context, num, channel, body, ts)
                         if (hist.existsAt(num, ts, dir)) continue
                         val keys = threads.getOrPut(num) { PersonThreads.keysFor(context, num) }
                         // Дубль ищем только среди ЧУЖИХ ключей — то есть в записях пути

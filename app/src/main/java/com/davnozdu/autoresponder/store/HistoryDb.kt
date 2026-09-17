@@ -29,8 +29,8 @@ data class HistItem(
 )
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
-class HistoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "history.db", null, 9) {
+class HistoryDb internal constructor(context: Context, name: String = "history.db") :
+    SQLiteOpenHelper(context.applicationContext, name, null, 9) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -508,6 +508,10 @@ class HistoryDb private constructor(context: Context) :
             return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
     fun smsHoldClear() { writableDatabase.delete("sms_hold", null, null) }
+
+    fun humanReplyAfter(identity: String, since: Long): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM events WHERE number=? AND direction='out' AND auto=0 AND channel!='call' AND ts>? LIMIT 1",
+        arrayOf(identity,since.toString())).use { it.moveToFirst() }
 
     /** Принудительный WAL-checkpoint перед копированием файла БД (для бэкапа). */
     fun checkpoint() {

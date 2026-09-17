@@ -30,6 +30,7 @@ object Handoff {
         val now = System.currentTimeMillis()
         val until = if (minutes == 0) Long.MAX_VALUE else now + minutes * 60_000L
         RuntimeDb.get(context).setControl(key(context, who, channel), until, now)
+        if (PhoneMask.looksLikeNumber(who)) com.davnozdu.autoresponder.store.HistoryDb.get(context).smsHoldRemove(PhoneMask.normalize(who) ?: who)
     }
     fun resume(context: Context, who: String, channel: String) =
         RuntimeDb.get(context).setControl(key(context, who, channel), 0, System.currentTimeMillis())

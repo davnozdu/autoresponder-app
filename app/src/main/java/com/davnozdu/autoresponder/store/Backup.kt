@@ -37,7 +37,11 @@ object Backup {
     /** VACUUM INTO gives a transactionally consistent snapshot, without copying a live WAL. */
     private fun snapshot(context: Context, destination: File) {
         check(!destination.exists()) { "Файл снимка уже существует" }
-        HistoryDb.get(context).writableDatabase.execSQL("VACUUM INTO ?", arrayOf(destination.absolutePath))
+        snapshotDatabase(HistoryDb.get(context).writableDatabase, destination)
+    }
+
+    internal fun snapshotDatabase(db: android.database.sqlite.SQLiteDatabase, destination: File) {
+        db.execSQL("VACUUM INTO ?", arrayOf(destination.absolutePath))
         validate(destination)
     }
 
@@ -87,6 +91,18 @@ object Backup {
             val safety=File(safetyDir,"history-${System.currentTimeMillis()}.db")
             snapshot(context,safety)
             val db=HistoryDb.get(context).writableDatabase
+            restoreTables(db, staging)
+            PersonThreads.invalidate()
+            safetyDir.listFiles()?.sortedByDescending { it.name }?.drop(3)?.forEach { it.delete() }
+            EventLog(context).add("BACKUP: восстановлено ${backup.name}; предыдущая база сохранена в restore-safety")
+            true
+        } catch (e: Exception) {
+            EventLog(context).add("BACKUP восстановление отменено: ${e.message}"); false
+        } finally { staging.delete() }
+    }
+
+    internal fun restoreTables(db: android.database.sqlite.SQLiteDatabase, staging: File) {
+        validate(staging)
             db.execSQL("ATTACH DATABASE ? AS restore_src",arrayOf(staging.absolutePath))
             try {
                 // Check exact columns before touching the live database.
@@ -104,13 +120,6 @@ object Backup {
                     db.setTransactionSuccessful()
                 } finally { db.endTransaction() }
             } finally { db.execSQL("DETACH DATABASE restore_src") }
-            PersonThreads.invalidate()
-            safetyDir.listFiles()?.sortedByDescending { it.name }?.drop(3)?.forEach { it.delete() }
-            EventLog(context).add("BACKUP: восстановлено ${backup.name}; предыдущая база сохранена в restore-safety")
-            true
-        } catch (e: Exception) {
-            EventLog(context).add("BACKUP восстановление отменено: ${e.message}"); false
-        } finally { staging.delete() }
     }
 
     fun health(context: Context): String {

@@ -243,8 +243,11 @@ object NotifResponder {
             }
             // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
             if (!Settings(context).enabled || AutoReplyState.isPaused(context) ||
-                com.davnozdu.autoresponder.respond.Handoff.blocked(context, histKeyEarly, inCh, receivedAt)) {
-                log.add("NOTIF[$tag] — пауза во время подготовки, ответ отменён"); return@withKey
+                com.davnozdu.autoresponder.respond.Handoff.blocked(context, histKeyEarly, inCh, receivedAt) ||
+                HistoryDb.get(context).humanReplyAfter(histKeyEarly, receivedAt) ||
+                !NotifListenerService.current(sbn.key)?.notification?.extras
+                    ?.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY).isNullOrEmpty()) {
+                log.add("NOTIF[$tag] — пауза или ручной ответ во время подготовки, ответ отменён"); return@withKey
             }
             if (!EventQueue.beforeSend(context, jobId)) return@withKey
             val transportId = com.davnozdu.autoresponder.respond.Outgoing.startRemote(context, histKeyEarly, inCh, reply, jobId)

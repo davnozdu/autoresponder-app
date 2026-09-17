@@ -33,9 +33,13 @@ object Outgoing {
         update(context, id, if (ok) "submitted" else "failed", if (ok) "Передано кнопке Reply; доставка не подтверждена" else "Кнопка Reply недоступна")
     }
     @Synchronized fun observed(context: Context, who: String, channel: String, text: String, at: Long) {
-        RuntimeDb.get(context).writableDatabase.execSQL(
-            "UPDATE outgoing SET state='observed',detail='Подтверждено импортом переписки' WHERE channel=? AND identity=? AND body=? AND state='submitted' AND ABS(created-?) < 600000",
-            arrayOf(channel,who,text,at))
+        val db=RuntimeDb.get(context)
+        val matches=mutableListOf<String>()
+        db.readableDatabase.rawQuery("SELECT id,identity FROM outgoing WHERE channel=? AND body=? AND state='submitted' AND ABS(created-?) < 600000",
+            arrayOf(channel,text,at.toString())).use { c ->
+            while(c.moveToNext()) if(Handoff.key(context,c.getString(1),channel)==Handoff.key(context,who,channel)) matches.add(c.getString(0))
+        }
+        matches.forEach { update(context,it,"observed","Подтверждено импортом переписки") }
     }
     @Synchronized fun failed(context: Context, id: String, detail: String) { update(context,id,"failed",detail); alert(context, id, detail) }
     private fun update(context: Context, id: String, state: String, detail: String) {
@@ -77,7 +81,7 @@ object Outgoing {
     }
     private fun alert(context: Context, id: String, detail: String) {
         EventLog(context).add("SEND $id — $detail")
-        val nm=context.getSystemService(android.app.NotificationManager::class.java)
+        val nm=context.getSystemService(android.app.NotificationManager::class.java) ?: return
         nm.createNotificationChannel(android.app.NotificationChannel("send_errors","Ошибки отправки",android.app.NotificationManager.IMPORTANCE_DEFAULT))
         val tap=android.app.PendingIntent.getActivity(context,0,android.content.Intent(context,com.davnozdu.autoresponder.ui.StatusActivity::class.java),android.app.PendingIntent.FLAG_IMMUTABLE)
         try { nm.notify(id,2101,androidx.core.app.NotificationCompat.Builder(context,"send_errors")
