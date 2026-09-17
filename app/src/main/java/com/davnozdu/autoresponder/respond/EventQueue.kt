@@ -43,7 +43,7 @@ object EventQueue {
             scheduling.withLock {
                 val db = RuntimeDb.get(app)
                 while (active.size < 3) {
-                    val job = db.next(active, NotifListenerService.isConnected) ?: break
+                    val job = db.next(active.map { db.canonical(it) }.toSet(), NotifListenerService.isConnected) ?: break
                     active.add(job.who)
                     scope.launch {
                         try {

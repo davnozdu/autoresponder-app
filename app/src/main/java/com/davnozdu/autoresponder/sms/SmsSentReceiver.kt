@@ -10,10 +10,15 @@ class SmsSentReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if(intent.action !in setOf("com.davnozdu.autoresponder.SMS_SENT","com.davnozdu.autoresponder.SMS_DELIVERED")) return
         val id=intent.getStringExtra("outgoing") ?: return
-        val code=resultCode
+        val delivery=intent.getBooleanExtra("delivery",false)
+        val pduStatus = if(delivery) runCatching {
+            val pdu=intent.getByteArrayExtra("pdu") ?: return@runCatching null
+            android.telephony.SmsMessage.createFromPdu(pdu,intent.getStringExtra("format") ?: "3gpp")?.status
+        }.getOrNull() else null
+        val code=if(delivery) DeliveryResult.confirmed(resultCode,pduStatus) ?: return else resultCode
         val pending=goAsync()
         Thread {
-            try { Outgoing.acknowledgement(context.applicationContext,id,intent.getIntExtra("part",0),code,intent.getBooleanExtra("delivery",false)) }
+            try { Outgoing.acknowledgement(context.applicationContext,id,intent.getIntExtra("part",0),code,delivery) }
             finally { pending.finish() }
         }.start()
     }

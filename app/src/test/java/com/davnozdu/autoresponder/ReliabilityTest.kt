@@ -7,6 +7,11 @@ import com.davnozdu.autoresponder.respond.Handoff
 import com.davnozdu.autoresponder.store.HistItem
 
 class ReliabilityTest {
+    @Test fun `delivery needs a final successful modem report`() {
+        val d=com.davnozdu.autoresponder.sms.DeliveryResult
+        assertNull(d.confirmed(-1,null)); assertNull(d.confirmed(-1,32))
+        assertEquals(-1,d.confirmed(-1,0)); assertEquals(64,d.confirmed(-1,64))
+    }
     @Test fun `human messages remain human and long recent turns remain whole`() {
         val text="Договорились о ремонте. ".repeat(40)
         val result=ConversationContext.render(listOf(HistItem(1,"n",null,"sms","out",text,1,false)))

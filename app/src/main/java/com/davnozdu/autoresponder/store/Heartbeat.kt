@@ -31,6 +31,7 @@ object Heartbeat {
     /** Отметиться и завести следующий будильник. */
     fun tick(context: Context) {
         touch(context)
+        com.davnozdu.autoresponder.respond.EventQueue.kick(context)
         schedule(context)
     }
 

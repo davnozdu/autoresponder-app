@@ -34,6 +34,8 @@ jobs:
         run: |
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
           echo "KEYSTORE_FILE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
       - name: Build release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

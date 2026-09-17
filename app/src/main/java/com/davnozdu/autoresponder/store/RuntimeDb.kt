@@ -25,6 +25,8 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
         val now = System.currentTimeMillis()
         // Prune terminal metadata only. Never evict work to make room for new events.
         writableDatabase.delete("jobs", "created < ? AND state NOT IN ('queued','running','sending')", arrayOf((now - 7 * 86_400_000L).toString()))
+        writableDatabase.execSQL("DELETE FROM segments WHERE outgoing IN (SELECT id FROM outgoing WHERE created < ?)", arrayOf(now - 30 * 86_400_000L))
+        writableDatabase.delete("outgoing", "created < ?", arrayOf((now - 30 * 86_400_000L).toString()))
         return writableDatabase.insertWithOnConflict("jobs", null, ContentValues().apply {
             put("token", token); put("who", who); put("kind", kind); put("payload", payload)
             put("created", now); put("expires", now + ttl); put("state", "queued")
@@ -41,8 +43,9 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
         writableDatabase.execSQL("UPDATE jobs SET state='expired',detail='Истёк срок актуальности' WHERE state='queued' AND expires < ?", arrayOf(now))
         readableDatabase.rawQuery("SELECT id,who,kind,payload,created,expires FROM jobs WHERE state='queued' ORDER BY id", null).use { c ->
             while (c.moveToNext()) {
-                if (c.getString(1) in excluded || (c.getString(2) == "notification" && !notificationsReady)) continue
-                val job = ReplyJob(c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getLong(4), c.getLong(5))
+                val identity = canonical(c.getString(1))
+                if (identity in excluded || (c.getString(2) == "notification" && !notificationsReady)) continue
+                val job = ReplyJob(c.getLong(0), identity, c.getString(2), c.getString(3), c.getLong(4), c.getLong(5))
                 state(job.id, "running")
                 return job
             }
@@ -81,10 +84,13 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
         readableDatabase.rawQuery("SELECT state,detail,created FROM outgoing ORDER BY created DESC LIMIT 1", null).use { c ->
             if (c.moveToFirst()) lines.add("Последняя отправка: ${stateLabel(c.getString(0))} · ${c.getString(1)}")
         }
+        readableDatabase.rawQuery("SELECT state,created FROM outgoing WHERE state IN ('sent','delivered','observed') ORDER BY created DESC LIMIT 1", null).use { c ->
+            if(c.moveToFirst()) lines.add("Последнее подтверждение: " + stateLabel(c.getString(0)) + " · " + java.text.SimpleDateFormat("dd.MM HH:mm",java.util.Locale.getDefault()).format(java.util.Date(c.getLong(1))))
+        }
         return lines.joinToString("\n").ifBlank { "Очередь пуста" }
     }
     fun outgoingFor(identity: String): List<String> = readableDatabase.rawQuery(
-        "SELECT created,state,detail FROM outgoing WHERE identity=? OR history_key=? ORDER BY created DESC LIMIT 5", arrayOf(identity, identity)).use { c ->
+        "SELECT created,state,detail FROM outgoing WHERE identity=? ORDER BY created DESC LIMIT 5", arrayOf(identity)).use { c ->
         buildList { while (c.moveToNext()) add(java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(c.getLong(0))) + " · " + stateLabel(c.getString(1)) + c.getString(2).takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()) }
     }
     companion object {

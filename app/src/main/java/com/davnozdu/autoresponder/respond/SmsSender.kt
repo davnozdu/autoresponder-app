@@ -39,7 +39,7 @@ object SmsSender {
             data = android.net.Uri.parse("autoresp://sms/$id/$part/${if(delivery) "delivery" else "sent"}")
             putExtra("outgoing",id); putExtra("part",part); putExtra("delivery",delivery)
         }
-        return PendingIntent.getBroadcast(context,0,i,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return PendingIntent.getBroadcast(context,0,i,PendingIntent.FLAG_UPDATE_CURRENT or if (delivery) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE)
     }
 
     fun segmentCount(context: Context, text: String, subId: Int = -1): Int =
