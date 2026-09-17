@@ -9,8 +9,8 @@ class BackupReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         val app = context.applicationContext
-        // Ресивер экспортирован ради BOOT_COMPLETED, поэтому сюда может прилететь явный интент
-        // от постороннего приложения — обрабатываем только два известных действия.
+        // Private receiver: only system BOOT_COMPLETED and our own PendingIntent.
+        // External apps must not be able to request repeated disk snapshots.
         if (action == Backup.ACTION || action == Intent.ACTION_BOOT_COMPLETED) {
             val pending = goAsync()
             Thread {

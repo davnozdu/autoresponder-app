@@ -12,7 +12,7 @@ data class ManualControl(val until: Long, val cutoff: Long)
 /** Small durable event journal. Messenger snapshots remain disposable tmpfs files. */
 class RuntimeDb internal constructor(context: Context, name: String = "runtime.db") : SQLiteOpenHelper(context, name, null, 1) {
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT UNIQUE, who TEXT, kind TEXT, payload TEXT, created INTEGER, expires INTEGER, state TEXT, detail TEXT DEFAULT '')")
+        db.execSQL("CREATE TABLE jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT UNIQUE, who TEXT, kind TEXT, payload TEXT, created INTEGER, expires INTEGER, state TEXT, detail TEXT DEFAULT '', available INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE INDEX jobs_state ON jobs(state,id)")
         db.execSQL("CREATE TABLE manual(identity TEXT PRIMARY KEY, until_ts INTEGER, cutoff INTEGER)")
         db.execSQL("CREATE TABLE aliases(identity TEXT PRIMARY KEY, canonical TEXT)")
@@ -36,15 +36,16 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
         writableDatabase.execSQL("UPDATE jobs SET state='queued' WHERE state='running'")
         // A crash between an external side effect and its acknowledgement is ambiguous.
         // Never replay it automatically: that could send a second reply or CRM action.
-        writableDatabase.execSQL("UPDATE jobs SET state='uncertain', detail='Перезапуск во время отправки: автоматического повтора нет' WHERE state='sending'")
+        writableDatabase.execSQL("UPDATE jobs SET state='uncertain', detail='Перезапуск во время отправки: автоматического повтора нет' WHERE state IN ('sending','external')")
     }
     @Synchronized fun next(excluded: Set<String>, notificationsReady: Boolean): ReplyJob? {
         val now = System.currentTimeMillis()
         writableDatabase.execSQL("UPDATE jobs SET state='expired',detail='Истёк срок актуальности' WHERE state='queued' AND expires < ?", arrayOf(now))
-        readableDatabase.rawQuery("SELECT id,who,kind,payload,created,expires FROM jobs WHERE state='queued' ORDER BY id", null).use { c ->
+        val seen=excluded.toMutableSet()
+        readableDatabase.rawQuery("SELECT id,who,kind,payload,created,expires,available FROM jobs WHERE state='queued' ORDER BY id", null).use { c ->
             while (c.moveToNext()) {
                 val identity = canonical(c.getString(1))
-                if (identity in excluded || (c.getString(2) == "notification" && !notificationsReady)) continue
+                if (!seen.add(identity) || c.getLong(6)>now || (c.getString(2) == "notification" && !notificationsReady)) continue
                 val job = ReplyJob(c.getLong(0), identity, c.getString(2), c.getString(3), c.getLong(4), c.getLong(5))
                 state(job.id, "running")
                 return job
@@ -57,7 +58,13 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
         writableDatabase.update("jobs", ContentValues().apply { put("state", state); put("detail", detail) }, "id=?", arrayOf(id.toString()))
     }
     @Synchronized fun finish(id: Long) {
-        writableDatabase.execSQL("UPDATE jobs SET state='done',detail=CASE WHEN detail='' THEN 'Обработано по правилам' ELSE detail END WHERE id=? AND state='running'", arrayOf(id))
+        writableDatabase.execSQL("UPDATE jobs SET state='done',detail=CASE WHEN detail='' THEN 'Обработано по правилам' ELSE detail END WHERE id=? AND state IN ('running','external')", arrayOf(id))
+    }
+    @Synchronized fun defer(id: Long, millis: Long) {
+        writableDatabase.execSQL("UPDATE jobs SET state='queued',detail='Ожидает подтверждения предыдущей SMS',available=? WHERE id=?", arrayOf(System.currentTimeMillis()+millis,id))
+    }
+    fun nextDelay(): Long = readableDatabase.rawQuery("SELECT MIN(available) FROM jobs WHERE state='queued' AND available>?", arrayOf(System.currentTimeMillis().toString())).use {
+        if(it.moveToFirst() && !it.isNull(0)) (it.getLong(0)-System.currentTimeMillis()).coerceAtLeast(1) else 0
     }
     fun valid(id: Long): Boolean {
         if (id <= 0) return true

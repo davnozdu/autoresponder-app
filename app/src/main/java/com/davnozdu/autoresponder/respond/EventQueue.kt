@@ -17,6 +17,7 @@ object EventQueue {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val scheduling = Mutex()
     private val active = mutableSetOf<String>()
+    private var wake: Job? = null
     @Volatile private var started = false
     // Short history imports only. Network calls never run in this lane.
     private val history = Channel<suspend () -> Unit>(Channel.UNLIMITED)
@@ -43,7 +44,12 @@ object EventQueue {
             scheduling.withLock {
                 val db = RuntimeDb.get(app)
                 while (active.size < 3) {
-                    val job = db.next(active.map { db.canonical(it) }.toSet(), NotifListenerService.isConnected) ?: break
+                    val job = db.next(active.map { db.canonical(it) }.toSet(), NotifListenerService.isConnected)
+                    if (job == null) {
+                        val wait=db.nextDelay()
+                        if(wait>0) { wake?.cancel(); wake=scope.launch { delay(wait); kick(app) } }
+                        break
+                    }
                     active.add(job.who)
                     scope.launch {
                         try {
@@ -65,6 +71,7 @@ object EventQueue {
             }
         }
     }
+    fun defer(context: Context, id: Long) { RuntimeDb.get(context).defer(id,10_000) }
     fun beforeSend(context: Context, job: Long): Boolean {
         val db = RuntimeDb.get(context)
         if (!db.valid(job)) { db.state(job, "expired", "Ответ устарел во время подготовки"); return false }

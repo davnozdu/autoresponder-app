@@ -161,8 +161,10 @@ object NotifResponder {
         // Считаем ДО обращения к CrmGate: обработав «ДА», он состояние разговора стирает,
         // и после вызова отличить эскалацию от обычного вопроса уже нельзя.
         val crmEscalating = com.davnozdu.autoresponder.crm.CrmGate.isEscalation(context, histKeyEarly, text)
+        com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"external","Обработка CRM")
         val crmReply = com.davnozdu.autoresponder.crm.CrmGate.reply(
             context, s, histKeyEarly, crmPhones, text, inCh, closedReason != null)
+        if (crmReply == null) com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"running")
         if (crmReply != null) {
             NumberLock.withKey(key) {
                 // RCS и SMS Google Messages могут доставить одно сообщение двумя путями;
@@ -187,8 +189,10 @@ object NotifResponder {
                     recordOut(context, inId, inCh, outText)
                     DndStats.onAutoReply(context)
                     NotifListenerService.dismiss(sbn.key)
+                    com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"submitted","CRM: передано кнопке Reply")
                     log.add("NOTIF[$tag] $key — ответ по CRM: $outText")
                 } else {
+                    if (com.davnozdu.autoresponder.store.RuntimeDb.get(context).valid(jobId)) com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"failed","Кнопка Reply недоступна")
                     log.add("NOTIF[$tag] $key — ответ по CRM не ушёл (нет кнопки «Ответить»)")
                 }
             }
@@ -207,6 +211,7 @@ object NotifResponder {
         // Пер-адресатная блокировка (общая с main-полосой по нормализованному номеру):
         // не даём RCS/мессенджеру и SMS/звонку одновременно превысить лимит по одному номеру.
         NumberLock.withKey(key) {
+            if (com.davnozdu.autoresponder.respond.Outgoing.pending(context,key)) { EventQueue.defer(context,jobId); return@withKey }
             // Для Messages пауза: обычное SMS застолбит SmsReceiver, до сюда дойдёт только RCS.
             if (channel == Channel.MESSAGES) delay(2000)
             // Дедуп. Для RCS(MESSAGES) — по номеру+тексту (совпадает с SMS-путём, гасит дубль SMS↔RCS).

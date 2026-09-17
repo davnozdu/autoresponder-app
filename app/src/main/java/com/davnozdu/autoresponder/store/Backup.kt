@@ -50,7 +50,9 @@ object Backup {
         android.database.sqlite.SQLiteDatabase.openDatabase(file,
             android.database.sqlite.SQLiteDatabase.OpenParams.Builder()
                 .setOpenFlags(android.database.sqlite.SQLiteDatabase.OPEN_READONLY)
-                .setSynchronousMode("FULL").build()).use { db ->
+                .setSynchronousMode("FULL")
+                .setErrorHandler { throw android.database.sqlite.SQLiteDatabaseCorruptException("Бэкап повреждён; исходный файл сохранён") }
+                .build()).use { db ->
             db.rawQuery("PRAGMA integrity_check", null).use { c ->
                 check(c.moveToFirst() && c.getString(0) == "ok" && !c.moveToNext()) { "Бэкап повреждён" }
             }

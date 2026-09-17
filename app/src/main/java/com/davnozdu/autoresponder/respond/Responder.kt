@@ -165,10 +165,12 @@ object Responder {
             // CRM: статус заказа по номеру. Отвечает и в рабочее время, если это
             // разрешено тумблером, — поэтому проверяется ДО гейта «сейчас открыто».
             val crmPhones = com.davnozdu.autoresponder.crm.CrmGate.phonesFor(context, norm, null)
+            com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"external","Обработка CRM")
             val crmReply = if (kind == Kind.SMS)
                 com.davnozdu.autoresponder.crm.CrmGate.reply(
                     context, s, norm, crmPhones, incomingText, "sms", closedReason != null)
             else null
+            if (crmReply == null) com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"running")
             if (crmReply != null) {
                 // Дедуп тот же, что у обычного пути: одно входящее SMS приходит и
                 // ресивером, и уведомлением Google Messages. Заявляем его здесь, потому
@@ -191,9 +193,10 @@ object Responder {
                 return@withKey
             }
 
-            if (Handoff.blocked(context, norm, "sms", receivedAt) || Outgoing.pending(context, norm)) {
+            if (Handoff.blocked(context, norm, "sms", receivedAt)) {
                 log.add("$tag $norm — отвечает владелец, автоответ отменён"); return@withKey
             }
+            if (Outgoing.pending(context, norm)) { EventQueue.defer(context,jobId); return@withKey }
             if (!forceReply && closedReason == null) { log.add("$tag $from — открыто, пропуск"); return@withKey }
 
             if (kind == Kind.SMS && !Dedup.claim("sms:$norm:$incomingText")) {

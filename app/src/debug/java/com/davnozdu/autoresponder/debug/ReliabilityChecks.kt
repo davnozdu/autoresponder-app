@@ -35,6 +35,10 @@ object ReliabilityChecks {
             check(a>0 && runtime.enqueue("a","alice","SMS","{}",60000)==-1L)
             check(runtime.next(emptySet(),true)?.id==a)
             check(runtime.next(setOf("alice"),true)?.id==b)
+            runtime.defer(a2,60000)
+            val a3=runtime.enqueue("a3","alice","SMS","{}",60000)
+            check(runtime.next(emptySet(),true)==null) // delayed earlier job blocks later same-person job
+            runtime.writableDatabase.execSQL("UPDATE jobs SET available=0 WHERE id=?",arrayOf(a2))
             runtime.state(a,"sending")
             runtime.recover()
             check(runtime.next(emptySet(),true)?.id==a2) // sending is not replayed

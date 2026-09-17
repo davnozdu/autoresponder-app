@@ -68,7 +68,7 @@
         <receiver android:name=".sms.SmsSentReceiver" android:exported="false" />
 
         <!-- Ежедневный бэкап БД истории (+ перепланирование после перезагрузки) -->
-        <receiver android:name=".store.BackupReceiver" android:exported="true">
+        <receiver android:name=".store.BackupReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
