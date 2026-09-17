@@ -76,6 +76,15 @@ fun StatusScreen() {
                     }
                 }
             }
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text("Обработка и отправка", style=MaterialTheme.typography.titleMedium)
+                    Text(remember(refresh) { com.davnozdu.autoresponder.store.RuntimeDb.get(ctx).diagnostics() })
+                    Text(remember(refresh) { com.davnozdu.autoresponder.store.Backup.health(ctx) })
+                    Text(remember(refresh) { com.davnozdu.autoresponder.store.MsgrBridge.health(ctx) })
+                    Text(remember(refresh) { runCatching { java.io.File(ctx.filesDir,"module-health").readText() }.getOrDefault("Диагностика модуля ещё не получена") })
+                }
+            }
             checks.forEach { c ->
                 Card(
                     Modifier.fillMaxWidth(),
@@ -108,7 +117,7 @@ private fun buildChecks(ctx: Context): List<Check> {
             ctx.startActivity(rm.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING))
     })
     list.add(Check("Доступ к уведомлениям (мессенджеры)",
-        NotificationManagerCompat.getEnabledListenerPackages(ctx).contains(ctx.packageName)) {
+        com.davnozdu.autoresponder.notif.NotifListenerService.isConnected) {
         ctx.startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
     })
     val nm = ctx.getSystemService(NotificationManager::class.java)

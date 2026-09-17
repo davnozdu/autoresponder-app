@@ -108,6 +108,7 @@ fun InboxScreen() {
                                 db.inboxDone(p.number, p.lastIn); reload()
                             }) { Text("Готово") }
                         }
+                        HandoffControl(p.number, p.channel)
                         HorizontalDivider()
                     }
                 }

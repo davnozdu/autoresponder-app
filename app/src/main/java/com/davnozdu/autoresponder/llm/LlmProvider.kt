@@ -9,7 +9,7 @@ interface LlmProvider {
      * @param think разрешить режим размышления (reasoning). Если true — даём большой бюджет
      *   токенов на «мысли», сам ответ всё равно обрезается под лимит SMS вызывающим кодом.
      */
-    fun generate(prompt: String, maxChars: Int, think: Boolean = false): String?
+    fun generate(prompt: String, maxChars: Int, think: Boolean = false, system: String = ""): String?
 }
 
 data class LlmConfig(

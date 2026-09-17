@@ -41,6 +41,6 @@ class SmsReceiver : BroadcastReceiver() {
         // переписка с клиентом, ей нечего делать ни в контексте LLM, ни в лимитах.
         if (SmsCommands.handle(context, sender, body, subId)) return
         HistoryLogger.record(context, sender, "sms", "in", body)
-        Responder.handle(context, sender, body, Kind.SMS, subId)
+        Responder.handle(context, sender, body, Kind.SMS, subId, messages[0].timestampMillis)
     }
 }

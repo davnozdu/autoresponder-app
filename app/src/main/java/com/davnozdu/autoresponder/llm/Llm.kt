@@ -37,7 +37,7 @@ object Llm {
         return s.llmEnabled && (s.llmModel.isNotBlank() || (s.llm2Enabled && s.llm2Model.isNotBlank()))
     }
 
-    fun generate(context: Context, prompt: String, maxChars: Int): String? {
+    fun generate(context: Context, prompt: String, maxChars: Int, system: String = ""): String? {
         val s = Settings(context)
         val primary = s.llmModel.isNotBlank()
         val backup = s.llm2Enabled && s.llm2Model.isNotBlank()
@@ -50,7 +50,7 @@ object Llm {
             try {
                 val out = LlmFactory.create(
                     LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
-                ).generate(prompt, maxChars, s.llmThink)
+                ).generate(prompt, maxChars, s.llmThink, system)
                 if (!out.isNullOrBlank()) return out
                 EventLog(context).add("LLM основной [${s.llmProvider}/${s.llmModel}] пуст/таймаут → резервный")
             } catch (e: Exception) {
@@ -63,7 +63,7 @@ object Llm {
             try {
                 val out = LlmFactory.create(
                     LlmConfig(s.llm2Provider, s.llm2BaseUrl, s.llm2ApiKey, s.llm2Model)
-                ).generate(prompt, maxChars, s.llmThink)
+                ).generate(prompt, maxChars, s.llmThink, system)
                 if (!out.isNullOrBlank()) return out
                 EventLog(context).add("LLM резервный [${s.llm2Provider}/${s.llm2Model}] пуст/таймаут → заглушка")
             } catch (e: Exception) {

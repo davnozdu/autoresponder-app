@@ -235,6 +235,7 @@ object MsgrBridge {
                           p: android.content.SharedPreferences): Int? {
         if (!db.exists()) return null
         val added = WaImporter.import(context, db, channel, since(p, key))
+        p.edit().putString("health_${db.parentFile?.name}", if(added<0) "Ошибка импорта" else "Импорт OK · ${java.text.SimpleDateFormat("dd.MM HH:mm",java.util.Locale.getDefault()).format(java.util.Date())} · +$added").apply()
         if (added < 0) return null
         // Водяной знак двигаем по времени копии, а не по последнему сообщению: сообщений
         // может не быть вовсе, и тогда следующий импорт снова перебирал бы 120 дней.
@@ -246,8 +247,17 @@ object MsgrBridge {
                                p: android.content.SharedPreferences): Int? {
         if (!db.exists()) return null
         val added = TgImporter.import(context, db, since(p, K_TG))
+        p.edit().putString("health_${db.parentFile?.name}", if(added<0) "Ошибка импорта" else "Импорт OK · ${java.text.SimpleDateFormat("dd.MM HH:mm",java.util.Locale.getDefault()).format(java.util.Date())} · +$added").apply()
         if (added < 0) return null
         p.edit().putLong(K_TG, db.lastModifiedSafe()).apply()
         return added
     }
+    fun health(context: Context): String {
+        val p=prefs(context)
+        val response=runCatching { File(dir(context),"response").readText().trim() }.getOrDefault("Нет ответа")
+        return "Мост: $response\n" + listOf("whatsapp","whatsapp2","telegram").joinToString("\n") { tag ->
+            "$tag: " + p.getString("health_$tag", "Ещё не импортирован / источник отсутствует")
+        }
+    }
+
 }

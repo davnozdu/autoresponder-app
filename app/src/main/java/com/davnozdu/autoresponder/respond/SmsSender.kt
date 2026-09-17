@@ -9,35 +9,37 @@ import com.davnozdu.autoresponder.sms.SmsSentReceiver
 /** Отправка ответного SMS многосегментно + отслеживание доставки (повтор при сбое). */
 object SmsSender {
 
-    fun send(context: Context, number: String, text: String, subId: Int = -1, attempt: Int = 0): Int {
+    fun send(context: Context, number: String, text: String, subId: Int = -1, attempt: Int = 0,
+             jobId: Long = 0, historyChannel: String = "", limitKey: String = "", timeoutHours: Int = 1): Int {
+        var outgoing: String? = null
         return try {
             val sm = smsManager(context, subId)
             val parts = sm.divideMessage(text)
-            // Статус запрашиваем только для ОДНОСЕГМЕНТНЫХ сообщений: повтор пересылает текст
-            // целиком, и для многосегментного это продублировало бы уже доставленные части.
-            val sent = ArrayList<PendingIntent?>()
-            for (i in parts.indices) {
-                sent.add(if (i == 0 && parts.size == 1) sentPi(context, number, text, subId, attempt) else null)
+            if (!EventQueue.beforeSend(context, jobId)) return -1
+            val id = Outgoing.create(context, number, "sms", text, parts.size, jobId, historyChannel, limitKey, timeoutHours)
+            outgoing = id
+            val sent = ArrayList<PendingIntent>()
+            val delivered = ArrayList<PendingIntent>()
+            parts.indices.forEach { n ->
+                sent.add(statusPi(context,id,n,false))
+                delivered.add(statusPi(context,id,n,true))
             }
-            sm.sendMultipartTextMessage(number, null, parts, sent, null)
+            sm.sendMultipartTextMessage(number, null, parts, sent, delivered)
             parts.size
         } catch (e: Exception) {
-            // Частая причина — устаревший subId (карту вынули, переключили eSIM):
-            // сбрасываем кэш, чтобы следующая попытка увидела реальный список карт.
+            outgoing?.let { Outgoing.failed(context,it,"${e.javaClass.simpleName}: ${e.message}") }
             com.davnozdu.autoresponder.rules.SimUtil.invalidate()
             -1
         }
     }
 
-    private fun sentPi(context: Context, number: String, text: String, subId: Int, attempt: Int): PendingIntent {
+    private fun statusPi(context: Context, id: String, part: Int, delivery: Boolean): PendingIntent {
         val i = Intent(context, SmsSentReceiver::class.java).apply {
-            action = "com.davnozdu.autoresponder.SMS_SENT"
-            putExtra("number", number); putExtra("text", text)
-            putExtra("subId", subId); putExtra("attempt", attempt)
+            action = if(delivery) "com.davnozdu.autoresponder.SMS_DELIVERED" else "com.davnozdu.autoresponder.SMS_SENT"
+            data = android.net.Uri.parse("autoresp://sms/$id/$part/${if(delivery) "delivery" else "sent"}")
+            putExtra("outgoing",id); putExtra("part",part); putExtra("delivery",delivery)
         }
-        val rc = (number + text + attempt).hashCode()
-        return PendingIntent.getBroadcast(context, rc, i,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return PendingIntent.getBroadcast(context,0,i,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     fun segmentCount(context: Context, text: String, subId: Int = -1): Int =

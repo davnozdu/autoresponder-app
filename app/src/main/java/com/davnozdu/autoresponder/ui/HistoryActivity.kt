@@ -53,7 +53,9 @@ fun HistoryScreen() {
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(0) } // 0=все,1=звонки,2=смс,3=чаты
     var convs by remember { mutableStateOf(listOf<HistItem>()) }
-    var openNumber by remember { mutableStateOf<String?>(null) }
+    val launchIntent = (ctx as? android.app.Activity)?.intent
+    var openNumber by remember { mutableStateOf(launchIntent?.getStringExtra("who")) }
+    var openChannel by remember { mutableStateOf(launchIntent?.getStringExtra("channel") ?: "sms") }
     var openName by remember { mutableStateOf<String?>(null) }
     var thread by remember { mutableStateOf(listOf<HistItem>()) }
     var period by remember { mutableStateOf(0) } // 0=вся,1=24ч,2=7д
@@ -116,7 +118,7 @@ fun HistoryScreen() {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(convs) { c ->
                         Row(Modifier.fillMaxWidth().clickable {
-                            openNumber = c.number; openName = c.name; summary = null
+                            openNumber = c.number; openName = c.name; openChannel = c.channel; summary = null
                         }.padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             val icon = when (c.channel) {
@@ -135,6 +137,9 @@ fun HistoryScreen() {
                     }
                 }
             } else {
+                HandoffControl(openNumber!!, openChannel, launchIntent?.getBooleanExtra("handoff",false) == true)
+                val sends = com.davnozdu.autoresponder.store.RuntimeDb.get(ctx).outgoingFor(openNumber!!)
+                sends.forEach { Text(it, Modifier.padding(horizontal=12.dp), style=MaterialTheme.typography.labelSmall) }
                 Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(period == 0, { period = 0 }, { Text("Вся ветка") })
                     FilterChip(period == 1, { period = 1 }, { Text("24ч") })

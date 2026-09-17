@@ -15,7 +15,7 @@ class BackupReceiver : BroadcastReceiver() {
             val pending = goAsync()
             Thread {
                 try {
-                    if (action == Backup.ACTION) Backup.run(app)
+                    if (action == Backup.ACTION) Backup.run(app, scheduled = true)
                     Backup.schedule(app)  // (пере)планируем следующий
                     // Сводка больше не по будильнику, а по выключению DND. Снимаем тот,
                     // что мог остаться от прошлой версии, — другого BOOT_COMPLETED нет.

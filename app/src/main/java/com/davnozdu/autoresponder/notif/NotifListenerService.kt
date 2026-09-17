@@ -17,6 +17,7 @@ class NotifListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         instance = this
+        com.davnozdu.autoresponder.respond.EventQueue.kick(this)
         AutoNotifications.ensureChannels(this)
         try {
             registerReceiver(dndReceiver, android.content.IntentFilter(
@@ -55,6 +56,9 @@ class NotifListenerService : NotificationListenerService() {
         @Volatile private var instance: NotifListenerService? = null
         /** Подключён ли слушатель на самом деле — уходит в heartbeat для модуля. */
         val isConnected: Boolean get() = instance != null
+        fun current(key: String): StatusBarNotification? = try {
+            instance?.activeNotifications?.firstOrNull { it.key == key }
+        } catch (_: Exception) { null }
         /** Снять уведомление после ответа, чтобы не обрабатывать повторно. */
         fun dismiss(key: String?) {
             if (key == null) return

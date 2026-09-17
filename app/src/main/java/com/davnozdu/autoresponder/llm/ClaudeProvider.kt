@@ -23,7 +23,7 @@ class ClaudeProvider(private val cfg: LlmConfig) : LlmProvider {
         }
     }
 
-    override fun generate(prompt: String, maxChars: Int, think: Boolean): String? {
+    override fun generate(prompt: String, maxChars: Int, think: Boolean, system: String): String? {
         val messages = JSONArray().put(
             JSONObject().put("role", "user").put("content", prompt)
         )
@@ -32,6 +32,7 @@ class ClaudeProvider(private val cfg: LlmConfig) : LlmProvider {
             .put("model", cfg.model.ifBlank { "claude-3-5-haiku-latest" })
             .put("max_tokens", maxTokens)
             .put("messages", messages)
+            .apply { if (system.isNotBlank()) put("system", system) }
             .toString().toRequestBody(Http.JSON.toMediaType())
         val req = Request.Builder().url("${base()}/v1/messages")
             .header("x-api-key", cfg.apiKey)

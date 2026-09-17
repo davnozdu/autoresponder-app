@@ -28,8 +28,10 @@ class OllamaProvider(private val cfg: LlmConfig) : LlmProvider {
         }
     }
 
-    override fun generate(prompt: String, maxChars: Int, think: Boolean): String? {
-        val messages = JSONArray().put(
+    override fun generate(prompt: String, maxChars: Int, think: Boolean, system: String): String? {
+        val messages = JSONArray().apply {
+            if (system.isNotBlank()) put(JSONObject().put("role", "system").put("content", system))
+        }.put(
             JSONObject().put("role", "user").put("content", prompt)
         )
         // think=true: даём большой бюджет токенов (пусть reasoning-модель думает); ответ обрежется под SMS.

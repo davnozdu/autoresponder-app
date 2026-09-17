@@ -31,45 +31,96 @@ object Backup {
             ?.sortedByDescending { it.lastModified() } ?: emptyList()
     } catch (_: Exception) { emptyList() }
 
-    /** Выполнить бэкап сейчас. Возвращает файл или null. */
-    fun run(context: Context): File? {
-        val s = Settings(context)
-        return try {
-            HistoryDb.get(context).checkpoint()  // дозаписать WAL, чтобы копия была полной
-            val src = context.getDatabasePath("history.db")
-            if (!src.exists()) return null
-            val dir = File(DIR); dir.mkdirs()
-            val dst = File(dir, "$PREFIX${stampFmt().format(Date())}$SUFFIX")
-            src.copyTo(dst, overwrite = true)
-            // Ротация: оставить N новейших.
-            val keep = s.backupKeep.coerceAtLeast(1)
-            list().drop(keep).forEach { runCatching { it.delete() } }
-            s.lastBackup = System.currentTimeMillis()
-            EventLog(context).add("BACKUP: сохранён ${dst.name} (${dst.length()/1024} КБ), копий ${list().size}/$keep")
-            dst
-        } catch (e: Exception) {
-            EventLog(context).add("BACKUP ошибка: ${e.javaClass.simpleName}: ${e.message}"); null
+    private fun prefs(context: Context) = context.getSharedPreferences("backup_health", Context.MODE_PRIVATE)
+    private fun day() = java.time.LocalDate.now().toString()
+
+    /** VACUUM INTO gives a transactionally consistent snapshot, without copying a live WAL. */
+    private fun snapshot(context: Context, destination: File) {
+        check(!destination.exists()) { "Файл снимка уже существует" }
+        HistoryDb.get(context).writableDatabase.execSQL("VACUUM INTO ?", arrayOf(destination.absolutePath))
+        validate(destination)
+    }
+
+    fun validate(file: File) {
+        check(file.isFile && file.length() > 0) { "Пустой бэкап" }
+        android.database.sqlite.SQLiteDatabase.openDatabase(file.absolutePath, null,
+            android.database.sqlite.SQLiteDatabase.OPEN_READONLY).use { db ->
+            db.rawQuery("PRAGMA integrity_check", null).use { c ->
+                check(c.moveToFirst() && c.getString(0) == "ok" && !c.moveToNext()) { "Бэкап повреждён" }
+            }
+            check(db.version == 9) { "Неподдерживаемая версия базы: ${db.version}; нужна 9" }
+            for (table in TABLES) db.rawQuery("SELECT * FROM $table LIMIT 0",null).use { }
         }
     }
 
-    /** Восстановить БД из файла бэкапа. */
-    fun restore(context: Context, backup: File): Boolean {
+    @Synchronized fun run(context: Context, scheduled: Boolean = false): File? {
+        val health = prefs(context)
+        if (scheduled && health.getString("daily_day", "") == day()) return null
+        val s = Settings(context)
+        var temporary: File? = null
         return try {
-            if (!backup.exists() || backup.length() == 0L) return false
-            val dbFile = context.getDatabasePath("history.db")
-            HistoryDb.get(context).checkpoint()
-            HistoryDb.reset()  // закрыть соединение
-            // Удалить WAL/SHM, чтобы не смешать со старым состоянием.
-            File(dbFile.path + "-wal").delete()
-            File(dbFile.path + "-shm").delete()
-            backup.copyTo(dbFile, overwrite = true)
-            HistoryDb.get(context)  // пересоздать
-            EventLog(context).add("BACKUP: восстановлено из ${backup.name}")
+            val dir = File(DIR); check(dir.exists() || dir.mkdirs()) { "Не удалось создать папку бэкапов" }
+            val dst = File(dir, "$PREFIX${stampFmt().format(Date())}$SUFFIX")
+            val tmp = File(dir, ".${dst.name}.${System.nanoTime()}.tmp"); temporary = tmp
+            snapshot(context, tmp)
+            check(tmp.renameTo(dst)) { "Не удалось завершить запись бэкапа" }
+            val now = System.currentTimeMillis()
+            health.edit().putLong("verified_at",now).putString("verified_name",dst.name)
+                .putString("daily_day",day()).putString("error", "").commit()
+            s.lastBackup = now
+            list().drop(s.backupKeep.coerceAtLeast(1)).forEach { it.delete() }
+            EventLog(context).add("BACKUP: проверен ${dst.name} (${dst.length()/1024} КБ)")
+            dst
+        } catch (e: Exception) {
+            health.edit().putString("error",e.message ?: e.javaClass.simpleName).apply()
+            EventLog(context).add("BACKUP ошибка: ${e.message}"); null
+        } finally { temporary?.delete() }
+    }
+
+    /** Restore rows transactionally: existing readers/writers keep the same database handle. */
+    @Synchronized fun restore(context: Context, backup: File): Boolean {
+        val staging = File(context.filesDir, "restore-candidate.db")
+        return try {
+            backup.copyTo(staging, overwrite=true)
+            validate(staging)
+            val safetyDir=File(context.filesDir,"restore-safety").apply { mkdirs() }
+            val safety=File(safetyDir,"history-${System.currentTimeMillis()}.db")
+            snapshot(context,safety)
+            val db=HistoryDb.get(context).writableDatabase
+            db.execSQL("ATTACH DATABASE ? AS restore_src",arrayOf(staging.absolutePath))
+            try {
+                // Check exact columns before touching the live database.
+                for(table in TABLES) {
+                    val live=db.rawQuery("SELECT * FROM main.$table LIMIT 0",null).use { it.columnNames.toList() }
+                    val source=db.rawQuery("SELECT * FROM restore_src.$table LIMIT 0",null).use { it.columnNames.toList() }
+                    check(live==source) { "Несовместимая таблица $table" }
+                }
+                db.beginTransaction()
+                try {
+                    for(table in TABLES) {
+                        db.execSQL("DELETE FROM main.$table")
+                        db.execSQL("INSERT INTO main.$table SELECT * FROM restore_src.$table")
+                    }
+                    db.setTransactionSuccessful()
+                } finally { db.endTransaction() }
+            } finally { db.execSQL("DETACH DATABASE restore_src") }
+            PersonThreads.invalidate()
+            safetyDir.listFiles()?.sortedByDescending { it.name }?.drop(3)?.forEach { it.delete() }
+            EventLog(context).add("BACKUP: восстановлено ${backup.name}; предыдущая база сохранена в restore-safety")
             true
         } catch (e: Exception) {
-            EventLog(context).add("BACKUP восстановление ошибка: ${e.message}"); false
-        }
+            EventLog(context).add("BACKUP восстановление отменено: ${e.message}"); false
+        } finally { staging.delete() }
     }
+
+    fun health(context: Context): String {
+        val p=prefs(context)
+        val at=p.getLong("verified_at",0)
+        val error=p.getString("error","").orEmpty()
+        return (if(at==0L) "Проверенный бэкап ещё не создан" else "Проверен: ${p.getString("verified_name","")}") +
+            if(error.isBlank()) "" else "\nОшибка: $error"
+    }
+    private val TABLES=listOf("events","blacklist","qa","bl_pending","sms_hold","inbox_done")
 
     /** Запланировать следующий ежедневный бэкап (идемпотентно). */
     fun schedule(context: Context) {
@@ -79,7 +130,7 @@ object Backup {
         val next = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, s.backupHour.coerceIn(0, 23))
             set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-            if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+            if (timeInMillis <= System.currentTimeMillis() || prefs(context).getString("daily_day", "") == day()) add(Calendar.DAY_OF_YEAR, 1)
         }.timeInMillis
         am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi(context))
     }
