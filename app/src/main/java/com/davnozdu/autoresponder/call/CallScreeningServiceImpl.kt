@@ -37,6 +37,8 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val handleId = callDetails.accountHandle?.id
         bg.launch {
             if (number != null) HistoryLogger.record(app, number, "call", "in", "входящий звонок")
+            // Кто звонит и что у него в работе — из памяти, кеш CRM прогрет при запуске.
+            com.davnozdu.autoresponder.notif.CallerCardNotifier.onIncoming(app, number)
             EventLog(app).add("CALL вход: handle=$handleId -> subId=$callSubId | ${SimUtil.describe(app)}")
         }
         val s = Settings(this)

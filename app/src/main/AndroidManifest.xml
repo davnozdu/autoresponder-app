@@ -67,6 +67,9 @@
         <receiver android:name=".notif.NotifActionReceiver" android:exported="false" />
         <receiver android:name=".sms.SmsSentReceiver" android:exported="false" />
 
+        <!-- Кнопки карточки звонящего: спросить и отправить статус клиенту -->
+        <receiver android:name=".notif.CallerCardReceiver" android:exported="false" />
+
         <!-- Ежедневный бэкап БД истории (+ перепланирование после перезагрузки) -->
         <receiver android:name=".store.BackupReceiver" android:exported="false">
             <intent-filter>

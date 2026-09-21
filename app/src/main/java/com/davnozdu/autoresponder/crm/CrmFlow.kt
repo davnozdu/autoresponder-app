@@ -166,6 +166,12 @@ object CrmFlow {
 
     fun invalidateAll() = cache.clear()
 
+    /** Сколько ответов сейчас в памяти. Ноль — процесс только поднялся, работать нечем. */
+    fun cachedCount(): Int = cache.size
+
+    /** Положить ответ по номеру в память заранее, чтобы карточка звонящего собралась без сети. */
+    fun warm(context: Context, phone: String) { lookup(context, listOf(phone)) }
+
     /** В CRM чешский обозначен как «cz», в приложении — «cs». */
     private fun crmLang(v: String) = if (v.equals("cz", true)) "cs" else v.lowercase()
 

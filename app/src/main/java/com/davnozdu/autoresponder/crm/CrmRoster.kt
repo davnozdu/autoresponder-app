@@ -24,6 +24,17 @@ object CrmRoster {
     // Номер -> отпечаток состояния его записей в CRM (пустая строка, если CRM старая).
     @Volatile private var cache: Map<String, String>? = null
 
+    /**
+     * Когда реестр в последний раз подтверждён — в ОЗУ, а не в настройках. Раньше это
+     * писалось в SharedPreferences на каждом успешном опросе, то есть раз в 15 минут шла
+     * запись на флеш и при ответе 304, когда не менялось вообще ничего. Флеш телефона
+     * ресурс расходуемый, ради счётчика его тратить незачем.
+     *
+     * Побочный эффект ровно тот, что нужен: после перезапуска процесса значение 0, кеш
+     * ответов тоже пуст (он в памяти), и приложение делает один поход за свежим.
+     */
+    @Volatile private var confirmedAt = 0L
+
     private fun file(context: Context) = File(context.applicationContext.filesDir, FILE)
 
     /** Формат файла: `номер` или `номер<TAB>отпечаток` — старые файлы читаются как есть. */
@@ -66,7 +77,10 @@ object CrmRoster {
     fun size(context: Context): Int = load(context).size
 
     fun isFresh(context: Context): Boolean =
-        System.currentTimeMillis() - Settings(context).crmRosterAt < FRESH_MS
+        System.currentTimeMillis() - confirmedAt < FRESH_MS
+
+    /** Номера с активными записями — для прогрева кеша при запуске. */
+    fun numbers(context: Context): List<String> = load(context).keys.toList()
 
     /** Последние 9 цифр — та же договорённость, что у номеров везде в приложении. */
     private fun key(phone: String?): String {
@@ -91,7 +105,11 @@ object CrmRoster {
 
     /** Пора ли синхронизироваться. */
     fun dueForSync(context: Context): Boolean =
-        System.currentTimeMillis() - Settings(context).crmRosterAt >= SYNC_EVERY_MS
+        System.currentTimeMillis() - confirmedAt >= SYNC_EVERY_MS
+
+    /** Сколько прошло с последнего подтверждения реестра — для CrmSyncPolicy. */
+    fun sinceConfirmed(): Long = System.currentTimeMillis() - confirmedAt
+    const val SYNC_INTERVAL_MS = SYNC_EVERY_MS
 
     /**
      * Синхронизация. Вызывается фоном перед обработкой события — реестр маленький,
@@ -114,12 +132,13 @@ object CrmRoster {
                     .forEach { CrmFlow.invalidate(it) }   // заказ закрыт — номер выпал из реестра
                 save(context, res.phones, res.stamps)
                 s.crmRosterEtag = res.etag
-                s.crmRosterAt = System.currentTimeMillis()
+                s.crmRosterAt = System.currentTimeMillis()   // содержимое изменилось — это стоит записи
+                confirmedAt = System.currentTimeMillis()
                 EventLog(context).add("CRM реестр: ${res.phones.size} номеров с активными записями")
                 true
             }
             RosterResult.NotModified -> {
-                s.crmRosterAt = System.currentTimeMillis()
+                confirmedAt = System.currentTimeMillis()      // ничего не менялось — на флеш не пишем
                 true
             }
             is RosterResult.Error -> {
@@ -150,12 +169,13 @@ object CrmRoster {
                 save(context, res.phones, res.stamps)
                 s.crmRosterEtag = res.etag
                 s.crmRosterAt = System.currentTimeMillis()
+                confirmedAt = System.currentTimeMillis()
                 CrmFlow.invalidateAll()
                 null
             }
             // Пустого ETag мы не посылали, так что 304 сюда прийти не может; на всякий
             // случай считаем связь исправной.
-            RosterResult.NotModified -> { s.crmRosterAt = System.currentTimeMillis(); null }
+            RosterResult.NotModified -> { confirmedAt = System.currentTimeMillis(); null }
             is RosterResult.Error -> explain(res.why)
         }
     }
@@ -194,6 +214,7 @@ object CrmRoster {
     fun clear(context: Context) {
         try { file(context).delete() } catch (_: Exception) {}
         cache = null
+        confirmedAt = 0L
         Settings(context).let { it.crmRosterAt = 0L; it.crmRosterEtag = "" }
     }
 }

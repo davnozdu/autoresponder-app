@@ -26,7 +26,9 @@ data class CrmRecord(
     val canAsk: Boolean          // принимает ли запись сообщения
 )
 
-data class CrmLookup(val found: Boolean, val lang: String, val records: List<CrmRecord>)
+data class CrmLookup(val found: Boolean, val lang: String, val records: List<CrmRecord>,
+                     /** Имя клиента для карточки звонящего. Пусто — CRM старой версии. */
+                     val name: String = "")
 
 /**
  * Запросы к CRM мастерской.
@@ -149,7 +151,7 @@ object CrmApi {
                         canAsk = j.optBoolean("can_ask", false)
                     ))
                 }
-                CrmLookup(true, o.optString("lang", ""), out)
+                CrmLookup(true, o.optString("lang", ""), out, o.optString("name").trim())
             }
         } catch (e: Exception) {
             EventLog(context).add("CRM lookup ошибка: ${e.message}")
