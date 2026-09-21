@@ -42,7 +42,11 @@ object CrmPrefetch {
             sinceLastMs = CrmRoster.sinceConfirmed(),
             intervalMs = CrmRoster.SYNC_INTERVAL_MS)
         if (!ok) return
-        if (!CrmRoster.sync(context, force = true)) return
+        // Без force намеренно: force шлёт пустой ETag, сервер всегда отвечает телом, и файл
+        // реестра переписывался бы при каждом запуске процесса — даже когда ничего не менялось.
+        // Принудительность здесь и не нужна: после старта отметка в памяти нулевая, поэтому
+        // dueForSync и так истинно, а сохранённый ETag даст 304 и обойдётся без записи.
+        if (!CrmRoster.sync(context)) return
         val phones = CrmRoster.numbers(context).take(MAX)
         phones.forEach { CrmFlow.warm(context, it) }
         EventLog(context).add("CRM: кеш прогрет по ${CrmFlow.cachedCount()} из ${phones.size} номеров")
