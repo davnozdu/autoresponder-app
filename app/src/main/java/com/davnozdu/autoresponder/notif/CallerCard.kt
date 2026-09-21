@@ -17,13 +17,31 @@ object CallerCard {
         if (records.isEmpty()) return Card(title, number, "")
         val first = records.first()
         val head = listOfNotNull(
-            first.label.ifBlank { null },
+            stage(first).ifBlank { null },
             first.lastLabel?.let { l -> first.lastAt?.let { "$l, $it" } ?: l },
             first.deadline?.let { "срок до $it" }
         ).joinToString(" · ")
-        val rest = records.drop(1).map { "${line(it)} — ${it.label}" }
+        val rest = records.drop(1).map { "${line(it)} — ${stage(it)}" }
         return Card(title, line(first), (listOf(head) + rest).filter { it.isNotBlank() }.joinToString("\n"))
     }
+
+    /**
+     * Этап — мастеру по-русски. CRM присылает `label` уже на языке КЛИЕНТА (он и уходит
+     * клиенту в SMS), а в карточке на телефоне мастера чешская подпись бесполезна.
+     * Код этапа языка не имеет, поэтому переводим по нему. Таблица осознанно дублирует
+     * portal_status_label() из CRM: карточка должна собираться из кеша и без сети.
+     * Незнакомый код — отдаём как есть, лучше чужой язык, чем пустота.
+     */
+    private val RU = mapOf(
+        "order" to mapOf(
+            "new" to "Принят", "diagnostics" to "Диагностика",
+            "waiting_parts" to "Ожидание запчастей", "in_progress" to "В работе",
+            "ready" to "Готов к выдаче", "issued" to "Выдан", "declined" to "Отказ от ремонта"),
+        "claim" to mapOf(
+            "new" to "Подана", "accepted" to "Принята", "review" to "В рассмотрении",
+            "decided" to "Решение принято", "settled" to "Рассмотрена"))
+
+    private fun stage(r: CrmRecord) = RU[r.entity]?.get(r.stage) ?: r.label
 
     /** У рекламации устройства нет — разделитель не должен висеть. */
     private fun line(r: CrmRecord) =
