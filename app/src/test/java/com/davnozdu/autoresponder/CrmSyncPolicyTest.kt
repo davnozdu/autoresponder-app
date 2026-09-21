@@ -57,4 +57,24 @@ class CrmSyncPolicyTest {
         assertTrue(CrmSyncPolicy.isFresh(now = 10 * hour, ramAt = 10 * hour - 60_000,
             flashAt = 0, freshMs = hour))
     }
+
+    @Test fun `звонок с номера вне реестра обновляет реестр — клиента могли завести только что`() {
+        assertTrue(CrmSyncPolicy.shouldRefreshForCall(
+            online = true, inRoster = false, sinceLastMs = 5 * 60_000L, minGapMs = 60_000L))
+    }
+
+    @Test fun `номер уже в реестре — в сеть не идём, отвечаем из памяти`() {
+        assertFalse(CrmSyncPolicy.shouldRefreshForCall(
+            online = true, inRoster = true, sinceLastMs = 60 * 60_000L, minGapMs = 60_000L))
+    }
+
+    @Test fun `без сети звонок реестр не обновляет`() {
+        assertFalse(CrmSyncPolicy.shouldRefreshForCall(
+            online = false, inRoster = false, sinceLastMs = 60 * 60_000L, minGapMs = 60_000L))
+    }
+
+    @Test fun `шквал звонков с чужих номеров не превращается в шквал запросов`() {
+        assertFalse(CrmSyncPolicy.shouldRefreshForCall(
+            online = true, inRoster = false, sinceLastMs = 10_000L, minGapMs = 60_000L))
+    }
 }
