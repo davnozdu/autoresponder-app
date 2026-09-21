@@ -34,4 +34,19 @@ object CrmSyncPolicy {
      */
     fun shouldPersist(now: Long, storedAt: Long, freshMs: Long): Boolean =
         now - storedAt >= freshMs
+
+    /**
+     * Обновить ли реестр из-за входящего звонка.
+     *
+     * Номера нет в реестре — это ещё не «не клиент»: реестр обновляется раз в 15 минут,
+     * а клиента могли завести минуту назад. Ровно на этом карточка и не появилась в первый
+     * раз. Звонок — событие редкое и заметное, одного условного запроса оно стоит, а ETag
+     * делает неизменившийся ответ почти бесплатным.
+     *
+     * Номер уже известен — в сеть не идём вовсе. И шквал звонков с чужих номеров не должен
+     * превращаться в шквал запросов, отсюда минимальный промежуток.
+     */
+    fun shouldRefreshForCall(online: Boolean, inRoster: Boolean,
+                             sinceLastMs: Long, minGapMs: Long): Boolean =
+        online && !inRoster && sinceLastMs >= minGapMs
 }
