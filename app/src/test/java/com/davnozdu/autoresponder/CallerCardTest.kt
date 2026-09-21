@@ -10,8 +10,9 @@ class CallerCardTest {
 
     private fun order(number: String, device: String, label: String,
                       lastLabel: String? = null, lastAt: String? = null,
-                      entity: String = "order", deadline: String? = null) =
-        CrmRecord(entity = entity, id = 1, number = number, device = device, stage = "x",
+                      entity: String = "order", deadline: String? = null,
+                      stage: String = "x") =
+        CrmRecord(entity = entity, id = 1, number = number, device = device, stage = stage,
             label = label, lastLabel = lastLabel, lastAt = lastAt, deadline = deadline,
             price = null, canAsk = true)
 
@@ -46,5 +47,26 @@ class CallerCardTest {
                 order("ZK-2026-0051", "iPhone 15", "Готов к выдаче"))))
         assertEquals("ZK-2026-0042 · MacBook Pro 14", card.summary)
         assertEquals("В работе\nZK-2026-0051 · iPhone 15 — Готов к выдаче", card.details)
+    }
+
+    @Test fun `мастеру этап по-русски, хотя клиенту CRM прислала чешский`() {
+        val card = CallerCard.render("Jan Novák", "+420800777708",
+            CrmLookup(true, "cs", listOf(
+                order("ZK-2026-0042", "MacBook Pro 14", "V práci", stage = "in_progress"))))
+        assertEquals("В работе", card.details)
+    }
+
+    @Test fun `этап рекламации тоже по-русски — коды у заказа и рекламации разные`() {
+        val card = CallerCard.render("Eva Krátká", "+420777111222",
+            CrmLookup(true, "cs", listOf(
+                order("RK-2026-0007", "", "V posouzení", entity = "claim", stage = "review"))))
+        assertEquals("В рассмотрении", card.details)
+    }
+
+    @Test fun `незнакомый код этапа — показываем что прислала CRM, а не пустоту`() {
+        val card = CallerCard.render("Jan Novák", "+420800777708",
+            CrmLookup(true, "cs", listOf(
+                order("ZK-2026-0099", "iPhone 15", "Nový stav", stage = "stage_from_future"))))
+        assertEquals("Nový stav", card.details)
     }
 }
