@@ -91,6 +91,12 @@ object CrmRoster {
         if (CrmSyncPolicy.shouldPersist(now, s.crmRosterAt, FRESH_MS)) s.crmRosterAt = now
     }
 
+    /** Есть ли номер в реестре — без сети и без разбора свежести. */
+    fun contains(context: Context, phone: String): Boolean {
+        val k = key(phone)
+        return k.length >= 6 && k in load(context).keys
+    }
+
     /** Номера с активными записями — для прогрева кеша при запуске. */
     fun numbers(context: Context): List<String> = load(context).keys.toList()
 
@@ -127,10 +133,15 @@ object CrmRoster {
      * Синхронизация. Вызывается фоном перед обработкой события — реестр маленький,
      * а ETag делает неизменившийся ответ бесплатным.
      */
-    fun sync(context: Context, force: Boolean = false): Boolean {
+    /**
+     * @param force послать пустой ETag — сервер ответит телом, и файл перепишется.
+     * @param ignoreThrottle обойти 15-минутный порог, но сохранить ETag: неизменившийся
+     *        реестр вернётся как 304, и на флеш ничего не ляжет.
+     */
+    fun sync(context: Context, force: Boolean = false, ignoreThrottle: Boolean = force): Boolean {
         val s = Settings(context)
         if (!s.crmReady) return false
-        if (!force && !dueForSync(context)) return false
+        if (!ignoreThrottle && !dueForSync(context)) return false
 
         return when (val res = CrmApi.roster(context, if (force) "" else s.crmRosterEtag)) {
             is RosterResult.Ok -> {

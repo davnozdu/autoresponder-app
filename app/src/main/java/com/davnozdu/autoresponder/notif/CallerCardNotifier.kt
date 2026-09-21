@@ -11,6 +11,8 @@ import com.davnozdu.autoresponder.crm.CrmFlow
 import com.davnozdu.autoresponder.crm.CrmLookup
 import com.davnozdu.autoresponder.crm.CrmRoster
 import com.davnozdu.autoresponder.data.Settings
+import com.davnozdu.autoresponder.crm.CrmSyncPolicy
+import com.davnozdu.autoresponder.respond.NetworkUtil
 import com.davnozdu.autoresponder.rules.PhoneMask
 
 /**
@@ -34,7 +36,16 @@ object CallerCardNotifier {
         val number = PhoneMask.normalize(rawNumber) ?: return
         val s = Settings(context)
         if (!s.crmReady) return
-        // Реестр локальный: «клиент или нет» отвечается мгновенно и без сети.
+        // Номера нет в реестре — это ещё не «не клиент»: реестр обновляется раз в 15 минут,
+        // а клиента могли завести минуту назад. Именно на этом карточка не появилась в первый
+        // раз на живом звонке. Обходим порог, но не ETag: неизменившийся реестр вернётся 304.
+        if (CrmSyncPolicy.shouldRefreshForCall(
+                online = NetworkUtil.isOnline(context),
+                inRoster = CrmRoster.contains(context, number),
+                sinceLastMs = CrmRoster.sinceConfirmed(),
+                minGapMs = 60_000L)) {
+            CrmRoster.sync(context, ignoreThrottle = true)
+        }
         if (!CrmRoster.shouldAsk(context, listOf(number))) return
 
         // Сначала заглушка с номером — она появляется мгновенно и не ждёт ничего.
