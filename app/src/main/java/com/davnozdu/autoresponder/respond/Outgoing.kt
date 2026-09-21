@@ -55,15 +55,24 @@ object Outgoing {
         val col = if (delivery) "delivered" else "sent"
         // Duplicate callbacks are idempotent. Successful delivery may follow delayed sent callbacks.
         db.execSQL("UPDATE segments SET $col=? WHERE outgoing=? AND part=? AND $col=0", arrayOf(if (result == 0) 999 else result,id,part))
-        var total=0; var ok=0; var bad=0; var delivered=0
+        var total=0; var ok=0; var bad=0; var delivered=0; var badCode=0
         db.rawQuery("SELECT sent,delivered FROM segments WHERE outgoing=?", arrayOf(id)).use { c ->
-            while(c.moveToNext()) { total++; if(c.getInt(0)==Activity.RESULT_OK) ok++ else if(c.getInt(0)!=0) bad++; if(c.getInt(1)==Activity.RESULT_OK) delivered++ }
+            while(c.moveToNext()) {
+                total++
+                if(c.getInt(0)==Activity.RESULT_OK) ok++ else if(c.getInt(0)!=0) { bad++; if(badCode==0) badCode=c.getInt(0) }
+                if(c.getInt(1)==Activity.RESULT_OK) delivered++
+            }
         }
         if (total == 0) return
+        // Отчёт о доставке приходит ПОСЛЕ подтверждения отправки, поэтому ветка «все ушли»
+        // срабатывает первой и раньше прятала недоставку под «N/N сегментов». Ответ всё равно
+        // засчитываем (повтор дал бы дубль), но владельцу говорим.
+        val badDelivery = delivery && result != Activity.RESULT_OK
         if (bad > 0) {
-            failed(context,id,"Отправлено $ok/$total сегментов; ошибка $result. Автоповтор отключён во избежание дублей")
+            failed(context,id,"Отправлено $ok/$total сегментов; ошибка ${if(badCode==999) 0 else badCode}. Автоповтор отключён во избежание дублей")
         } else if (delivered == total || ok == total) {
-            update(context,id,if(delivered==total) "delivered" else "sent", "$total/$total сегментов")
+            update(context,id,if(delivered==total) "delivered" else "sent",
+                if(badDelivery) "Отправлено $total/$total сегм.; доставка не подтверждена (код $result)" else "$total/$total сегментов")
             db.rawQuery("SELECT identity,body,history_key,limit_key,timeout,committed FROM outgoing WHERE id=?", arrayOf(id)).use { c ->
                 if(c.moveToFirst() && c.getInt(5)==0) {
                     val historyChannel=c.getString(2); val limitKey=c.getString(3)
@@ -75,7 +84,8 @@ object Outgoing {
                     db.execSQL("UPDATE outgoing SET committed=1 WHERE id=?", arrayOf(id))
                 }
             }
-        } else if (delivery && result != Activity.RESULT_OK) {
+            if (badDelivery) alert(context,id,"Отправлено $total/$total сегм., но оператор не подтвердил доставку (код $result)")
+        } else if (badDelivery) {
             update(context,id,"sent","Отправлено; доставка не подтверждена (код $result)")
         }
     }

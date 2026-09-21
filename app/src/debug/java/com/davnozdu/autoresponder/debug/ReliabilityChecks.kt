@@ -75,7 +75,14 @@ object ReliabilityChecks {
             Outgoing.acknowledgement(context,partial,0,-1,false)
             Outgoing.acknowledgement(context,partial,1,1,false)
             check(state(partial)=="failed")
-            println("PASS segmented SMS acknowledgement, duplicate callback, delivery, partial failure")
+            // Все сегменты ушли, но оператор доставку не подтвердил: ответ засчитан, владелец предупреждён.
+            fun detail(id:String)=runtime.readableDatabase.rawQuery("SELECT detail FROM outgoing WHERE id=?",arrayOf(id)).use{it.moveToFirst();it.getString(0)}
+            val undelivered=Outgoing.create(context,"test","sms","undelivered",1,0)
+            Outgoing.acknowledgement(context,undelivered,0,-1,false)
+            check(state(undelivered)=="sent" && !detail(undelivered).contains("не подтверждена"))
+            Outgoing.acknowledgement(context,undelivered,0,64,true)
+            check(state(undelivered)=="sent" && detail(undelivered).contains("не подтверждена"))
+            println("PASS segmented SMS acknowledgement, duplicate callback, delivery, partial failure, unconfirmed delivery")
             history.close(); runtime.close()
             println("ALL DEVICE CHECKS PASSED")
         } catch(t:Throwable) { t.printStackTrace(); kotlin.system.exitProcess(1) }
