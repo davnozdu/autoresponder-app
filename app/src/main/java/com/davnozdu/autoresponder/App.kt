@@ -22,5 +22,8 @@ class App : Application() {
         // Признак жизни для KernelSU-модуля: без него «приложение убито менеджером
         // питания» выглядит снаружи ровно как «всё настроено и работает».
         com.davnozdu.autoresponder.store.Heartbeat.tick(this)
+        // Кеш CRM живёт в ОЗУ и умирает вместе с процессом: наполняем его сразу,
+        // чтобы карточка звонящего собиралась без похода в сеть посреди звонка.
+        com.davnozdu.autoresponder.crm.CrmPrefetch.onStart(this)
     }
 }
