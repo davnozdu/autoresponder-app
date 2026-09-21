@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.app.NotificationCompat
+import androidx.core.text.HtmlCompat
 import com.davnozdu.autoresponder.crm.CrmFlow
 import com.davnozdu.autoresponder.crm.CrmLookup
 import com.davnozdu.autoresponder.crm.CrmRoster
@@ -28,6 +29,7 @@ object CallerCardNotifier {
     const val ACTION_SEND = "com.davnozdu.autoresponder.CARD_SEND"
     const val ACTION_DISMISS = "com.davnozdu.autoresponder.CARD_DISMISS"
     const val EXTRA_NUMBER = "number"
+    private const val GROUP = "caller_card"
 
     fun idFor(number: String) = 3100 + (number.hashCode() and 0xfff)
 
@@ -61,15 +63,27 @@ object CallerCardNotifier {
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Карточка звонящего",
             NotificationManager.IMPORTANCE_HIGH))
         val card = CallerCard.render(lookup?.name?.ifBlank { null }, number, lookup)
+        // Заглушка (данных ещё нет) приходит молча: всплывать должна карточка с именем и
+        // заказом, а не строка с одним номером. Раньше было наоборот — ONLY_ALERT_ONCE
+        // отдавал всплытие заглушке, а полезное приходило тихо и наверх уже не поднималось.
+        val placeholder = lookup == null && !confirming
         val b = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.sym_action_call)
-            .setContentTitle(if (confirming) "Отправить статус — ${card.title}?" else card.title)
+            .setContentTitle(bold(if (confirming) "Отправить статус — ${card.title}?" else card.title))
             .setContentText(if (confirming) "Клиент получит SMS со статусом работ" else card.summary)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            // Своя группа, чтобы Android не сгребал карточку в общую пачку приложения:
+            // из неё её приходилось выискивать листанием.
+            .setGroup(GROUP)
+            .setWhen(System.currentTimeMillis())
+            .setSilent(placeholder)
+            .setOnlyAlertOnce(placeholder)
             .setTimeoutAfter(10 * 60_000L)
         if (card.details.isNotBlank() && !confirming) {
-            b.setStyle(NotificationCompat.BigTextStyle().bigText(card.summary + "\n" + card.details))
+            b.setStyle(NotificationCompat.BigTextStyle()
+                .setBigContentTitle(bold(card.title))
+                .bigText(bold("<b>${esc(card.summary)}</b><br>${esc(card.details).replace("\n", "<br>")}")))
         }
         if (lookup != null && lookup.records.isNotEmpty()) {
             if (confirming) {
@@ -83,6 +97,13 @@ object CallerCardNotifier {
         }
         runCatching { nm.notify(idFor(number), b.build()) }
     }
+
+    /** Имя клиента нужно видеть сразу, поэтому оно жирным. Уведомления понимают часть HTML. */
+    private fun bold(html: String): CharSequence =
+        HtmlCompat.fromHtml(if (html.startsWith("<")) html else "<b>${esc(html)}</b>",
+            HtmlCompat.FROM_HTML_MODE_LEGACY)
+
+    private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     fun sent(context: Context, number: String, text: String) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
