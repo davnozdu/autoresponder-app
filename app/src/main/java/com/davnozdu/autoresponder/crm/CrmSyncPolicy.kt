@@ -18,4 +18,20 @@ object CrmSyncPolicy {
         if (!working) return false
         return sinceLastMs >= intervalMs
     }
+
+    /** Свежесть реестра — по тому источнику, что новее: память процесса или запись на флеше. */
+    fun isFresh(now: Long, ramAt: Long, flashAt: Long, freshMs: Long): Boolean =
+        now - maxOf(ramAt, flashAt) < freshMs
+
+    /**
+     * Пора ли записать отметку на флеш. Пишем только когда записанная уже устарела, то есть
+     * не чаще раза в freshMs.
+     *
+     * Запись нужна ровно для одного случая: процесс перезапустился, сети нет, и без неё
+     * приложение считало бы реестр негодным и дёргало CRM на каждое чужое сообщение.
+     * Писать в момент, когда сети уже давно нет, смысла не имеет — к тому времени отметка
+     * устарела сама. Поэтому пишем, пока знание свежее.
+     */
+    fun shouldPersist(now: Long, storedAt: Long, freshMs: Long): Boolean =
+        now - storedAt >= freshMs
 }

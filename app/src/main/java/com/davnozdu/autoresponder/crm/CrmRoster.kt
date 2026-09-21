@@ -76,8 +76,20 @@ object CrmRoster {
 
     fun size(context: Context): Int = load(context).size
 
-    fun isFresh(context: Context): Boolean =
-        System.currentTimeMillis() - confirmedAt < FRESH_MS
+    fun isFresh(context: Context): Boolean = CrmSyncPolicy.isFresh(
+        System.currentTimeMillis(), confirmedAt, Settings(context).crmRosterAt, FRESH_MS)
+
+    /**
+     * Реестр подтверждён. В память — всегда, на флеш — не чаще раза в час: постоянная
+     * запись изнашивает память телефона, а полностью без неё после перезапуска без сети
+     * реестру нечем было бы верить.
+     */
+    private fun confirm(context: Context) {
+        val now = System.currentTimeMillis()
+        confirmedAt = now
+        val s = Settings(context)
+        if (CrmSyncPolicy.shouldPersist(now, s.crmRosterAt, FRESH_MS)) s.crmRosterAt = now
+    }
 
     /** Номера с активными записями — для прогрева кеша при запуске. */
     fun numbers(context: Context): List<String> = load(context).keys.toList()
@@ -132,13 +144,12 @@ object CrmRoster {
                     .forEach { CrmFlow.invalidate(it) }   // заказ закрыт — номер выпал из реестра
                 save(context, res.phones, res.stamps)
                 s.crmRosterEtag = res.etag
-                s.crmRosterAt = System.currentTimeMillis()   // содержимое изменилось — это стоит записи
-                confirmedAt = System.currentTimeMillis()
+                confirm(context)
                 EventLog(context).add("CRM реестр: ${res.phones.size} номеров с активными записями")
                 true
             }
             RosterResult.NotModified -> {
-                confirmedAt = System.currentTimeMillis()      // ничего не менялось — на флеш не пишем
+                confirm(context)
                 true
             }
             is RosterResult.Error -> {
@@ -168,14 +179,13 @@ object CrmRoster {
             is RosterResult.Ok -> {
                 save(context, res.phones, res.stamps)
                 s.crmRosterEtag = res.etag
-                s.crmRosterAt = System.currentTimeMillis()
-                confirmedAt = System.currentTimeMillis()
+                confirm(context)
                 CrmFlow.invalidateAll()
                 null
             }
             // Пустого ETag мы не посылали, так что 304 сюда прийти не может; на всякий
             // случай считаем связь исправной.
-            RosterResult.NotModified -> { confirmedAt = System.currentTimeMillis(); null }
+            RosterResult.NotModified -> { confirm(context); null }
             is RosterResult.Error -> explain(res.why)
         }
     }
