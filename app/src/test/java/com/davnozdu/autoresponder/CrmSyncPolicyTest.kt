@@ -37,4 +37,24 @@ class CrmSyncPolicyTest {
         assertFalse(CrmSyncPolicy.shouldSync(crmReady = false, online = true, working = true,
             coldCache = true, sinceLastMs = Long.MAX_VALUE, intervalMs = 0))
     }
+
+    private val hour = 60 * 60_000L
+
+    @Test fun `на флеш пишем, только когда записанная отметка уже устарела`() {
+        assertTrue(CrmSyncPolicy.shouldPersist(now = 10 * hour, storedAt = 9 * hour, freshMs = hour))
+        assertFalse(CrmSyncPolicy.shouldPersist(now = 10 * hour, storedAt = 9 * hour + 1, freshMs = hour))
+        assertTrue(CrmSyncPolicy.shouldPersist(now = hour, storedAt = 0, freshMs = hour))
+    }
+
+    @Test fun `свежесть считается по тому, что новее — память или флеш`() {
+        // Процесс только поднялся: в памяти пусто, а на флеше отметка получаса назад.
+        assertTrue(CrmSyncPolicy.isFresh(now = 10 * hour, ramAt = 0,
+            flashAt = 10 * hour - hour / 2, freshMs = hour))
+        // Без сети вторые сутки — верить нечему, спрашиваем CRM на всякий случай.
+        assertFalse(CrmSyncPolicy.isFresh(now = 48 * hour, ramAt = 0,
+            flashAt = 10 * hour, freshMs = hour))
+        // Обычная работа: в памяти отметка свежее записанной.
+        assertTrue(CrmSyncPolicy.isFresh(now = 10 * hour, ramAt = 10 * hour - 60_000,
+            flashAt = 0, freshMs = hour))
+    }
 }
