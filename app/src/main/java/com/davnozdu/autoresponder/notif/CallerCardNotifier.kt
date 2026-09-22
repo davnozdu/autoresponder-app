@@ -56,6 +56,9 @@ object CallerCardNotifier {
         // одного похода, и карточка дополнится, когда он закончится.
         val lookup = runCatching { CrmFlow.lookup(context, listOf(number)) }.getOrNull()
         if (lookup != null) show(context, number, lookup)
+        // Окно поверх экрана звонка — там же, на тех же данных. Если модуль ещё не выдал
+        // разрешение, окно молча не появится, а карточка в шторке останется.
+        CallerOverlay.show(context, number, lookup)
     }
 
     fun show(context: Context, number: String, lookup: CrmLookup?, confirming: Boolean = false) {

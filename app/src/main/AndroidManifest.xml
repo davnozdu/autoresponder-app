@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -66,6 +67,13 @@
 
         <receiver android:name=".notif.NotifActionReceiver" android:exported="false" />
         <receiver android:name=".sms.SmsSentReceiver" android:exported="false" />
+
+        <!-- Снять карточку поверх экрана, когда звонок закончился -->
+        <receiver android:name=".call.CallStateReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
 
         <!-- Кнопки карточки звонящего: спросить и отправить статус клиенту -->
         <receiver android:name=".notif.CallerCardReceiver" android:exported="false" />
