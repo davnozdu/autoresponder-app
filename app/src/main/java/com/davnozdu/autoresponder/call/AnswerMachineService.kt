@@ -61,57 +61,77 @@ class AnswerMachineService : Service() {
         val db = HistoryDb.get(app)
         val start = System.currentTimeMillis()
         val name = nameIn ?: contactName(app, number)
-        val recId = db.amRecInsert(number, name, start, 0, null, reason)
         EventLog(app).add("AM: старт ${number ?: "?"} (${reason})")
 
         registerWatcher(app)
-        val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        try {
+            // 1) Ответить.
+            answerCall(app)
+            if (!offhook) {
+                // Клиент положил трубку раньше, чем мы ответили, или acceptRingingCall не
+                // сработал (гонка/особенности прошивки). Строку в журнал НЕ создаём — иначе
+                // список записей засорялся бы пустышками без файла и без смысла.
+                EventLog(app).add("AM: не ответили вовремя ${number ?: "?"} — пропуск")
+                return
+            }
 
-        // 1) Ответить.
-        answerCall(app)
+            // Запись создаём только теперь, когда звонок реально принят — с этого момента
+            // встроенная автозапись звонилки тоже уже пишет (она стартует по offhook), так что
+            // greeting+бип+сообщение клиента попадут в один файл с самого начала разговора.
+            val recId = db.amRecInsert(number, name, start, 0, null, reason)
 
-        // 2) Заглушить: микрофон (абонент не слышит комнату) и, в тихом режиме, вывод к владельцу.
-        val prevMute = am.isMicrophoneMute
-        runCatching { am.isMicrophoneMute = true }
-        var prevVol = -1
-        if (s.amSilentToOwner) {
-            prevVol = runCatching { am.getStreamVolume(AudioManager.STREAM_VOICE_CALL) }.getOrDefault(-1)
-            runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
-            AmBridge.muteOut(app, true)
+            val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+            // 2) Заглушить: микрофон (абонент не слышит комнату) и, в тихом режиме, вывод к владельцу.
+            val prevMute = am.isMicrophoneMute
+            runCatching { am.isMicrophoneMute = true }
+            var prevVol = -1
+            if (s.amSilentToOwner) {
+                prevVol = runCatching { am.getStreamVolume(AudioManager.STREAM_VOICE_CALL) }.getOrDefault(-1)
+                runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
+                AmBridge.muteOut(app, true)
+            }
+
+            // 3) Приветствие + длинный бип в линию (один файл — без щелчка между проигрываниями).
+            // Доп. пояс безопасности поверх таймаутов внутри Greeting: звонок не должен
+            // зависнуть целиком, если где-то в цепочке TTS/конвертации что-то пойдёт не так.
+            val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) { Greeting.prepare(app, lang, greetingText) }
+            if (greet != null) AmBridge.play(app, greet, 1)
+            else EventLog(app).add("AM: приветствие не готово — молчим")
+
+            // 4) Держим линию под сообщение клиента, пока не положит трубку или не выйдет таймаут.
+            waitIdleOr(s.amMaxMessageSec.coerceIn(5, 300) * 1000L)
+
+            // 5) Отбой, если ещё не завершён.
+            if (!idle) endCall(app)
+
+            // 6) Вернуть звук.
+            AmBridge.stop(app)
+            runCatching { am.isMicrophoneMute = prevMute }
+            if (prevVol >= 0) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, prevVol, 0) }
+            if (s.amSilentToOwner) AmBridge.muteOut(app, false)
+
+            // 7) Дождаться простоя и подобрать запись звонилки → отдельная папка + журнал.
+            waitIdleOr(5_000L)
+            val link = RecordingLinker.linkLatest(app, number, start)
+            if (link != null) db.amRecSetFile(recId, link.first, link.second)
+            else db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+
+            EventLog(app).add("AM: завершено ${number ?: "?"}")
+        } finally {
+            // Гарантированно снимаем ресивер даже при раннем return/исключении — иначе
+            // он остаётся висеть до onDestroy() (не течёт, но грязно).
+            unregisterWatcher(app)
         }
-
-        // 3) Приветствие в линию.
-        val greet = Greeting.prepare(app, lang, greetingText)
-        if (greet != null) AmBridge.play(app, greet, 1)
-        else EventLog(app).add("AM: приветствие не готово — молчим")
-
-        // 4) Держим линию под сообщение клиента, пока не положит трубку или не выйдет таймаут.
-        waitIdleOr(s.amMaxMessageSec.coerceIn(5, 300) * 1000L)
-
-        // 5) Отбой, если ещё не завершён.
-        if (!idle) endCall(app)
-
-        // 6) Вернуть звук.
-        AmBridge.stop(app)
-        runCatching { am.isMicrophoneMute = prevMute }
-        if (prevVol >= 0) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, prevVol, 0) }
-        if (s.amSilentToOwner) AmBridge.muteOut(app, false)
-
-        // 7) Дождаться простоя и подобрать запись звонилки → отдельная папка + журнал.
-        waitIdleOr(5_000L)
-        val link = RecordingLinker.linkLatest(app, number, start)
-        if (link != null) db.amRecSetFile(recId, link.first, link.second)
-        else db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
-
-        unregisterWatcher(app)
-        EventLog(app).add("AM: завершено ${number ?: "?"}")
     }
 
     @android.annotation.SuppressLint("MissingPermission")
     private suspend fun answerCall(ctx: Context) {
         val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         val deadline = System.currentTimeMillis() + 6_000L
-        while (System.currentTimeMillis() < deadline && !offhook) {
+        // Тоже выходим по idle: если клиент положил трубку раньше, чем мы успели ответить,
+        // не стоит долбить acceptRingingCall() ещё несколько секунд впустую.
+        while (System.currentTimeMillis() < deadline && !offhook && !idle) {
             try { tm.acceptRingingCall() } catch (_: Exception) {}
             delay(400)
         }
@@ -143,7 +163,13 @@ class AnswerMachineService : Service() {
             }
         }
         watcher = r
-        ctx.registerReceiver(r, IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED))
+        // На API33+ (targetSdk=35) context-registered receiver БЕЗ флага EXPORTED/NOT_EXPORTED
+        // падает с SecurityException при регистрации — это ловилось бы внешним try/catch в
+        // onStartCommand и тихо обрывало весь сценарий на первом же шаге, ещё до ответа на
+        // звонок. ContextCompat сам решает нужен ли флаг на текущем API.
+        androidx.core.content.ContextCompat.registerReceiver(
+            ctx, r, IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     private fun unregisterWatcher(ctx: Context) {

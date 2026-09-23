@@ -92,7 +92,10 @@ object AudioConvert {
         val out = java.io.ByteArrayOutputStream()
         val info = MediaCodec.BufferInfo()
         var sawInputEos = false; var sawOutputEos = false
-        while (!sawOutputEos) {
+        // Защитный дедлайн: приветствие — секунды звука, а не минуты. Без него кривой/битый
+        // файл мог бы держать декодер в цикле неопределённо долго прямо во время звонка.
+        val deadline = System.currentTimeMillis() + 20_000L
+        while (!sawOutputEos && System.currentTimeMillis() < deadline) {
             if (!sawInputEos) {
                 val inIdx = codec.dequeueInputBuffer(10_000)
                 if (inIdx >= 0) {
