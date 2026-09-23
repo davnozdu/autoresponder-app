@@ -24,17 +24,24 @@ import java.util.Locale
  *   0 — TTS: синтез текста [Settings.amGreetingText] на языке клиента;
  *   1 — файл: пользователь загрузил свой аудиофайл ([Settings.amGreetingFile]).
  *
- * Результат кэшируется в `files/am/greeting.pcm` (уже с бипом); ключ кэша — рядом, чтобы не
- * пересинтезировать/не переконвертировать одно и то же на каждый звонок.
+ * Результат кэшируется в `files/am/greeting-<хэш ключа>.pcm` (уже с бипом) — ОТДЕЛЬНЫЙ файл на
+ * каждую пару (текст, язык)/(файл, mtime), а не один общий слот на все приветствия сразу. Раньше
+ * общее приветствие и ЧС-промпт КАЖДОГО контакта делили один и тот же `greeting.pcm`: смена
+ * промпта у одного контакта пересинтезировала файл под его ключ, но если следующий звонок (от
+ * другого контакта с другим текстом) заставал недописанный/устаревший файл в этом единственном
+ * слоте — ключ не совпадал, но само разделение на слот-на-контакт отсутствовало в принципе,
+ * что и приводило к путанице между приветствиями разных контактов. Имя файла = хэш ключа, так
+ * что коллизии исключены самой конструкцией — сверять ключ отдельно больше не нужно.
  */
 object Greeting {
     private const val DIR = "am"
-    private const val OUT = "greeting.pcm"
-    private const val KEY = "greeting.key"
     // Меняем при правках синтеза/конвертации (напр. фикс скорости TTS), чтобы старый
-    // закэшированный greeting.pcm не пережил обновление приложения — ключ ниже строится
-    // от текста/файла, и без версии сам текст не меняется, значит кэш остался бы прежним.
-    private const val SYNTH_VER = "v2"
+    // закэшированный файл не пережил обновление приложения — ключ ниже строится от текста/
+    // файла, и без версии сам текст не меняется, значит кэш остался бы прежним.
+    private const val SYNTH_VER = "v3"
+    // Сколько разных приветствий держим в кэше одновременно (общее + по контакту ЧС) — с
+    // запасом под редактирование текстов; лишние (самые старые) удаляются при каждом prepare().
+    private const val KEEP_CACHED = 24
 
     // Параметры бипа — «долгий гудок, как у классического автоответчика».
     private const val SR = 48000
@@ -51,31 +58,53 @@ object Greeting {
 
     private fun dir(ctx: Context) = File(ctx.applicationContext.filesDir, DIR).apply { mkdirs() }
 
-    /** @return путь к raw PCM приветствия (речь+бип) или null. [lang] — код языка клиента.
+    /** Имя файла кэша = хэш ключа: разные (текст,язык)/(файл,mtime) физически не могут
+     *  попасть в один слот, поэтому сверять ключ отдельным .key-файлом больше не нужно. */
+    private fun cacheFile(app: Context, key: String): File =
+        File(dir(app), "greeting-${key.hashCode().toUInt().toString(16)}.pcm")
+
+    private fun cleanupOldCaches(app: Context, exceptFile: File) {
+        // Легаси-имя из версии, где все приветствия делили один слот — больше не читается
+        // никем (SYNTH_VER сменился), просто мёртвый груз.
+        File(dir(app), "greeting.pcm").delete(); File(dir(app), "greeting.key").delete()
+        val files = dir(app).listFiles { f -> f.name.startsWith("greeting-") && f.name.endsWith(".pcm") }
+            ?: return
+        if (files.size <= KEEP_CACHED) return
+        files.filter { it != exceptFile }.sortedBy { it.lastModified() }
+            .dropLast((KEEP_CACHED - 1).coerceAtLeast(0)).forEach { it.delete() }
+    }
+
+    /** @return путь к raw PCM приветствия (речь+бип) или null. [lang] — явный язык TTS (код
+     *  "cs"/"en"/"ru"/"uk" или null = язык устройства, ненадёжно — см. [localeFor]).
      *  [overrideText] — приветствие для конкретного клиента (напр. callPrompt из ЧС): если
      *  задано, озвучиваем именно его через TTS, минуя глобальный источник. */
     suspend fun prepare(ctx: Context, lang: String?, overrideText: String? = null): String? {
         val app = ctx.applicationContext
         val s = Settings(app)
-        val out = File(dir(app), OUT)
-        val keyFile = File(dir(app), KEY)
 
         val useFile = overrideText.isNullOrBlank() && s.amGreetingSource == 1 && s.amGreetingFile.isNotBlank()
+        val text: String; val lc: String; val src: File?
         val key: String
         if (useFile) {
-            val src = File(s.amGreetingFile)
+            src = File(s.amGreetingFile)
             if (!src.exists()) { EventLog(app).add("AM приветствие: файла нет — ${s.amGreetingFile}"); return null }
+            text = ""; lc = ""
             key = "$SYNTH_VER:file:${src.absolutePath}:${src.lastModified()}"
-            if (out.exists() && keyFile.readTextSafe() == key) return out.absolutePath
-            if (!AudioConvert.toRawPcm48kStereo(src.absolutePath, out.absolutePath)) {
+        } else {
+            src = null
+            text = (overrideText?.takeIf { it.isNotBlank() }
+                ?: s.amGreetingText).ifBlank { Settings.DEF_AM_GREETING }
+            lc = (lang?.takeIf { it.isNotBlank() } ?: Locale.getDefault().language)
+            key = "$SYNTH_VER:tts:$lc:${text.hashCode()}"
+        }
+        val out = cacheFile(app, key)
+        if (out.exists() && out.length() > 0) return out.absolutePath
+
+        if (useFile) {
+            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, out.absolutePath)) {
                 EventLog(app).add("AM приветствие: не сконвертировал файл ${src.name}"); return null
             }
         } else {
-            val text = (overrideText?.takeIf { it.isNotBlank() }
-                ?: s.amGreetingText).ifBlank { Settings.DEF_AM_GREETING }
-            val lc = (lang ?: Locale.getDefault().language)
-            key = "$SYNTH_VER:tts:$lc:${text.hashCode()}"
-            if (out.exists() && keyFile.readTextSafe() == key) return out.absolutePath
             val wav = synthTts(app, text, lc) ?: run {
                 EventLog(app).add("AM приветствие: TTS недоступен/не ответил вовремя"); return null
             }
@@ -87,7 +116,7 @@ object Greeting {
         // даёт правильную склейку без перекодирования и без щелчка на стыке (есть fade).
         try { FileOutputStream(out, true).use { it.write(beepTailPcm()) } }
         catch (e: Exception) { EventLog(app).add("AM приветствие: не добавил бип (${e.message})") }
-        keyFile.writeText(key)
+        cleanupOldCaches(app, out)
         return out.absolutePath
     }
 
@@ -111,8 +140,6 @@ object Greeting {
         return bb.array()
     }
 
-    private fun File.readTextSafe(): String = try { if (exists()) readText() else "" } catch (e: Exception) { "" }
-
     private fun localeFor(lang: String): Locale = when (lang.lowercase()) {
         "ru" -> Locale("ru"); "cs" -> Locale("cs"); "uk" -> Locale("uk")
         "en" -> Locale.ENGLISH; else -> Locale.getDefault()
@@ -125,7 +152,16 @@ object Greeting {
         val inited = withTimeoutOrNull(TTS_INIT_TIMEOUT_MS) { ready.await() } ?: false
         if (!inited) { runCatching { tts.shutdown() }; return null }
         try {
-            tts.language = localeFor(lang)
+            // Раньше результат setLanguage() не проверялся (просто `tts.language = ...`) — если
+            // у движка нет голоса для нужного языка (LANG_MISSING_DATA/LANG_NOT_SUPPORTED), он
+            // МОЛЧА озвучивает текущим/движковым голосом (обычно английским), и по звуку это
+            // неотличимо от «язык проигнорирован». Логируем явно, чтобы это было видно сразу,
+            // а не гадать по тому, что «приветствие вышло на английском».
+            val langRes = tts.setLanguage(localeFor(lang))
+            if (langRes == TextToSpeech.LANG_MISSING_DATA || langRes == TextToSpeech.LANG_NOT_SUPPORTED) {
+                EventLog(ctx).add("AM приветствие: нет голоса TTS для языка «$lang» (код $langRes) — " +
+                    "звучит текущим голосом движка, не запрошенным")
+            }
             // Без явного вызова движок берёт скорость/высоту тона из системных Специальных
             // возможностей владельца (Google TTS так и делает) — а это звучит для ПОСТОРОННЕГО
             // звонящего, и личная настройка владельца («побыстрее для чтения экрана») тут

@@ -281,6 +281,14 @@ class Settings(context: Context) {
         get() = sp.getString(K_AM_GREET_TEXT, DEF_AM_GREETING) ?: DEF_AM_GREETING
         set(v) = sp.edit().putString(K_AM_GREET_TEXT, v).apply()
 
+    /** Явный язык TTS общего приветствия: "" = авто (язык устройства — ненадёжно, если у
+     *  движка TTS нет нужного голоса, он молча озвучивает чем есть, обычно английским; см.
+     *  Greeting.kt). Раньше language клиента никак не определялся — always null — и общее, и
+     *  каждый ЧС-прompt озвучивались одним и тем же непредсказуемым голосом. */
+    var amGreetingLang: String
+        get() = sp.getString(K_AM_GREET_LANG, "") ?: ""
+        set(v) = sp.edit().putString(K_AM_GREET_LANG, v).apply()
+
     /** Сколько секунд держим линию под сообщение клиента, затем отбой. */
     var amMaxMessageSec: Int
         get() = sp.getInt(K_AM_MSG_SEC, 45)
@@ -676,6 +684,7 @@ class Settings(context: Context) {
         private const val K_AM_GREET_SRC = "am_greet_src"
         private const val K_AM_GREET_FILE = "am_greet_file"
         private const val K_AM_GREET_TEXT = "am_greet_text"
+        private const val K_AM_GREET_LANG = "am_greet_lang"
         private const val K_AM_MSG_SEC = "am_msg_sec"
         private const val K_AM_SILENT = "am_silent"
         private const val K_SMS_SLOT = "sms_slot"

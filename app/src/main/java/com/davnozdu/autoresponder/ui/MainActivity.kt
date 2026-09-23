@@ -339,11 +339,11 @@ fun AppScreen() {
                 Spacer(Modifier.height(8.dp))
                 Text("Входящий звонок в закрытом режиме (DND/нерабочее время):",
                     style = MaterialTheme.typography.labelMedium)
-                var closedMode by remember { mutableStateOf(s.callClosedMode) }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(closedMode == 0, { closedMode = 0; s.callClosedMode = 0 }, { Text("Ответ SMS") })
-                    FilterChip(closedMode == 1, { closedMode = 1; s.callClosedMode = 1 }, { Text("Автоответчик") })
-                }
+                var useAmForClosed by remember { mutableStateOf(s.callClosedMode == 1) }
+                SwitchRow(
+                    if (useAmForClosed) "Использовать автоответчик: ДА" else "Использовать автоответчик: НЕТ (ответ SMS)",
+                    useAmForClosed
+                ) { useAmForClosed = it; s.callClosedMode = if (it) 1 else 0 }
                 Text("Чёрный список всегда идёт на голосовой автоответчик, независимо от этого.",
                     style = MaterialTheme.typography.bodySmall)
 
@@ -358,6 +358,18 @@ fun AppScreen() {
                     var gText by remember { mutableStateOf(s.amGreetingText) }
                     OutlinedTextField(gText, { gText = it; s.amGreetingText = it },
                         label = { Text("Текст приветствия") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(4.dp))
+                    Text("Язык голоса TTS (важно указать явно — иначе движок может молча " +
+                        "озвучить не тем голосом, если языка устройства у него нет):",
+                        style = MaterialTheme.typography.bodySmall)
+                    var gLang by remember { mutableStateOf(s.amGreetingLang) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LangChip("Авто", "", gLang) { gLang = it; s.amGreetingLang = it }
+                        LangChip("CS", "cs", gLang) { gLang = it; s.amGreetingLang = it }
+                        LangChip("RU", "ru", gLang) { gLang = it; s.amGreetingLang = it }
+                        LangChip("EN", "en", gLang) { gLang = it; s.amGreetingLang = it }
+                        LangChip("UK", "uk", gLang) { gLang = it; s.amGreetingLang = it }
+                    }
                 } else {
                     var gFile by remember { mutableStateOf(s.amGreetingFile) }
                     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -1270,6 +1282,13 @@ private fun ExpandableSection(
             if (open) content()
         }
     }
+}
+
+/** Выбор явного языка TTS-приветствия — "" (Авто) полагается на язык устройства, что
+ *  ненадёжно, если у движка TTS нет для него голоса (см. Greeting.synthTts). */
+@Composable
+internal fun LangChip(label: String, code: String, current: String, onSelect: (String) -> Unit) {
+    FilterChip(current == code, { onSelect(code) }, { Text(label) })
 }
 
 @Composable

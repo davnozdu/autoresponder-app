@@ -120,14 +120,15 @@ class AnswerMachineService : Service() {
 
             // Своя запись (pal_record, incall-record тап) — параллельно штатной с самого
             // начала звонка, не дожидаясь проверки: штатный рекордер OxygenOS иногда (~1
-            // звонок из 4) не подхватывается вовсе, без ошибки и без файла. Место есть,
-            // поэтому пишем оба и после звонка оставляем один (см. шаг 7).
+            // звонок из 4) не подхватывается вовсе, без ошибки и без файла. Буфер лежит в
+            // ОЗУ на стороне демона (tmpfs моста мессенджеров) — на флеш ничего не пишется,
+            // пока после звонка не выяснится, что штатная запись не появилась (см. шаг 7).
             val safeNum = (number ?: "unknown").replace(Regex("[^+0-9]"), "")
             val ownRecPath = "/sdcard/AutoResponder/recordings/" +
                 java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(start)) +
                 "_${safeNum}_own.wav"
             val maxSec = s.amMaxMessageSec.coerceIn(5, 300)
-            AmBridge.recStart(app, ownRecPath, maxSec)
+            AmBridge.recStart(app, maxSec)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -183,22 +184,24 @@ class AnswerMachineService : Service() {
             AmBlockOverlay.hide(app)
 
             // 7) Дождаться простоя и подобрать запись звонилки → отдельная папка + журнал.
-            // Своя (pal_record) уже лежит по ownRecPath — если штатная нашлась, она в
-            // приоритете (её и видит стандартный плеер/путь), а свою как дубль удаляем;
-            // не нашлась — используем свою.
+            // Своя (pal_record) лежит в ОЗУ-буфере демона, ещё не на диске — recSave() перенесёт
+            // её на диск, только если штатная не нашлась; иначе recDiscard() просто сотрёт буфер,
+            // не трогая флеш вовсе.
             waitIdleOr(5_000L)
             val link = RecordingLinker.linkLatest(app, number, start)
-            val ownFile = java.io.File(ownRecPath)
             if (link != null) {
                 db.amRecSetFile(recId, link.first, link.second)
-                runCatching { ownFile.delete() }
-            } else if (ownFile.exists() && ownFile.length() > 44) {
-                val dur = RecordingLinker.durationMs(ownFile.absolutePath)
-                db.amRecSetFile(recId, ownFile.absolutePath, dur)
-                EventLog(app).add("AM запись: штатный рекордер не сработал — оставил свою (${dur/1000}s)")
+                AmBridge.recDiscard(app)
             } else {
-                runCatching { ownFile.delete() }
-                db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+                AmBridge.recSave(app, ownRecPath)
+                val ownFile = java.io.File(ownRecPath)
+                if (ownFile.exists() && ownFile.length() > 44) {
+                    val dur = RecordingLinker.durationMs(ownFile.absolutePath)
+                    db.amRecSetFile(recId, ownFile.absolutePath, dur)
+                    EventLog(app).add("AM запись: штатный рекордер не сработал — оставил свою (${dur/1000}s)")
+                } else {
+                    db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+                }
             }
 
             EventLog(app).add("AM: завершено ${number ?: "?"}")
@@ -243,15 +246,18 @@ class AnswerMachineService : Service() {
 
     /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость (что-то сбрасывает
      *  их при смене состояния экрана, разовой установки недостаточно) и повторяет [AmBridge.redim]
-     *  (DisplayManager перебивает подсветку через пару секунд). Тик — это и окно возможной
-     *  слышимости владельцу между переустановками, поэтому короткий. */
+     *  (DisplayManager перебивает подсветку через пару секунд). Тик — это и окно видимой глазом
+     *  вспышки подсветки между переустановками (экран держим логически «включённым» намеренно —
+     *  настоящий сон меняет маршрут звука, см. комментарий у шага 6), поэтому короткий: 30мс
+     *  вместо 200 — дешёвая операция (redim теперь ждёт ack от демона, см. AmBridge.write), а
+     *  окно вспышки почти не видно глазом вместо заметного мигания. */
     private suspend fun waitIdleKeepingSilent(budgetMs: Long, app: Context, am: AudioManager, silentToOwner: Boolean) {
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline && !idle) {
             runCatching { am.isMicrophoneMute = true }
             if (silentToOwner) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
             AmBridge.redim(app)
-            delay(200)
+            delay(30)
         }
     }
 

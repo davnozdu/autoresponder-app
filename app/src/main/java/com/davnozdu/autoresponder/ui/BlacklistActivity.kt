@@ -183,12 +183,30 @@ fun BlacklistScreen() {
 
     editingCall?.let { e ->
         var text by remember(e.id) { mutableStateOf(e.callPrompt ?: DEFAULT_CALL_PROMPT) }
+        // У каждого контакта — свой явный язык озвучки, независимо от общего приветствия и от
+        // других контактов: раньше язык нигде явно не задавался (всегда null → язык устройства),
+        // из-за чего все ЧС-промпты звучали одним и тем же непредсказуемым голосом независимо от
+        // того, на каком языке был написан текст. См. Greeting.kt.
+        var lang by remember(e.id) { mutableStateOf(e.callPromptLang) }
         AlertDialog(
             onDismissRequest = { editingCall = null },
             title = { Text("Промпт звонка: ${e.name ?: e.identity}") },
-            text = { OutlinedTextField(text, { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 3) },
+            text = {
+                Column {
+                    OutlinedTextField(text, { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 3)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Язык голоса", style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LangChip("Авто", "", lang) { lang = it }
+                        LangChip("CS", "cs", lang) { lang = it }
+                        LangChip("RU", "ru", lang) { lang = it }
+                        LangChip("EN", "en", lang) { lang = it }
+                        LangChip("UK", "uk", lang) { lang = it }
+                    }
+                }
+            },
             confirmButton = { TextButton(onClick = {
-                db.blacklistUpsert(e.copy(callPrompt = text)); editingCall = null; reload()
+                db.blacklistUpsert(e.copy(callPrompt = text, callPromptLang = lang)); editingCall = null; reload()
             }) { Text("Сохранить") } },
             dismissButton = { TextButton(onClick = { editingCall = null }) { Text("Отмена") } }
         )

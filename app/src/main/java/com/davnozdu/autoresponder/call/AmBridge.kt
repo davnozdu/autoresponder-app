@@ -84,10 +84,18 @@ object AmBridge {
 
     /** Своя запись звонка (incall-record тап через pal_record) — fallback на случай, если
      *  штатный рекордер OxygenOS не подхватится (видели ~1 звонок из 4 без файла вовсе).
-     *  Пишем параллельно штатному с самого начала звонка; приложение решает после звонка,
-     *  какой из двух файлов оставить. [maxSeconds] — тот же лимит, что и на ожидание сообщения. */
-    fun recStart(ctx: Context, wavPath: String, maxSeconds: Int) =
-        write(ctx, "recstart $wavPath ${maxSeconds.coerceAtLeast(5)}")
+     *  Пишем параллельно штатному с самого начала звонка в буфер (в ОЗУ, если tmpfs моста
+     *  смонтирован — на флеш ничего не пишется, пока не понадобится); приложение решает после
+     *  звонка через [recSave]/[recDiscard]. [maxSeconds] — тот же лимит, что и на ожидание
+     *  сообщения. */
+    fun recStart(ctx: Context, maxSeconds: Int) =
+        write(ctx, "recstart ${maxSeconds.coerceAtLeast(5)}")
 
     fun recStop(ctx: Context) = write(ctx, "recstop")
+
+    /** Штатный рекордер не сработал — перенести буфер на диск по [dstPath]. */
+    fun recSave(ctx: Context, dstPath: String) = write(ctx, "recsave $dstPath")
+
+    /** Штатный рекордер сработал — свой буфер не нужен, стереть без записи на диск. */
+    fun recDiscard(ctx: Context) = write(ctx, "recdiscard")
 }

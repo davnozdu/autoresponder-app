@@ -55,7 +55,8 @@ class CallScreeningServiceImpl : CallScreeningService() {
             // Рингтон глушим (setSilenceCall) и отвечаем сами; callPrompt — приветствие клиента.
             respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
             EventLog(this).add("CALL ${number ?: "?"} — ЧС → автоответчик")
-            AnswerMachineService.start(this, number, bl.name, "blacklist", null, bl.callPrompt)
+            AnswerMachineService.start(this, number, bl.name, "blacklist",
+                bl.callPromptLang.ifBlank { null }, bl.callPrompt)
             return
         }
 
@@ -68,7 +69,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
                 // Тумблер = голосовой автоответчик: глушим рингтон, отвечаем и обрабатываем сами.
                 respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
                 EventLog(this).add("CALL ${number ?: "?"} — закрыто → автоответчик")
-                AnswerMachineService.start(this, number, null, "closed", null, null)
+                AnswerMachineService.start(this, number, null, "closed", s.amGreetingLang.ifBlank { null }, null)
             } else {
                 // Тумблер = SMS (как раньше): отклоняем без записи в пропущенные + авто-SMS.
                 val response = CallResponse.Builder()

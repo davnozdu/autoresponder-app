@@ -11,7 +11,11 @@ data class BlackEntry(
     val onSms: Boolean = true, val onMsgr: Boolean = true,
     val onCalls: Boolean = true, val callPrompt: String? = null,
     /** Момент, до которого действует запись; 0 — навсегда. */
-    val untilTs: Long = 0L
+    val untilTs: Long = 0L,
+    /** Язык TTS для [callPrompt]: "" = авто (язык устройства — ненадёжно, см. Greeting.kt),
+     *  иначе явный код ("cs","en","ru","uk"). Независим от общего приветствия — у каждого
+     *  контакта в ЧС может быть свой язык. */
+    val callPromptLang: String = ""
 ) {
     fun expired(now: Long = System.currentTimeMillis()): Boolean = untilTs in 1..now
 }
@@ -37,7 +41,7 @@ data class AmRec(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb internal constructor(context: Context, name: String = "history.db") :
-    SQLiteOpenHelper(context.applicationContext, name, null, 10) {
+    SQLiteOpenHelper(context.applicationContext, name, null, 11) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -152,6 +156,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
                 "on_msgr INTEGER NOT NULL DEFAULT 1," +
                 "on_calls INTEGER NOT NULL DEFAULT 1," +
                 "call_prompt TEXT," +
+                "call_prompt_lang TEXT," +
                 "until_ts INTEGER NOT NULL DEFAULT 0)"
         )
     }
@@ -179,6 +184,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         if (oldV < 8) createSmsHold(db)
         if (oldV < 9) createInboxDone(db)
         if (oldV < 10) createAmRec(db)
+        if (oldV < 11) addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt_lang TEXT")
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
@@ -191,6 +197,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_msgr INTEGER NOT NULL DEFAULT 1")
         addColumn(db, "ALTER TABLE blacklist ADD COLUMN on_calls INTEGER NOT NULL DEFAULT 1")
         addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt TEXT")
+        addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt_lang TEXT")
         addColumn(db, "ALTER TABLE blacklist ADD COLUMN until_ts INTEGER NOT NULL DEFAULT 0")
         addColumn(db, "ALTER TABLE events ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
     }
@@ -470,12 +477,13 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     // --- Чёрный список ---
     fun blacklistAll(): List<BlackEntry> {
         val res = ArrayList<BlackEntry>()
-        readableDatabase.rawQuery("SELECT _id,identity,name,via_llm,prompt,on_sms,on_msgr,on_calls,call_prompt,until_ts FROM blacklist ORDER BY _id DESC", null).use { c ->
+        readableDatabase.rawQuery("SELECT _id,identity,name,via_llm,prompt,on_sms,on_msgr,on_calls,call_prompt,until_ts,call_prompt_lang FROM blacklist ORDER BY _id DESC", null).use { c ->
             while (c.moveToNext()) res.add(BlackEntry(
                 c.getLong(0), c.getString(1), if (c.isNull(2)) null else c.getString(2),
                 c.getInt(3) == 1, if (c.isNull(4)) null else c.getString(4),
                 c.getInt(5) == 1, c.getInt(6) == 1, c.getInt(7) == 1,
-                if (c.isNull(8)) null else c.getString(8), c.getLong(9)))
+                if (c.isNull(8)) null else c.getString(8), c.getLong(9),
+                if (c.isNull(10)) "" else c.getString(10)))
         }
         return res
     }
@@ -486,7 +494,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
             put("via_llm", if (e.viaLlm) 1 else 0); put("prompt", e.prompt)
             put("on_sms", if (e.onSms) 1 else 0); put("on_msgr", if (e.onMsgr) 1 else 0)
             put("on_calls", if (e.onCalls) 1 else 0); put("call_prompt", e.callPrompt)
-            put("until_ts", e.untilTs)
+            put("call_prompt_lang", e.callPromptLang); put("until_ts", e.untilTs)
         }
         if (e.id > 0) writableDatabase.update("blacklist", cv, "_id=?", arrayOf(e.id.toString()))
         else writableDatabase.insert("blacklist", null, cv)
