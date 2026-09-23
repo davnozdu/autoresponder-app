@@ -81,11 +81,12 @@ class AnswerMachineService : Service() {
             val recId = db.amRecInsert(number, name, start, 0, null, reason)
 
             // Полноэкранная накладка — глотает касания, чтобы владелец случайно не сбросил
-            // звонок; плюс best-effort выключение экрана (если сейчас включён — InCallUI
-            // будит экран на входящий сам, мы этого не контролируем).
+            // звонок. Экран НЕ трогаем здесь одноразово: Telecom/InCallUI сам включает экран
+            // под входящий звонок чуть ПОЗЖЕ этой точки (гонка — если проверить isInteractive
+            // прямо сейчас, поймаем «ещё выключен» и ничего не пошлём, а система следом всё
+            // равно его включит). Вместо этого повторяем попытку каждый тик в цикле ожидания
+            // ниже — демон сам проверяет реальное состояние перед нажатием (безопасно).
             AmBlockOverlay.show(app)
-            val pm = app.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-            if (pm.isInteractive) AmBridge.screenOff(app)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -111,7 +112,7 @@ class AnswerMachineService : Service() {
             // экрана) — владелец начал слышать абонента. Что-то (InCallUI/OxygenOS) сбрасывает
             // громкость/мьют при смене состояния экрана. Вместо попытки понять точную причину —
             // просто переустанавливаем заглушку на каждом тике ожидания, а не один раз в начале.
-            waitIdleKeepingSilent(s.amMaxMessageSec.coerceIn(5, 300) * 1000L, am, s.amSilentToOwner)
+            waitIdleKeepingSilent(s.amMaxMessageSec.coerceIn(5, 300) * 1000L, app, am, s.amSilentToOwner)
 
             // 5) Отбой, если ещё не завершён.
             if (!idle) endCall(app)
@@ -166,14 +167,17 @@ class AnswerMachineService : Service() {
         while (System.currentTimeMillis() < deadline && !idle) delay(300)
     }
 
-    /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость — см. комментарий
-     *  на месте вызова: что-то сбрасывает их при смене состояния экрана, разово недостаточно. */
-    private suspend fun waitIdleKeepingSilent(budgetMs: Long, am: AudioManager, silentToOwner: Boolean) {
+    /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость (что-то сбрасывает
+     *  их при смене состояния экрана, разовой установки недостаточно) и повторяет попытку
+     *  выключить экран (демон безопасно проверяет реальное состояние перед нажатием). Тик
+     *  короче секунды — это и окно возможной слышимости владельцу между переустановками. */
+    private suspend fun waitIdleKeepingSilent(budgetMs: Long, app: Context, am: AudioManager, silentToOwner: Boolean) {
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline && !idle) {
             runCatching { am.isMicrophoneMute = true }
             if (silentToOwner) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
-            delay(1_000)
+            AmBridge.screenOff(app)
+            delay(400)
         }
     }
 
