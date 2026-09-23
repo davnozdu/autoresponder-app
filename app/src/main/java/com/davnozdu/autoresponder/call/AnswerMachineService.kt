@@ -67,6 +67,11 @@ class AnswerMachineService : Service() {
         EventLog(app).add("AM ТЕСТ: старт на ${seconds}с (blockon: подсветка+тач)")
         AmBridge.blockOn(app, android.os.Process.myPid())
         AmBlockOverlay.show(app)
+        // Временная проверка гонки play->redim (см. AmBridge.write): шлём play несуществующим
+        // путём (демон ответит err nofile — это ожидаемо и не мешает проверке) вплотную перед
+        // тем же циклом redim, что и в runFlow, чтобы поймать live-звонком найденную потерю
+        // команды без реального звонка.
+        AmBridge.play(app, "/data/local/tmp/am_race_test_nofile.pcm", 1)
         try {
             val deadline = System.currentTimeMillis() + seconds * 1000L
             while (System.currentTimeMillis() < deadline) {

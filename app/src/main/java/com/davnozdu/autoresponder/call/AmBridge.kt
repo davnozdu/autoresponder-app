@@ -24,16 +24,36 @@ object AmBridge {
 
     private fun dir(ctx: Context) = File(ctx.applicationContext.filesDir, DIR)
     private fun req(ctx: Context) = File(dir(ctx), "req")
+    private fun resp(ctx: Context) = File(dir(ctx), "resp")
 
     /** Есть ли демон модуля: он создаёт папку при старте. Приложение всё равно создаёт её
      *  само, чтобы записать запрос — inotifyd подхватит, когда/если модуль запустится. */
     fun available(ctx: Context): Boolean = dir(ctx).isDirectory
 
+    /** `req` — один файл, не очередь: если следующая команда пишется раньше, чем демон успел
+     *  прочитать предыдущую, она просто перетирает её без следа. Поймали на живом звонке:
+     *  redim() в цикле ожидания шёл сразу за play() без всякой паузы (раньше между командами
+     *  естественно была пауза, с появлением блокировки экрана — не стало) — play терялся,
+     *  приветствие не звучало, хотя демон был жив и остальные команды исправно доходили.
+     *  Поэтому здесь ждём ответ демона (reply() в answermachine.sh пишет его на КАЖДУЮ
+     *  команду) перед тем как разрешить следующей команде перезаписать req; не дождались —
+     *  не страшно, отвечаем по факту таймаута и едем дальше (демон может быть не установлен). */
+    private const val ACK_TIMEOUT_MS = 400L
+    private const val ACK_POLL_MS = 15L
+
     private fun write(ctx: Context, line: String) {
         val app = ctx.applicationContext
         try {
             val d = dir(app); if (!d.isDirectory) d.mkdirs()
+            val respFile = resp(app)
+            val before = runCatching { respFile.readText() }.getOrDefault("")
             req(app).writeText(line)
+            val deadline = System.currentTimeMillis() + ACK_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline) {
+                val now = runCatching { respFile.readText() }.getOrDefault("")
+                if (now.isNotEmpty() && now != before) return
+                Thread.sleep(ACK_POLL_MS)
+            }
         } catch (e: Exception) {
             EventLog(app).add("AM мост: не удалось послать «$line» (${e.message})")
         }
