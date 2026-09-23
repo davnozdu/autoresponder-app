@@ -50,4 +50,15 @@ object AmBridge {
 
     /** Root-fallback заглушения вывода на владельца (если setStreamVolume(0) недостаточно). */
     fun muteOut(ctx: Context, on: Boolean) = write(ctx, "muteout ${if (on) "on" else "off"}")
+
+    /** Железно: подсветка в 0 через /sys/class/backlight + тачскрин выключен на уровне ядра
+     *  (inhibit-интерфейс input-подсистемы) — не зависит от Keyguard/DisplayManager, в отличие
+     *  от [screenOff]. Портировано из github.com/davnozdu/vr-usb-monitor. Демон сам следит за
+     *  [appPid] root-сторожем и откатит блокировку, если процесс исчезнет без [blockOff]. */
+    fun blockOn(ctx: Context, appPid: Int) = write(ctx, "blockon $appPid")
+
+    /** DisplayManager перебивает подсветку через пару секунд — звать на каждом тике ожидания. */
+    fun redim(ctx: Context) = write(ctx, "redim")
+
+    fun blockOff(ctx: Context) = write(ctx, "blockoff")
 }

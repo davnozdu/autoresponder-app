@@ -18,10 +18,23 @@ import com.davnozdu.autoresponder.data.EventLog
  * автоответчика — глотает ВСЕ касания, чтобы владелец случайно не сбросил звонок (задел
  * карман, увидел экран и потянулся к нему). Без кнопок — трогать на ней нечего.
  *
+ * Костыль, но рабочий: держим экран ВКЛЮЧЁННЫМ (FLAG_KEEP_SCREEN_ON) на всё время звонка,
+ * вместо попытки его гасить. Две причины, обе проверены на устройстве:
+ *   1) гашение экрана во время звонка — триггер утечки звука на динамик владельца (похоже,
+ *      OxygenOS сам меняет маршрут аудио при потухании экрана в активном вызове);
+ *   2) когда экран гаснет и включается заново, поверх всего оказывается системный Keyguard
+ *      (экран разблокировки) — он защищён от чужих окон, и наша накладка ему не конкурент.
+ *      Если экран не гаснет вовсе — Keyguard не включается, и накладка остаётся действительно
+ *      поверх звонилки, где такой защиты нет.
+ * Экран при этом виден «горящим» техническим показателям (не спит), но пиксели чёрные
+ * (AMOLED — чёрное = выключенное), плюс яркость окна принудительно занижена — визуально
+ * для стороннего взгляда неотличимо от тёмного.
+ *
  * В отличие от [com.davnozdu.autoresponder.notif.CallerOverlay] (карточка, не мешает
  * управлять звонком) — тут ровно наоборот: MATCH_PARENT и БЕЗ FLAG_NOT_TOUCH_MODAL, окно
  * перехватывает весь экран. Показываем сразу после подтверждённого ответа, убираем в finally
- * вместе со снятием ресивера — иначе залипшая чёрная накладка была бы худшим исходом.
+ * вместе со снятием ресивера — иначе залипшая чёрная накладка была бы худшим исходом; снятие
+ * окна автоматически снимает и KEEP_SCREEN_ON — экран возвращается к обычному поведению.
  */
 object AmBlockOverlay {
     // Заметно больше макс. длительности потока автоответчика (таймаут сообщения ≤300с + запас
@@ -62,9 +75,13 @@ object AmBlockOverlay {
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,   // не хватать клавиатурный фокус; касания при этом ловятся
-        PixelFormat.TRANSLUCENT
-    ).apply { gravity = Gravity.CENTER }
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or   // не хватать клавиатурный фокус; касания при этом ловятся
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,  // не давать экрану уснуть — см. комментарий класса
+        PixelFormat.OPAQUE
+    ).apply {
+        gravity = Gravity.CENTER
+        screenBrightness = 0.01f   // окно само занижает яркость — визуально почти чёрное, не только цветом фона
+    }
 
     private fun build(app: Context): View {
         val d = app.resources.displayMetrics.density
@@ -72,7 +89,7 @@ object AmBlockOverlay {
         return LinearLayout(app).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#E6000000"))
+            setBackgroundColor(Color.BLACK)
             isClickable = true; isFocusable = false   // просто глотать касания, ничего не делать по ним
             addView(TextView(app).apply {
                 text = "🤖 Автоответчик обрабатывает звонок"

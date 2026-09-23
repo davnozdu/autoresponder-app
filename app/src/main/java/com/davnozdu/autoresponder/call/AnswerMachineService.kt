@@ -64,16 +64,18 @@ class AnswerMachineService : Service() {
      *  ничего не значит. */
     private suspend fun runTestFlow(seconds: Int) {
         val app = applicationContext
-        EventLog(app).add("AM ТЕСТ: старт на ${seconds}с (оверлей + повтор screenoff)")
+        EventLog(app).add("AM ТЕСТ: старт на ${seconds}с (blockon: подсветка+тач)")
+        AmBridge.blockOn(app, android.os.Process.myPid())
         AmBlockOverlay.show(app)
         try {
             val deadline = System.currentTimeMillis() + seconds * 1000L
             while (System.currentTimeMillis() < deadline) {
-                AmBridge.screenOff(app)
+                AmBridge.redim(app)
                 delay(400)
             }
         } finally {
             AmBlockOverlay.hide(app)
+            AmBridge.blockOff(app)
             EventLog(app).add("AM ТЕСТ: завершено")
         }
     }
@@ -99,24 +101,16 @@ class AnswerMachineService : Service() {
                 return
             }
 
-            // Гасим экран САМОЙ первой строкой после ответа — до записи в БД, оверлея и
-            // приветствия. Каждый шаг между офхуком и этим моментом — лишняя доля секунды,
-            // когда экран потенциально виден (Telecom сам включает его под входящий, ДО того
-            // как мы вообще получаем управление). Полностью убрать эту системную вспышку нельзя,
-            // но минимизировать окно — да: чем раньше первая попытка, тем короче мелькание.
-            AmBridge.screenOff(app)
-
             // Запись создаём только теперь, когда звонок реально принят — с этого момента
             // встроенная автозапись звонилки тоже уже пишет (она стартует по offhook), так что
             // greeting+бип+сообщение клиента попадут в один файл с самого начала разговора.
             val recId = db.amRecInsert(number, name, start, 0, null, reason)
 
-            // Полноэкранная накладка — глотает касания, чтобы владелец случайно не сбросил
-            // звонок. Экран НЕ трогаем здесь одноразово: Telecom/InCallUI сам включает экран
-            // под входящий звонок чуть ПОЗЖЕ этой точки (гонка — если проверить isInteractive
-            // прямо сейчас, поймаем «ещё выключен» и ничего не пошлём, а система следом всё
-            // равно его включит). Вместо этого повторяем попытку каждый тик в цикле ожидания
-            // ниже — демон сам проверяет реальное состояние перед нажатием (безопасно).
+            // Железная блокировка: подсветка в 0 через sysfs + тачскрин выключен на уровне
+            // ядра (портировано из vr-usb-monitor, проверено на этом телефоне) — не зависит
+            // от Keyguard/DisplayManager, никакой борьбы за то, чьё окно поверх. Плюс наша
+            // накладка как резервный слой (на случай, если sysfs-путь вдруг не нашёлся).
+            AmBridge.blockOn(app, android.os.Process.myPid())
             AmBlockOverlay.show(app)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -148,12 +142,13 @@ class AnswerMachineService : Service() {
             // 5) Отбой, если ещё не завершён.
             if (!idle) endCall(app)
 
-            // 6) Вернуть звук и убрать накладку — звонок уже завершён/завершается, случайно
-            // сбросить больше нечего.
+            // 6) Вернуть звук, подсветку, тач и убрать накладку — звонок уже завершён/
+            // завершается, случайно сбросить больше нечего.
             AmBridge.stop(app)
             runCatching { am.isMicrophoneMute = prevMute }
             if (prevVol >= 0) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, prevVol, 0) }
             if (s.amSilentToOwner) AmBridge.muteOut(app, false)
+            AmBridge.blockOff(app)
             AmBlockOverlay.hide(app)
 
             // 7) Дождаться простоя и подобрать запись звонилки → отдельная папка + журнал.
@@ -164,10 +159,13 @@ class AnswerMachineService : Service() {
 
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
-            // Гарантированно снимаем ресивер и накладку даже при раннем return/исключении —
-            // залипшая чёрная накладка на весь экран была бы худшим возможным отказом.
+            // Гарантированно снимаем ресивер, накладку и железную блокировку даже при раннем
+            // return/исключении — залипший тёмный нетрогаемый экран был бы худшим возможным
+            // отказом. Root-сторож в демоне страхует только смерть ПРОЦЕССА; исключение внутри
+            // ещё живого процесса он не увидит — снимаем сами.
             unregisterWatcher(app)
             AmBlockOverlay.hide(app)
+            AmBridge.blockOff(app)
         }
     }
 
@@ -199,15 +197,15 @@ class AnswerMachineService : Service() {
     }
 
     /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость (что-то сбрасывает
-     *  их при смене состояния экрана, разовой установки недостаточно) и повторяет попытку
-     *  выключить экран (демон безопасно проверяет реальное состояние перед нажатием). Тик —
-     *  это и окно возможной слышимости/касания владельцу между переустановками, поэтому короткий. */
+     *  их при смене состояния экрана, разовой установки недостаточно) и повторяет [AmBridge.redim]
+     *  (DisplayManager перебивает подсветку через пару секунд). Тик — это и окно возможной
+     *  слышимости владельцу между переустановками, поэтому короткий. */
     private suspend fun waitIdleKeepingSilent(budgetMs: Long, app: Context, am: AudioManager, silentToOwner: Boolean) {
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline && !idle) {
             runCatching { am.isMicrophoneMute = true }
             if (silentToOwner) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
-            AmBridge.screenOff(app)
+            AmBridge.redim(app)
             delay(200)
         }
     }
