@@ -96,12 +96,12 @@
         <!-- Кнопки карточки звонящего: спросить и отправить статус клиенту -->
         <receiver android:name=".notif.CallerCardReceiver" android:exported="false" />
 
-        <!-- Ручной тест блокировки экрана/тача автоответчика без реального звонка (adb broadcast) -->
-        <receiver android:name=".call.AmTestReceiver" android:exported="true">
-            <intent-filter>
-                <action android:name="com.davnozdu.autoresponder.TEST_BLOCK_ON" />
-            </intent-filter>
-        </receiver>
+        <!-- Ручной тест блокировки экрана/тача автоответчика без реального звонка (adb am start) -->
+        <activity
+            android:name=".call.AmTestActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay" />
 
         <!-- Ежедневный бэкап БД истории (+ перепланирование после перезагрузки) -->
         <receiver android:name=".store.BackupReceiver" android:exported="false">
