@@ -46,12 +46,36 @@ class AnswerMachineService : Service() {
         val reason = intent?.getStringExtra(EX_REASON) ?: "closed"
         val lang = intent?.getStringExtra(EX_LANG)
         val text = intent?.getStringExtra(EX_TEXT)
+        val testSec = intent?.getIntExtra(EX_TEST_SEC, 0) ?: 0
         scope.launch {
-            try { runFlow(number, name, reason, lang, text) }
+            try {
+                if (reason == "test") runTestFlow(testSec.coerceIn(3, 120))
+                else runFlow(number, name, reason, lang, text)
+            }
             catch (e: Exception) { EventLog(applicationContext).add("AM: сбой (${e.message})") }
             finally { stopSelfSafe() }
         }
         return START_NOT_STICKY
+    }
+
+    /** Проверка блокировки экрана/тача БЕЗ реального звонка — тот же foreground-сервис,
+     *  что и настоящий вызов, значит те же исключения из заморозки процесса OxygenOS.
+     *  Мьют/громкость сюда намеренно не входят: без активного звонка STREAM_VOICE_CALL
+     *  ничего не значит. */
+    private suspend fun runTestFlow(seconds: Int) {
+        val app = applicationContext
+        EventLog(app).add("AM ТЕСТ: старт на ${seconds}с (оверлей + повтор screenoff)")
+        AmBlockOverlay.show(app)
+        try {
+            val deadline = System.currentTimeMillis() + seconds * 1000L
+            while (System.currentTimeMillis() < deadline) {
+                AmBridge.screenOff(app)
+                delay(400)
+            }
+        } finally {
+            AmBlockOverlay.hide(app)
+            EventLog(app).add("AM ТЕСТ: завершено")
+        }
     }
 
     private suspend fun runFlow(number: String?, nameIn: String?, reason: String,
@@ -262,6 +286,21 @@ class AnswerMachineService : Service() {
         const val EX_REASON = "reason"
         const val EX_LANG = "lang"
         const val EX_TEXT = "text"
+        const val EX_TEST_SEC = "test_sec"
+
+        /** Ручная проверка блокировки экрана/тача БЕЗ звонка (та же защита от заморозки
+         *  процесса, что и в реальном вызове — foreground-сервис). Вызывается из AmTestReceiver. */
+        fun startTest(ctx: Context, seconds: Int) {
+            val i = Intent(ctx, AnswerMachineService::class.java).apply {
+                putExtra(EX_REASON, "test"); putExtra(EX_TEST_SEC, seconds)
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
+                else ctx.startService(i)
+            } catch (e: Exception) {
+                EventLog(ctx.applicationContext).add("AM ТЕСТ: не запустил сервис (${e.message})")
+            }
+        }
 
         /** Запустить автоответчик для входящего звонка. Вызывается из скрининга.
          *  [greetingText] — приветствие для этого клиента (напр. callPrompt из ЧС), null = общее. */

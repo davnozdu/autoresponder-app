@@ -100,7 +100,6 @@
         <receiver android:name=".call.AmTestReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="com.davnozdu.autoresponder.TEST_BLOCK_ON" />
-                <action android:name="com.davnozdu.autoresponder.TEST_BLOCK_OFF" />
             </intent-filter>
         </receiver>
 
