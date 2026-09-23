@@ -134,8 +134,17 @@ class AnswerMachineService : Service() {
             // Доп. пояс безопасности поверх таймаутов внутри Greeting: звонок не должен
             // зависнуть целиком, если где-то в цепочке TTS/конвертации что-то пойдёт не так.
             val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) { Greeting.prepare(app, lang, greetingText) }
-            if (greet != null) AmBridge.play(app, greet, 1)
-            else EventLog(app).add("AM: приветствие не готово — молчим")
+            if (greet != null) {
+                AmBridge.play(app, greet, 1)
+                // Штатная автозапись звонилки иногда (на глаз ~1 звонок из 4) не подхватывает
+                // именно тихо-принятые звонки — без видимой причины, файла не появляется вовсе
+                // (см. переписку/журнал: не баг связывания, рекордер просто не стартовал). Раз
+                // уж своей записи у нас нет, ловим это СРАЗУ, а не постфактум по пустому файлу:
+                // пока звучит приветствие+бип есть пара секунд до того, как заговорит клиент —
+                // если за это время в системе не появится активная запись с голосового источника,
+                // помечаем звонок в журнале сразу, не дожидаясь конца разговора.
+                scope.launch { checkOemRecorderStarted(app) }
+            } else EventLog(app).add("AM: приветствие не готово — молчим")
 
             // 4) Держим линию под сообщение клиента, пока не положит трубку или не выйдет таймаут.
             // Живой тест поймал: пока экран горел — тихо, а когда погас (обычный таймаут
@@ -213,6 +222,27 @@ class AnswerMachineService : Service() {
             AmBridge.redim(app)
             delay(200)
         }
+    }
+
+    /** Не блокирует основной сценарий — отдельная корутина, стартует сразу после play().
+     *  Источник аудио штатного тапа INCALL_RECORD не документирован явно, поэтому проверяем
+     *  все правдоподобные голосовые константы, а не одну конкретную. */
+    private suspend fun checkOemRecorderStarted(app: Context) {
+        val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val callSources = setOf(
+            android.media.MediaRecorder.AudioSource.VOICE_CALL,
+            android.media.MediaRecorder.AudioSource.VOICE_DOWNLINK,
+            android.media.MediaRecorder.AudioSource.VOICE_UPLINK,
+        )
+        val deadline = System.currentTimeMillis() + 4_000L
+        while (System.currentTimeMillis() < deadline) {
+            val seen = runCatching {
+                am.activeRecordingConfigurations.any { it.clientAudioSource in callSources }
+            }.getOrDefault(false)
+            if (seen) return
+            delay(300)
+        }
+        EventLog(app).add("AM: штатный рекордер не подхватился за 4с — запись может не сохраниться")
     }
 
     private fun registerWatcher(ctx: Context) {
