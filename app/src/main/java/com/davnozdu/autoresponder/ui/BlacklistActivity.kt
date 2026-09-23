@@ -152,10 +152,19 @@ fun BlacklistScreen() {
                             Text("Мессенджеры")
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = e.onCalls, onCheckedChange = { db.blacklistUpsert(e.copy(onCalls = it)); reload() })
-                            Text(if (e.onCalls) "Звонки: пропускать" else "Звонки: → автоответчик")
+                            // e.onCalls хранится как «пропускать звонки как обычно» (см.
+                            // CallScreeningServiceImpl: bl.onCalls==true -> respondAllow) — саму
+                            // семантику в БД не трогаем, инвертируем только отображение/переключение
+                            // здесь: раньше галочка означала «пропускать», и чтобы включить
+                            // автоответчик, её приходилось СНИМАТЬ — не intuitively. Теперь галочка
+                            // = «звонки на автоответчик» (включено = чекбокс стоит).
+                            val useAm = !e.onCalls
+                            Checkbox(checked = useAm, onCheckedChange = { checked ->
+                                db.blacklistUpsert(e.copy(onCalls = !checked)); reload()
+                            })
+                            Text(if (useAm) "Звонки: → автоответчик" else "Звонки: пропускать")
                             Spacer(Modifier.weight(1f))
-                            if (!e.onCalls) TextButton(onClick = { editingCall = e }) { Text("Приветствие") }
+                            if (useAm) TextButton(onClick = { editingCall = e }) { Text("Приветствие") }
                         }
                         Row {
                             Spacer(Modifier.weight(1f))
