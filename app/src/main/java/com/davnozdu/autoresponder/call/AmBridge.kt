@@ -81,4 +81,13 @@ object AmBridge {
     fun redim(ctx: Context) = write(ctx, "redim")
 
     fun blockOff(ctx: Context) = write(ctx, "blockoff")
+
+    /** Своя запись звонка (incall-record тап через pal_record) — fallback на случай, если
+     *  штатный рекордер OxygenOS не подхватится (видели ~1 звонок из 4 без файла вовсе).
+     *  Пишем параллельно штатному с самого начала звонка; приложение решает после звонка,
+     *  какой из двух файлов оставить. [maxSeconds] — тот же лимит, что и на ожидание сообщения. */
+    fun recStart(ctx: Context, wavPath: String, maxSeconds: Int) =
+        write(ctx, "recstart $wavPath ${maxSeconds.coerceAtLeast(5)}")
+
+    fun recStop(ctx: Context) = write(ctx, "recstop")
 }

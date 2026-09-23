@@ -118,6 +118,17 @@ class AnswerMachineService : Service() {
             AmBridge.blockOn(app, android.os.Process.myPid())
             AmBlockOverlay.show(app)
 
+            // Своя запись (pal_record, incall-record тап) — параллельно штатной с самого
+            // начала звонка, не дожидаясь проверки: штатный рекордер OxygenOS иногда (~1
+            // звонок из 4) не подхватывается вовсе, без ошибки и без файла. Место есть,
+            // поэтому пишем оба и после звонка оставляем один (см. шаг 7).
+            val safeNum = (number ?: "unknown").replace(Regex("[^+0-9]"), "")
+            val ownRecPath = "/sdcard/AutoResponder/recordings/" +
+                java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(start)) +
+                "_${safeNum}_own.wav"
+            val maxSec = s.amMaxMessageSec.coerceIn(5, 300)
+            AmBridge.recStart(app, ownRecPath, maxSec)
+
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
             // 2) Заглушить: микрофон (абонент не слышит комнату) и, в тихом режиме, вывод к владельцу.
@@ -151,7 +162,7 @@ class AnswerMachineService : Service() {
             // экрана) — владелец начал слышать абонента. Что-то (InCallUI/OxygenOS) сбрасывает
             // громкость/мьют при смене состояния экрана. Вместо попытки понять точную причину —
             // просто переустанавливаем заглушку на каждом тике ожидания, а не один раз в начале.
-            waitIdleKeepingSilent(s.amMaxMessageSec.coerceIn(5, 300) * 1000L, app, am, s.amSilentToOwner)
+            waitIdleKeepingSilent(maxSec * 1000L, app, am, s.amSilentToOwner)
 
             // 5) Отбой, если ещё не завершён.
             if (!idle) endCall(app)
@@ -159,6 +170,12 @@ class AnswerMachineService : Service() {
             // 6) Вернуть звук, подсветку, тач и убрать накладку — звонок уже завершён/
             // завершается, случайно сбросить больше нечего.
             AmBridge.stop(app)
+            AmBridge.recStop(app)
+            // recStop() возвращается по своему ack-таймауту (≤400мс) — daemon-сторона может
+            // дописывать WAV-заголовок ещё какое-то время после этого (ждёт выхода pal_record
+            // до 15с как подстраховку). Небольшая пауза здесь дешевле, чем читать наш файл
+            // с нулевым/неполным заголовком чуть ниже.
+            delay(500)
             runCatching { am.isMicrophoneMute = prevMute }
             if (prevVol >= 0) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, prevVol, 0) }
             if (s.amSilentToOwner) AmBridge.muteOut(app, false)
@@ -166,10 +183,23 @@ class AnswerMachineService : Service() {
             AmBlockOverlay.hide(app)
 
             // 7) Дождаться простоя и подобрать запись звонилки → отдельная папка + журнал.
+            // Своя (pal_record) уже лежит по ownRecPath — если штатная нашлась, она в
+            // приоритете (её и видит стандартный плеер/путь), а свою как дубль удаляем;
+            // не нашлась — используем свою.
             waitIdleOr(5_000L)
             val link = RecordingLinker.linkLatest(app, number, start)
-            if (link != null) db.amRecSetFile(recId, link.first, link.second)
-            else db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+            val ownFile = java.io.File(ownRecPath)
+            if (link != null) {
+                db.amRecSetFile(recId, link.first, link.second)
+                runCatching { ownFile.delete() }
+            } else if (ownFile.exists() && ownFile.length() > 44) {
+                val dur = RecordingLinker.durationMs(ownFile.absolutePath)
+                db.amRecSetFile(recId, ownFile.absolutePath, dur)
+                EventLog(app).add("AM запись: штатный рекордер не сработал — оставил свою (${dur/1000}s)")
+            } else {
+                runCatching { ownFile.delete() }
+                db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+            }
 
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
@@ -180,6 +210,7 @@ class AnswerMachineService : Service() {
             unregisterWatcher(app)
             AmBlockOverlay.hide(app)
             AmBridge.blockOff(app)
+            AmBridge.recStop(app)
         }
     }
 

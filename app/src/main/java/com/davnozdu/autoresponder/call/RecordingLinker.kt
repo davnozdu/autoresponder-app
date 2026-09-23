@@ -80,7 +80,9 @@ object RecordingLinker {
         return candidates.maxByOrNull { it.lastModified() }
     }
 
-    private fun durationMs(path: String): Long = try {
+    /** Публичный доступ для своей (pal_record) записи — тот же способ узнать длительность,
+     *  что используется для штатной. */
+    fun durationMs(path: String): Long = try {
         MediaMetadataRetriever().use { r ->
             r.setDataSource(path)
             r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
