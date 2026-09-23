@@ -31,6 +31,10 @@ object Greeting {
     private const val DIR = "am"
     private const val OUT = "greeting.pcm"
     private const val KEY = "greeting.key"
+    // Меняем при правках синтеза/конвертации (напр. фикс скорости TTS), чтобы старый
+    // закэшированный greeting.pcm не пережил обновление приложения — ключ ниже строится
+    // от текста/файла, и без версии сам текст не меняется, значит кэш остался бы прежним.
+    private const val SYNTH_VER = "v2"
 
     // Параметры бипа — «долгий гудок, как у классического автоответчика».
     private const val SR = 48000
@@ -61,7 +65,7 @@ object Greeting {
         if (useFile) {
             val src = File(s.amGreetingFile)
             if (!src.exists()) { EventLog(app).add("AM приветствие: файла нет — ${s.amGreetingFile}"); return null }
-            key = "file:${src.absolutePath}:${src.lastModified()}"
+            key = "$SYNTH_VER:file:${src.absolutePath}:${src.lastModified()}"
             if (out.exists() && keyFile.readTextSafe() == key) return out.absolutePath
             if (!AudioConvert.toRawPcm48kStereo(src.absolutePath, out.absolutePath)) {
                 EventLog(app).add("AM приветствие: не сконвертировал файл ${src.name}"); return null
@@ -70,7 +74,7 @@ object Greeting {
             val text = (overrideText?.takeIf { it.isNotBlank() }
                 ?: s.amGreetingText).ifBlank { Settings.DEF_AM_GREETING }
             val lc = (lang ?: Locale.getDefault().language)
-            key = "tts:$lc:${text.hashCode()}"
+            key = "$SYNTH_VER:tts:$lc:${text.hashCode()}"
             if (out.exists() && keyFile.readTextSafe() == key) return out.absolutePath
             val wav = synthTts(app, text, lc) ?: run {
                 EventLog(app).add("AM приветствие: TTS недоступен/не ответил вовремя"); return null
@@ -122,6 +126,13 @@ object Greeting {
         if (!inited) { runCatching { tts.shutdown() }; return null }
         try {
             tts.language = localeFor(lang)
+            // Без явного вызова движок берёт скорость/высоту тона из системных Специальных
+            // возможностей владельца (Google TTS так и делает) — а это звучит для ПОСТОРОННЕГО
+            // звонящего, и личная настройка владельца («побыстрее для чтения экрана») тут
+            // неуместна. Живой тест это и поймал: 18 слов уложились в ~2.5с — почти в 3 раза
+            // быстрее нормальной речи. Фиксируем нормальный темп независимо от системных настроек.
+            tts.setSpeechRate(1.0f)
+            tts.setPitch(1.0f)
             val wav = File(ctx.cacheDir, "am_tts.wav")
             val done = CompletableDeferred<Boolean>()
             tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
