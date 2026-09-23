@@ -259,6 +259,38 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_RESP_SMS, true)
         set(v) = sp.edit().putBoolean(K_RESP_SMS, v).apply()
 
+    // --- голосовой автоответчик ---
+    /** Как обрабатывать входящий ЗВОНОК в закрытом режиме: 0 = ответ по SMS (как раньше),
+     *  1 = голосовой автоответчик. Чёрный список всегда идёт на голос независимо от этого. */
+    var callClosedMode: Int
+        get() = sp.getInt(K_AM_CLOSED_MODE, 0)
+        set(v) = sp.edit().putInt(K_AM_CLOSED_MODE, v).apply()
+
+    /** Источник приветствия: 0 = TTS по языку клиента, 1 = загруженный аудиофайл. */
+    var amGreetingSource: Int
+        get() = sp.getInt(K_AM_GREET_SRC, 0)
+        set(v) = sp.edit().putInt(K_AM_GREET_SRC, v).apply()
+
+    /** Путь к готовому WAV приветствия (PCM 48к/16/stereo), если источник = файл. */
+    var amGreetingFile: String
+        get() = sp.getString(K_AM_GREET_FILE, "") ?: ""
+        set(v) = sp.edit().putString(K_AM_GREET_FILE, v).apply()
+
+    /** Текст приветствия для TTS (по умолчанию — общий, язык подставляется на озвучке). */
+    var amGreetingText: String
+        get() = sp.getString(K_AM_GREET_TEXT, DEF_AM_GREETING) ?: DEF_AM_GREETING
+        set(v) = sp.edit().putString(K_AM_GREET_TEXT, v).apply()
+
+    /** Сколько секунд держим линию под сообщение клиента, затем отбой. */
+    var amMaxMessageSec: Int
+        get() = sp.getInt(K_AM_MSG_SEC, 45)
+        set(v) = sp.edit().putInt(K_AM_MSG_SEC, v).apply()
+
+    /** Тихий режим: глушить вывод к владельцу (громкость 0), чтобы не будить. */
+    var amSilentToOwner: Boolean
+        get() = sp.getBoolean(K_AM_SILENT, true)
+        set(v) = sp.edit().putBoolean(K_AM_SILENT, v).apply()
+
     // --- анти-флуд: не более N обычных авто-ответов на номер, затем 1 предупреждение и таймаут ---
     var maxReplies: Int
         get() = sp.getInt(K_MAX_REPLIES, 6)
@@ -640,6 +672,12 @@ class Settings(context: Context) {
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
         private const val K_REPLY_DELAY = "reply_delay_ms"
+        private const val K_AM_CLOSED_MODE = "am_closed_mode"
+        private const val K_AM_GREET_SRC = "am_greet_src"
+        private const val K_AM_GREET_FILE = "am_greet_file"
+        private const val K_AM_GREET_TEXT = "am_greet_text"
+        private const val K_AM_MSG_SEC = "am_msg_sec"
+        private const val K_AM_SILENT = "am_silent"
         private const val K_SMS_SLOT = "sms_slot"
         private const val K_MON_APPS = "monitored_apps"
         private const val K_NOTIF_AGE = "notif_age_min"
@@ -697,6 +735,9 @@ class Settings(context: Context) {
         private val SECRET_KEYS = setOf(K_LLM_KEY, K_LLM2_KEY, K_CRM_TOKEN)
 
         const val DEF_AI_PREFIX = "Ответ от AI:"
+        const val DEF_AM_GREETING =
+            "Здравствуйте! Сейчас нерабочее время, ответить не можем. " +
+            "Оставьте сообщение после сигнала — мы прослушаем его в ближайшее рабочее время."
         const val DEF_PROMPT_CALL =
             "Ты — вежливый автоответчик компании (сейчас нерабочее время). " +
             "Клиент звонил, но мы не можем ответить сейчас. Кратко, в рамках лимита символов, " +

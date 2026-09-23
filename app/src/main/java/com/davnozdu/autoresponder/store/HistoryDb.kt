@@ -28,9 +28,16 @@ data class HistItem(
     val auto: Boolean = false
 )
 
+/** Запись голосового автоответчика: сообщение, наговорённое клиентом. */
+data class AmRec(
+    val id: Long, val number: String?, val name: String?,
+    val ts: Long, val durationMs: Long, val file: String?,
+    val reason: String?, val heard: Boolean
+)
+
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb internal constructor(context: Context, name: String = "history.db") :
-    SQLiteOpenHelper(context.applicationContext, name, null, 9) {
+    SQLiteOpenHelper(context.applicationContext, name, null, 10) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -51,11 +58,73 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         createBlPending(db)
         createSmsHold(db)
         createInboxDone(db)
+        createAmRec(db)
     }
 
     /** Отметки «этой веткой я занялся» — чтобы разобранное не висело в списке вечно. */
     private fun createInboxDone(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS inbox_done(number TEXT PRIMARY KEY, ts INTEGER NOT NULL)")
+    }
+
+    /** Записи голосового автоответчика (сообщения клиентов). heard=0 — ещё не прослушано. */
+    private fun createAmRec(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS am_rec(" +
+                "_id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "number TEXT," +
+                "name TEXT," +
+                "ts INTEGER NOT NULL," +          // время звонка
+                "duration_ms INTEGER NOT NULL DEFAULT 0," +
+                "file TEXT," +                    // путь к скопированной записи
+                "reason TEXT," +                  // blacklist|closed
+                "heard INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_amrec_ts ON am_rec(ts)")
+    }
+
+    fun amRecInsert(number: String?, name: String?, ts: Long, durationMs: Long,
+                    file: String?, reason: String?): Long {
+        val v = ContentValues().apply {
+            put("number", number); put("name", name); put("ts", ts)
+            put("duration_ms", durationMs); put("file", file); put("reason", reason)
+            put("heard", 0)
+        }
+        return writableDatabase.insert("am_rec", null, v)
+    }
+
+    /** Сколько записей ещё не прослушано — для счётчика в журнале/окне. */
+    fun amRecNewCount(): Int =
+        readableDatabase.rawQuery("SELECT COUNT(*) FROM am_rec WHERE heard=0", null).use {
+            if (it.moveToFirst()) it.getInt(0) else 0
+        }
+
+    fun amRecList(limit: Int = 200): List<AmRec> {
+        val out = ArrayList<AmRec>()
+        readableDatabase.rawQuery(
+            "SELECT _id,number,name,ts,duration_ms,file,reason,heard FROM am_rec " +
+                "ORDER BY ts DESC LIMIT ?", arrayOf(limit.toString())).use { c ->
+            while (c.moveToNext()) {
+                out.add(AmRec(
+                    id = c.getLong(0), number = c.getString(1), name = c.getString(2),
+                    ts = c.getLong(3), durationMs = c.getLong(4), file = c.getString(5),
+                    reason = c.getString(6), heard = c.getInt(7) != 0))
+            }
+        }
+        return out
+    }
+
+    fun amRecMarkHeard(id: Long) {
+        writableDatabase.execSQL("UPDATE am_rec SET heard=1 WHERE _id=?", arrayOf(id))
+    }
+
+    fun amRecMarkAllHeard() {
+        writableDatabase.execSQL("UPDATE am_rec SET heard=1 WHERE heard=0")
+    }
+
+    /** Привязать файл записи к строке (запись копируется после отбоя, позже вставки). */
+    fun amRecSetFile(id: Long, file: String, durationMs: Long) {
+        val v = ContentValues().apply { put("file", file); put("duration_ms", durationMs) }
+        writableDatabase.update("am_rec", v, "_id=?", arrayOf(id.toString()))
     }
 
     /** Ночные авто-SMS, придержанные до утра (тихий час). */
@@ -109,6 +178,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         if (oldV < 7) addColumn(db, "ALTER TABLE blacklist ADD COLUMN until_ts INTEGER NOT NULL DEFAULT 0")
         if (oldV < 8) createSmsHold(db)
         if (oldV < 9) createInboxDone(db)
+        if (oldV < 10) createAmRec(db)
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.

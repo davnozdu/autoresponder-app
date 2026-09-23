@@ -153,9 +153,9 @@ fun BlacklistScreen() {
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = e.onCalls, onCheckedChange = { db.blacklistUpsert(e.copy(onCalls = it)); reload() })
-                            Text(if (e.onCalls) "Звонки: пропускать" else "Звонки: отклонять + SMS")
+                            Text(if (e.onCalls) "Звонки: пропускать" else "Звонки: → автоответчик")
                             Spacer(Modifier.weight(1f))
-                            if (!e.onCalls) TextButton(onClick = { editingCall = e }) { Text("Промпт звонка") }
+                            if (!e.onCalls) TextButton(onClick = { editingCall = e }) { Text("Приветствие") }
                         }
                         Row {
                             Spacer(Modifier.weight(1f))

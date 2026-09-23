@@ -21,6 +21,13 @@
     <!-- Доступ к /sdcard/AutoResponder (about.md, бэкапы БД). Грант выдаёт модуль (appops). -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <!-- Голосовой автоответчик: авто-ответ/отбой без роли дефолтной звонилки, мьют звука,
+         и foreground-сервис на время обработки звонка. ANSWER_PHONE_CALLS грантит модуль. -->
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
         android:name=".App"
         android:allowBackup="false"
@@ -30,6 +37,7 @@
         android:theme="@style/Theme.AutoResponder">
 
         <activity android:name=".ui.HistoryActivity" android:exported="false" />
+        <activity android:name=".ui.AmRecordingsActivity" android:exported="false" />
         <activity android:name=".ui.BlacklistActivity" android:exported="false" />
         <activity android:name=".ui.HistoryChatActivity" android:exported="false" />
         <activity android:name=".ui.AppPickerActivity" android:exported="false" />
@@ -54,6 +62,16 @@
             <intent-filter>
                 <action android:name="android.telecom.CallScreeningService" />
             </intent-filter>
+        </service>
+
+        <!-- Голосовой автоответчик: обрабатывает один звонок (ответ, приветствие, запись). -->
+        <service
+            android:name=".call.AnswerMachineService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="voice_answering_machine" />
         </service>
 
         <provider

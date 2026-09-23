@@ -51,10 +51,11 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val bl = HistoryDb.get(this).blacklistMatch(number, null)
         if (bl != null) {
             if (bl.onCalls) { respondAllow(callDetails); return }
-            val resp = CallResponse.Builder().setDisallowCall(true).setRejectCall(true).build()
-            respondToCall(callDetails, resp)
-            EventLog(this).add("CALL ${number ?: "?"} — ЧС отклонён, SMS")
-            Responder.handle(this, number, null, Kind.CALL, callSubId)
+            // ЧС и «звонки: отклонять» → голосовой автоответчик (в любом режиме, приоритет №1).
+            // Рингтон глушим (setSilenceCall) и отвечаем сами; callPrompt — приветствие клиента.
+            respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
+            EventLog(this).add("CALL ${number ?: "?"} — ЧС → автоответчик")
+            AnswerMachineService.start(this, number, bl.name, "blacklist", null, bl.callPrompt)
             return
         }
 
@@ -63,16 +64,23 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val skip = SkipPolicy.reason(this, number, s, isCall = true) != null
 
         if (closedReason != null && matches && !skip) {
-            // Отклоняем звонок без записи в журнал пропущенных/уведомления.
-            val response = CallResponse.Builder()
-                .setDisallowCall(true)
-                .setRejectCall(true)
-                .setSkipCallLog(false)
-                .setSkipNotification(false)
-                .build()
-            respondToCall(callDetails, response)
-            EventLog(this).add("CALL ${number ?: "?"} — отклонён (закрыто), SMS через ${s.replyDelayMs} мс")
-            Responder.handle(this, number, null, Kind.CALL, callSubId)
+            if (s.callClosedMode == 1) {
+                // Тумблер = голосовой автоответчик: глушим рингтон, отвечаем и обрабатываем сами.
+                respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
+                EventLog(this).add("CALL ${number ?: "?"} — закрыто → автоответчик")
+                AnswerMachineService.start(this, number, null, "closed", null, null)
+            } else {
+                // Тумблер = SMS (как раньше): отклоняем без записи в пропущенные + авто-SMS.
+                val response = CallResponse.Builder()
+                    .setDisallowCall(true)
+                    .setRejectCall(true)
+                    .setSkipCallLog(false)
+                    .setSkipNotification(false)
+                    .build()
+                respondToCall(callDetails, response)
+                EventLog(this).add("CALL ${number ?: "?"} — отклонён (закрыто), SMS через ${s.replyDelayMs} мс")
+                Responder.handle(this, number, null, Kind.CALL, callSubId)
+            }
         } else {
             respondAllow(callDetails)
         }

@@ -327,6 +327,68 @@ fun AppScreen() {
                 onHistory = { ctx.startActivity(Intent(ctx, HistoryActivity::class.java)) }
             )
 
+            ExpandableSection("Голосовой автоответчик") {
+                val amDb = com.davnozdu.autoresponder.store.HistoryDb.get(ctx)
+                var amNew by remember { mutableStateOf(0) }
+                LaunchedEffect(Unit) { amNew = withContext(Dispatchers.IO) { amDb.amRecNewCount() } }
+                Button(onClick = { ctx.startActivity(Intent(ctx, AmRecordingsActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text("Записи автоответчика" + if (amNew > 0) " · $amNew новых" else "")
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text("Входящий звонок в закрытом режиме (DND/нерабочее время):",
+                    style = MaterialTheme.typography.labelMedium)
+                var closedMode by remember { mutableStateOf(s.callClosedMode) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(closedMode == 0, { closedMode = 0; s.callClosedMode = 0 }, { Text("Ответ SMS") })
+                    FilterChip(closedMode == 1, { closedMode = 1; s.callClosedMode = 1 }, { Text("Автоответчик") })
+                }
+                Text("Чёрный список всегда идёт на голосовой автоответчик, независимо от этого.",
+                    style = MaterialTheme.typography.bodySmall)
+
+                Spacer(Modifier.height(8.dp))
+                Text("Приветствие:", style = MaterialTheme.typography.labelMedium)
+                var greetSrc by remember { mutableStateOf(s.amGreetingSource) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(greetSrc == 0, { greetSrc = 0; s.amGreetingSource = 0 }, { Text("Синтез (TTS)") })
+                    FilterChip(greetSrc == 1, { greetSrc = 1; s.amGreetingSource = 1 }, { Text("Свой файл") })
+                }
+                if (greetSrc == 0) {
+                    var gText by remember { mutableStateOf(s.amGreetingText) }
+                    OutlinedTextField(gText, { gText = it; s.amGreetingText = it },
+                        label = { Text("Текст приветствия") }, modifier = Modifier.fillMaxWidth())
+                } else {
+                    var gFile by remember { mutableStateOf(s.amGreetingFile) }
+                    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                        if (uri != null) scope.launch {
+                            val p = withContext(Dispatchers.IO) { importGreetingFile(ctx, uri) }
+                            if (p != null) {
+                                s.amGreetingFile = p; gFile = p
+                                Toast.makeText(ctx, "Файл приветствия сохранён", Toast.LENGTH_SHORT).show()
+                            } else Toast.makeText(ctx, "Не удалось прочитать файл", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    Button(onClick = { picker.launch("audio/*") }) { Text("Выбрать аудиофайл") }
+                    Text(if (gFile.isNotBlank()) "Файл: ${java.io.File(gFile).name}" else "Файл не выбран",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+
+                Spacer(Modifier.height(8.dp))
+                var msgSec by remember { mutableStateOf(s.amMaxMessageSec.toString()) }
+                OutlinedTextField(msgSec, { msgSec = it; it.toIntOrNull()?.let { v -> s.amMaxMessageSec = v } },
+                    label = { Text("Секунд на сообщение клиента") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth())
+
+                var silent by remember { mutableStateOf(s.amSilentToOwner) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(silent, { silent = it; s.amSilentToOwner = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("Тихий режим: не слышу звонок и абонента, запись идёт")
+                }
+            }
+
             ExpandableSection("Версия приложения") {
                 Text(com.davnozdu.autoresponder.update.Updater.currentVersion,
                     style = MaterialTheme.typography.headlineSmall)
@@ -1080,6 +1142,15 @@ fun AppScreen() {
 }
 
 @Composable
+/** Копирует выбранный аудиофайл приветствия в приватную папку и возвращает путь. */
+private fun importGreetingFile(ctx: Context, uri: android.net.Uri): String? = try {
+    val dir = java.io.File(ctx.filesDir, "am").apply { mkdirs() }
+    val ext = ctx.contentResolver.getType(uri)?.substringAfterLast('/')?.take(4) ?: "dat"
+    val dst = java.io.File(dir, "greeting_src.$ext")
+    ctx.contentResolver.openInputStream(uri)?.use { input -> dst.outputStream().use { input.copyTo(it) } }
+    if (dst.length() > 0) dst.absolutePath else null
+} catch (e: Exception) { null }
+
 private fun StatusOverviewCard(
     enabled: Boolean,
     calls: Boolean,
