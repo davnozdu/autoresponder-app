@@ -1141,7 +1141,6 @@ fun AppScreen() {
     }
 }
 
-@Composable
 /** Копирует выбранный аудиофайл приветствия в приватную папку и возвращает путь. */
 private fun importGreetingFile(ctx: Context, uri: android.net.Uri): String? = try {
     val dir = java.io.File(ctx.filesDir, "am").apply { mkdirs() }
@@ -1151,6 +1150,7 @@ private fun importGreetingFile(ctx: Context, uri: android.net.Uri): String? = tr
     if (dst.length() > 0) dst.absolutePath else null
 } catch (e: Exception) { null }
 
+@Composable
 private fun StatusOverviewCard(
     enabled: Boolean,
     calls: Boolean,
