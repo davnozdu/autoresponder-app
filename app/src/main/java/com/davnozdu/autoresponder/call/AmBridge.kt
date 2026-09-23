@@ -43,6 +43,9 @@ object AmBridge {
     fun play(ctx: Context, rawPcmPath: String, loops: Int) =
         write(ctx, "play $rawPcmPath ${loops.coerceAtLeast(1)}")
 
+    /** Выключить экран (если сейчас включён) — обычному приложению это недоступно без root. */
+    fun screenOff(ctx: Context) = write(ctx, "screenoff")
+
     fun stop(ctx: Context) = write(ctx, "stop")
 
     /** Root-fallback заглушения вывода на владельца (если setStreamVolume(0) недостаточно). */

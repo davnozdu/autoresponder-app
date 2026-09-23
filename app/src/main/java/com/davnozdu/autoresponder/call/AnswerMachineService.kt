@@ -80,6 +80,13 @@ class AnswerMachineService : Service() {
             // greeting+бип+сообщение клиента попадут в один файл с самого начала разговора.
             val recId = db.amRecInsert(number, name, start, 0, null, reason)
 
+            // Полноэкранная накладка — глотает касания, чтобы владелец случайно не сбросил
+            // звонок; плюс best-effort выключение экрана (если сейчас включён — InCallUI
+            // будит экран на входящий сам, мы этого не контролируем).
+            AmBlockOverlay.show(app)
+            val pm = app.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (pm.isInteractive) AmBridge.screenOff(app)
+
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
             // 2) Заглушить: микрофон (абонент не слышит комнату) и, в тихом режиме, вывод к владельцу.
@@ -100,16 +107,22 @@ class AnswerMachineService : Service() {
             else EventLog(app).add("AM: приветствие не готово — молчим")
 
             // 4) Держим линию под сообщение клиента, пока не положит трубку или не выйдет таймаут.
-            waitIdleOr(s.amMaxMessageSec.coerceIn(5, 300) * 1000L)
+            // Живой тест поймал: пока экран горел — тихо, а когда погас (обычный таймаут
+            // экрана) — владелец начал слышать абонента. Что-то (InCallUI/OxygenOS) сбрасывает
+            // громкость/мьют при смене состояния экрана. Вместо попытки понять точную причину —
+            // просто переустанавливаем заглушку на каждом тике ожидания, а не один раз в начале.
+            waitIdleKeepingSilent(s.amMaxMessageSec.coerceIn(5, 300) * 1000L, am, s.amSilentToOwner)
 
             // 5) Отбой, если ещё не завершён.
             if (!idle) endCall(app)
 
-            // 6) Вернуть звук.
+            // 6) Вернуть звук и убрать накладку — звонок уже завершён/завершается, случайно
+            // сбросить больше нечего.
             AmBridge.stop(app)
             runCatching { am.isMicrophoneMute = prevMute }
             if (prevVol >= 0) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, prevVol, 0) }
             if (s.amSilentToOwner) AmBridge.muteOut(app, false)
+            AmBlockOverlay.hide(app)
 
             // 7) Дождаться простоя и подобрать запись звонилки → отдельная папка + журнал.
             waitIdleOr(5_000L)
@@ -119,9 +132,10 @@ class AnswerMachineService : Service() {
 
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
-            // Гарантированно снимаем ресивер даже при раннем return/исключении — иначе
-            // он остаётся висеть до onDestroy() (не течёт, но грязно).
+            // Гарантированно снимаем ресивер и накладку даже при раннем return/исключении —
+            // залипшая чёрная накладка на весь экран была бы худшим возможным отказом.
             unregisterWatcher(app)
+            AmBlockOverlay.hide(app)
         }
     }
 
@@ -150,6 +164,17 @@ class AnswerMachineService : Service() {
     private suspend fun waitIdleOr(budgetMs: Long) {
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline && !idle) delay(300)
+    }
+
+    /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость — см. комментарий
+     *  на месте вызова: что-то сбрасывает их при смене состояния экрана, разово недостаточно. */
+    private suspend fun waitIdleKeepingSilent(budgetMs: Long, am: AudioManager, silentToOwner: Boolean) {
+        val deadline = System.currentTimeMillis() + budgetMs
+        while (System.currentTimeMillis() < deadline && !idle) {
+            runCatching { am.isMicrophoneMute = true }
+            if (silentToOwner) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
+            delay(1_000)
+        }
     }
 
     private fun registerWatcher(ctx: Context) {
