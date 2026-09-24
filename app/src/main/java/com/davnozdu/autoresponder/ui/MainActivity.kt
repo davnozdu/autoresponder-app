@@ -535,6 +535,65 @@ fun AppScreen() {
                 )
             }
 
+            ExpandableSection("Скрининг звонков") {
+                var screenOn by remember { mutableStateOf(s.screeningEnabled) }
+                SwitchRow("Интерактивный скрининг (Принять/Отклонить)", screenOn) {
+                    screenOn = it; s.screeningEnabled = it
+                }
+                Text("В настроенное время звонок не от избранного отвечается сам, абоненту "
+                    + "играет приветствие и зуммер, а на экране появляется карточка с кнопками "
+                    + "«Принять»/«Отклонить» — экран при этом яркий и видимый, не тихий режим. "
+                    + "Проверяется раньше гарнитуры: даже с подключёнными наушниками владелец "
+                    + "увидит карточку и сможет ответить с телефона.",
+                    style = MaterialTheme.typography.bodySmall)
+                var screenStart by remember { mutableStateOf(s.screeningStartMin) }
+                var screenEnd by remember { mutableStateOf(s.screeningEndMin) }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Активно с")
+                    OutlinedButton(onClick = { pickTime(ctx, screenStart) { screenStart = it; s.screeningStartMin = it } }) { Text(fmtMin(screenStart)) }
+                    Text("до")
+                    OutlinedButton(onClick = { pickTime(ctx, screenEnd) { screenEnd = it; s.screeningEndMin = it } }) { Text(fmtMin(screenEnd)) }
+                }
+                var screenDays by remember { mutableStateOf(s.screeningWorkDaysMask) }
+                Text("Дни:", style = MaterialTheme.typography.labelMedium)
+                val screenDaysList = listOf(2 to "Пн", 3 to "Вт", 4 to "Ср", 5 to "Чт", 6 to "Пт", 7 to "Сб", 1 to "Вс")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    screenDaysList.forEach { (d, lbl) ->
+                        FilterChip(selected = (screenDays and (1 shl d)) != 0, onClick = {
+                            screenDays = screenDays xor (1 shl d); s.screeningWorkDaysMask = screenDays
+                        }, label = { Text(lbl) })
+                    }
+                }
+            }
+
+            ExpandableSection("Приветствия") {
+                Text("Библиотека приветствий скрининга на трёх языках — свой аудиофайл или "
+                    + "текст для синтеза речи на каждый. Язык по умолчанию для всех звонков:",
+                    style = MaterialTheme.typography.bodySmall)
+                var screenLang by remember { mutableStateOf(s.screeningDefaultLang) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    LangChip("CS", "cs", screenLang) { screenLang = it; s.screeningDefaultLang = it }
+                    LangChip("RU", "ru", screenLang) { screenLang = it; s.screeningDefaultLang = it }
+                    LangChip("EN", "en", screenLang) { screenLang = it; s.screeningDefaultLang = it }
+                }
+                Spacer(Modifier.height(8.dp))
+                GreetingLangSlot(ctx, scope, "Чешский", "cs",
+                    s.screeningGreetingSourceCs, { s.screeningGreetingSourceCs = it },
+                    s.screeningGreetingFileCs, { s.screeningGreetingFileCs = it },
+                    s.screeningGreetingTextCs, { s.screeningGreetingTextCs = it })
+                Spacer(Modifier.height(12.dp))
+                GreetingLangSlot(ctx, scope, "Русский", "ru",
+                    s.screeningGreetingSourceRu, { s.screeningGreetingSourceRu = it },
+                    s.screeningGreetingFileRu, { s.screeningGreetingFileRu = it },
+                    s.screeningGreetingTextRu, { s.screeningGreetingTextRu = it })
+                Spacer(Modifier.height(12.dp))
+                GreetingLangSlot(ctx, scope, "English", "en",
+                    s.screeningGreetingSourceEn, { s.screeningGreetingSourceEn = it },
+                    s.screeningGreetingFileEn, { s.screeningGreetingFileEn = it },
+                    s.screeningGreetingTextEn, { s.screeningGreetingTextEn = it })
+            }
+
             ExpandableSection("Управление по SMS") {
                 SwitchRow("Принимать команды с доверенных номеров", smsCmdOn) { smsCmdOn = it; s.smsCommandsOn = it }
                 Text("Команды (регистр не важен): STATUS — состояние, OFF — выключить автоответ, "
@@ -1161,10 +1220,10 @@ fun AppScreen() {
 }
 
 /** Копирует выбранный аудиофайл приветствия в приватную папку и возвращает путь. */
-private fun importGreetingFile(ctx: Context, uri: android.net.Uri): String? = try {
+private fun importGreetingFile(ctx: Context, uri: android.net.Uri, slot: String = "greeting_src"): String? = try {
     val dir = java.io.File(ctx.filesDir, "am").apply { mkdirs() }
     val ext = ctx.contentResolver.getType(uri)?.substringAfterLast('/')?.take(4) ?: "dat"
-    val dst = java.io.File(dir, "greeting_src.$ext")
+    val dst = java.io.File(dir, "$slot.$ext")
     ctx.contentResolver.openInputStream(uri)?.use { input -> dst.outputStream().use { input.copyTo(it) } }
     if (dst.length() > 0) dst.absolutePath else null
 } catch (e: Exception) { null }
@@ -1296,6 +1355,38 @@ private fun ExpandableSection(
 @Composable
 internal fun LangChip(label: String, code: String, current: String, onSelect: (String) -> Unit) {
     FilterChip(current == code, { onSelect(code) }, { Text(label) })
+}
+
+@Composable
+private fun GreetingLangSlot(
+    ctx: Context, scope: kotlinx.coroutines.CoroutineScope,
+    title: String, slot: String,
+    source: Int, onSource: (Int) -> Unit,
+    file: String, onFile: (String) -> Unit,
+    text: String, onText: (String) -> Unit
+) {
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    var src by remember(slot) { mutableStateOf(source) }
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(src == 0, { src = 0; onSource(0) }, { Text("Синтез (TTS)") })
+        FilterChip(src == 1, { src = 1; onSource(1) }, { Text("Свой файл") })
+    }
+    if (src == 0) {
+        var gText by remember(slot) { mutableStateOf(text) }
+        OutlinedTextField(gText, { gText = it; onText(it) },
+            label = { Text("Текст приветствия ($title)") }, modifier = Modifier.fillMaxWidth())
+    } else {
+        var gFile by remember(slot) { mutableStateOf(file) }
+        val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) scope.launch {
+                val p = withContext(Dispatchers.IO) { importGreetingFile(ctx, uri, "screen_greeting_$slot") }
+                if (p != null) { onFile(p); gFile = p }
+            }
+        }
+        Button(onClick = { picker.launch("audio/*") }) { Text("Выбрать аудиофайл") }
+        Text(if (gFile.isNotBlank()) "Файл: ${java.io.File(gFile).name}" else "Файл не выбран",
+            style = MaterialTheme.typography.bodySmall)
+    }
 }
 
 @Composable
