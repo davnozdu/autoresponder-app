@@ -582,19 +582,22 @@ fun AppScreen() {
                     s.screeningGreetingSourceCs, { s.screeningGreetingSourceCs = it },
                     s.screeningGreetingFileCs, { s.screeningGreetingFileCs = it },
                     s.screeningGreetingTextCs, { s.screeningGreetingTextCs = it },
-                    s.screeningGreetingLangCs, { s.screeningGreetingLangCs = it })
+                    s.screeningGreetingLangCs, { s.screeningGreetingLangCs = it },
+                    s.screeningHoldFileCs, { s.screeningHoldFileCs = it })
                 Spacer(Modifier.height(12.dp))
                 GreetingLangSlot(ctx, scope, "Русский", "ru",
                     s.screeningGreetingSourceRu, { s.screeningGreetingSourceRu = it },
                     s.screeningGreetingFileRu, { s.screeningGreetingFileRu = it },
                     s.screeningGreetingTextRu, { s.screeningGreetingTextRu = it },
-                    s.screeningGreetingLangRu, { s.screeningGreetingLangRu = it })
+                    s.screeningGreetingLangRu, { s.screeningGreetingLangRu = it },
+                    s.screeningHoldFileRu, { s.screeningHoldFileRu = it })
                 Spacer(Modifier.height(12.dp))
                 GreetingLangSlot(ctx, scope, "English", "en",
                     s.screeningGreetingSourceEn, { s.screeningGreetingSourceEn = it },
                     s.screeningGreetingFileEn, { s.screeningGreetingFileEn = it },
                     s.screeningGreetingTextEn, { s.screeningGreetingTextEn = it },
-                    s.screeningGreetingLangEn, { s.screeningGreetingLangEn = it })
+                    s.screeningGreetingLangEn, { s.screeningGreetingLangEn = it },
+                    s.screeningHoldFileEn, { s.screeningHoldFileEn = it })
             }
 
             ExpandableSection("Управление по SMS") {
@@ -1367,7 +1370,8 @@ private fun GreetingLangSlot(
     source: Int, onSource: (Int) -> Unit,
     file: String, onFile: (String) -> Unit,
     text: String, onText: (String) -> Unit,
-    lang: String, onLang: (String) -> Unit
+    lang: String, onLang: (String) -> Unit,
+    holdFile: String, onHoldFile: (String) -> Unit
 ) {
     Text(title, style = MaterialTheme.typography.titleSmall)
     var src by remember(slot) { mutableStateOf(source) }
@@ -1399,6 +1403,24 @@ private fun GreetingLangSlot(
         Text(if (gFile.isNotBlank()) "Файл: ${java.io.File(gFile).name}" else "Файл не выбран",
             style = MaterialTheme.typography.bodySmall)
     }
+    Spacer(Modifier.height(6.dp))
+    Text("После приветствия (по кругу, пока абонент ждёт) — необязательно:",
+        style = MaterialTheme.typography.bodySmall)
+    var gHold by remember(slot) { mutableStateOf(holdFile) }
+    val holdPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            val p = withContext(Dispatchers.IO) { importGreetingFile(ctx, uri, "screen_hold_$slot") }
+            if (p != null) { onHoldFile(p); gHold = p }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Button(onClick = { holdPicker.launch("audio/*") }) { Text("Выбрать музыку/сообщение") }
+        if (gHold.isNotBlank()) {
+            TextButton(onClick = { onHoldFile(""); gHold = "" }) { Text("Убрать") }
+        }
+    }
+    Text(if (gHold.isNotBlank()) "Файл: ${java.io.File(gHold).name} (по кругу)" else "Не задано — играет обычный зуммер",
+        style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

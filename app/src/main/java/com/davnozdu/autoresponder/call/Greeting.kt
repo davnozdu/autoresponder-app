@@ -42,6 +42,9 @@ object Greeting {
     // Сколько разных приветствий держим в кэше одновременно (общее + по контакту ЧС) — с
     // запасом под редактирование текстов; лишние (самые старые) удаляются при каждом prepare().
     private const val KEEP_CACHED = 24
+    // Хвостовых файлов «после приветствия» физически максимум 3 (по языку) — небольшой
+    // запас на переезаливание, не 24 как у самих приветствий.
+    private const val KEEP_HOLD = 6
 
     // Параметры бипа — «долгий гудок, как у классического автоответчика».
     private const val SR = 48000
@@ -72,6 +75,13 @@ object Greeting {
         if (files.size <= KEEP_CACHED) return
         files.filter { it != exceptFile }.sortedBy { it.lastModified() }
             .dropLast((KEEP_CACHED - 1).coerceAtLeast(0)).forEach { it.delete() }
+
+        // «Хвостовые» файлы после приветствия — максимум 3 языка, но при переезаливании
+        // старые остаются; небольшой потолок с запасом на пересборку кэша.
+        val holdFiles = dir(app).listFiles { f -> f.name.startsWith("hold-") && f.name.endsWith(".pcm") }
+            ?: return
+        if (holdFiles.size <= KEEP_HOLD) return
+        holdFiles.sortedBy { it.lastModified() }.dropLast(KEEP_HOLD).forEach { it.delete() }
     }
 
     /** @return путь к raw PCM приветствия (речь+бип) или null. [lang] — явный язык TTS (код
@@ -140,51 +150,78 @@ object Greeting {
         return bb.array()
     }
 
-    /** Один и тот же блок бипа, повторённый столько раз, чтобы покрыть [maxTotalMs] —
-     *  для зуммера скрининга: абонент слышит повторяющийся сигнал, пока владелец не решит
-     *  («Принять»/«Отклонить») или пока не истечёт [Settings.amMaxMessageSec]. Минимум один
-     *  повтор всегда, даже при [maxTotalMs] <= 0 (испорченная настройка не должна давать
-     *  пустой/битый PCM). */
-    fun repeatingBeepPcm(maxTotalMs: Int): ByteArray {
-        val unit = beepTailPcm()
-        val unitMs = BEEP_GAP_MS + BEEP_MS
+    /** [unit] (любой PCM48к/16/stereo-блок), повторённый столько раз, чтобы покрыть
+     *  [maxTotalMs]. Минимум один повтор всегда, даже при [maxTotalMs] <= 0 (испорченная
+     *  настройка не должна давать пустой/битый PCM) и при пустом [unit]. */
+    private fun tileToLength(unit: ByteArray, maxTotalMs: Int): ByteArray {
+        if (unit.isEmpty()) return unit
+        val bytesPerMs = (SR * 4) / 1000   // stereo 16-бит = 4 байта/фрейм
+        val unitMs = (unit.size / bytesPerMs).coerceAtLeast(1)
         val repeats = (maxTotalMs / unitMs).coerceAtLeast(1)
         val out = ByteArray(unit.size * repeats)
         for (i in 0 until repeats) unit.copyInto(out, i * unit.size)
         return out
     }
 
-    /** Приветствие скрининга: как [prepare], но источник — своя тройка настроек на [lang]
-     *  ("cs"/"ru"/"en") вместо общих `amGreeting*`, и после речи повторяющийся зуммер
-     *  ([repeatingBeepPcm]) вместо одного бипа — абонент ждёт под сигнал, пока владелец не
-     *  решит через карточку. Обрывается штатным [AmBridge.stop], отдельного протокола не
-     *  требуется — файл просто длинный (речь + зуммер на всю [maxTotalMs]). */
-    /** [slot] выбирает, какую из трёх коробок читать ("ru"/"en"/иначе cs) — НЕ обязательно
-     *  язык TTS: у каждой коробки свой явный язык синтеза (`screeningGreetingLang*`),
-     *  независимый от того, в какой коробке лежит текст (пользователь попросил явный чип,
-     *  а не неявную привязку языка синтеза к позиции коробки). */
+    /** Один и тот же блок бипа, повторённый столько раз, чтобы покрыть [maxTotalMs] —
+     *  зуммер скрининга по умолчанию (когда для языка не загружен свой файл «после
+     *  приветствия», см. [preparedHoldUnit]): абонент слышит повторяющийся сигнал, пока
+     *  владелец не решит («Принять»/«Отклонить») или пока не истечёт
+     *  [Settings.amMaxMessageSec]. */
+    fun repeatingBeepPcm(maxTotalMs: Int): ByteArray = tileToLength(beepTailPcm(), maxTotalMs)
+
+    private fun holdCacheFile(app: Context, srcPath: String, mtime: Long): File =
+        File(dir(app), "hold-${(srcPath + mtime).hashCode().toUInt().toString(16)}.pcm")
+
+    /** Конвертирует загруженный «файл после приветствия» в raw PCM один раз (кэш по пути+
+     *  mtime, как и у остального), возвращает сами байты для тайлинга — это НЕ то же самое,
+     *  что путь к файлу: демон играет ОДИН файл (речь+хвост), а не два подряд — протокол
+     *  play/stop не даёт узнать, когда первый файл доиграл, чтобы запустить второй. */
+    private fun preparedHoldUnit(app: Context, holdFile: String): ByteArray? {
+        if (holdFile.isBlank()) return null
+        val src = File(holdFile)
+        if (!src.exists()) return null
+        val cf = holdCacheFile(app, holdFile, src.lastModified())
+        if (!cf.exists() || cf.length() == 0L) {
+            if (!AudioConvert.toRawPcm48kStereo(src.absolutePath, cf.absolutePath)) return null
+        }
+        return try { cf.readBytes() } catch (e: Exception) { null }
+    }
+
+    /** Приветствие скрининга: как [prepare], но источник — своя тройка настроек на [slot]
+     *  ("cs"/"ru"/"en") вместо общих `amGreeting*`, и после речи — либо загруженный «файл
+     *  после приветствия» ([Settings.screeningHoldFileCs] и т.п., по кругу), либо, если он
+     *  не задан, повторяющийся зуммер ([repeatingBeepPcm]) — абонент ждёт под него, пока
+     *  владелец не решит через карточку. Обрывается штатным [AmBridge.stop], отдельного
+     *  протокола не требуется — файл просто длинный (речь + хвост на всю [maxTotalMs]).
+     *  [slot] выбирает, какую из трёх коробок читать — НЕ обязательно язык TTS: у каждой
+     *  коробки свой явный язык синтеза (`screeningGreetingLang*`), независимый от того, в
+     *  какой коробке лежит текст (пользователь попросил явный чип, а не неявную привязку
+     *  языка синтеза к позиции коробки). */
     suspend fun prepareScreening(ctx: Context, slot: String, maxTotalMs: Int): String? {
         val app = ctx.applicationContext
         val s = Settings(app)
-        val source: Int; val file: String; val text: String; val ttsLang: String; val defText: String
+        val source: Int; val file: String; val text: String; val ttsLang: String; val defText: String; val holdFile: String
         when (slot) {
             "ru" -> { source = s.screeningGreetingSourceRu; file = s.screeningGreetingFileRu; text = s.screeningGreetingTextRu
-                      ttsLang = s.screeningGreetingLangRu; defText = Settings.DEF_SCREEN_GREETING_RU }
+                      ttsLang = s.screeningGreetingLangRu; defText = Settings.DEF_SCREEN_GREETING_RU; holdFile = s.screeningHoldFileRu }
             "en" -> { source = s.screeningGreetingSourceEn; file = s.screeningGreetingFileEn; text = s.screeningGreetingTextEn
-                      ttsLang = s.screeningGreetingLangEn; defText = Settings.DEF_SCREEN_GREETING_EN }
+                      ttsLang = s.screeningGreetingLangEn; defText = Settings.DEF_SCREEN_GREETING_EN; holdFile = s.screeningHoldFileEn }
             else -> { source = s.screeningGreetingSourceCs; file = s.screeningGreetingFileCs; text = s.screeningGreetingTextCs
-                      ttsLang = s.screeningGreetingLangCs; defText = Settings.DEF_SCREEN_GREETING_CS }
+                      ttsLang = s.screeningGreetingLangCs; defText = Settings.DEF_SCREEN_GREETING_CS; holdFile = s.screeningHoldFileCs }
         }
         val useFile = source == 1 && file.isNotBlank()
+        val holdSrc = if (holdFile.isNotBlank()) File(holdFile) else null
+        val holdKey = if (holdSrc != null && holdSrc.exists()) "${holdSrc.absolutePath}:${holdSrc.lastModified()}" else "beep"
         val src: File?
         val key: String
         if (useFile) {
             src = File(file)
             if (!src.exists()) { EventLog(app).add("AM скрининг: файла нет — $file"); return null }
-            key = "$SYNTH_VER:screen:file:$slot:${src.absolutePath}:${src.lastModified()}:$maxTotalMs"
+            key = "$SYNTH_VER:screen:file:$slot:${src.absolutePath}:${src.lastModified()}:$maxTotalMs:$holdKey"
         } else {
             src = null
-            key = "$SYNTH_VER:screen:tts:$slot:$ttsLang:${text.hashCode()}:$maxTotalMs"
+            key = "$SYNTH_VER:screen:tts:$slot:$ttsLang:${text.hashCode()}:$maxTotalMs:$holdKey"
         }
         val out = cacheFile(app, key)
         if (out.exists() && out.length() > 0) return out.absolutePath
@@ -201,8 +238,10 @@ object Greeting {
             wav.delete()
             if (!ok) { EventLog(app).add("AM скрининг: не сконвертировал TTS"); return null }
         }
-        try { FileOutputStream(out, true).use { it.write(repeatingBeepPcm(maxTotalMs)) } }
-        catch (e: Exception) { EventLog(app).add("AM скрининг: не добавил зуммер (${e.message})") }
+        val tail = preparedHoldUnit(app, holdFile)?.let { tileToLength(it, maxTotalMs) }
+            ?: repeatingBeepPcm(maxTotalMs)
+        try { FileOutputStream(out, true).use { it.write(tail) } }
+        catch (e: Exception) { EventLog(app).add("AM скрининг: не добавил хвост (${e.message})") }
         cleanupOldCaches(app, out)
         return out.absolutePath
     }

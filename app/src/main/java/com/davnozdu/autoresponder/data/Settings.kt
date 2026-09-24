@@ -337,6 +337,11 @@ class Settings(context: Context) {
     var screeningGreetingLangCs: String
         get() = sp.getString(K_SCREEN_LANG_CS, "cs") ?: "cs"
         set(v) = sp.edit().putString(K_SCREEN_LANG_CS, v).apply()
+    /** Свой аудиофайл «после приветствия» (музыка/сообщение по кругу) вместо зуммера —
+     *  необязательно, пусто = обычный зуммер. */
+    var screeningHoldFileCs: String
+        get() = sp.getString(K_SCREEN_HOLD_CS, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_HOLD_CS, v).apply()
 
     var screeningGreetingSourceRu: Int
         get() = sp.getInt(K_SCREEN_SRC_RU, 0)
@@ -350,6 +355,9 @@ class Settings(context: Context) {
     var screeningGreetingLangRu: String
         get() = sp.getString(K_SCREEN_LANG_RU, "ru") ?: "ru"
         set(v) = sp.edit().putString(K_SCREEN_LANG_RU, v).apply()
+    var screeningHoldFileRu: String
+        get() = sp.getString(K_SCREEN_HOLD_RU, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_HOLD_RU, v).apply()
 
     var screeningGreetingSourceEn: Int
         get() = sp.getInt(K_SCREEN_SRC_EN, 0)
@@ -363,6 +371,9 @@ class Settings(context: Context) {
     var screeningGreetingLangEn: String
         get() = sp.getString(K_SCREEN_LANG_EN, "en") ?: "en"
         set(v) = sp.edit().putString(K_SCREEN_LANG_EN, v).apply()
+    var screeningHoldFileEn: String
+        get() = sp.getString(K_SCREEN_HOLD_EN, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_HOLD_EN, v).apply()
 
     /** Сколько секунд держим линию под сообщение клиента, затем отбой. */
     var amMaxMessageSec: Int
