@@ -22,6 +22,14 @@ import java.io.File
  */
 object WaImporter {
 
+    /** [added] — число новых записей, [lastTs] — timestamp последней строки, реально
+     *  просмотренной в этом проходе (-1, если проход не вернул ни одной строки: тогда
+     *  advance по mtime копии безопасен, см. [MsgrBridge.importOne]). LIMIT в [SQL] режет
+     *  проход на 4000 строк — при большой первичной истории [lastTs] может остаться
+     *  посреди backlog, и следующий вызов должен продолжить именно с него, а не
+     *  перепрыгивать сразу на mtime (иначе остаток backlog терялся бы навсегда). */
+    data class Result(val added: Int, val lastTs: Long)
+
     /** Глубина первого импорта. Дальше берём только новее водяного знака. */
     private const val FIRST_RUN_DAYS = 120L
 
@@ -57,9 +65,9 @@ object WaImporter {
         LIMIT 4000
     """
 
-    /** @return число добавленных записей, -1 если базы нет или её не открыть. */
-    fun import(context: Context, dbFile: File, channel: String, since: Long): Int {
-        if (!dbFile.exists()) return -1
+    /** @return [Result]; added=-1 если базы нет или её не открыть. */
+    fun import(context: Context, dbFile: File, channel: String, since: Long): Result {
+        if (!dbFile.exists()) return Result(-1, -1)
         val prefix = com.davnozdu.autoresponder.data.Settings(context).aiPrefix.trim()
         val log = EventLog(context)
         val db = try {
@@ -67,11 +75,13 @@ object WaImporter {
             // записи SQLite не сможет его накатить — свежие сообщения не увидим.
             SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
         } catch (e: Exception) {
-            log.add("WA импорт: база не открылась (${e.message})"); return -1
+            log.add("WA импорт: база не открылась (${e.message})"); return Result(-1, -1)
         }
         val from = if (since > 0) since else
             System.currentTimeMillis() - FIRST_RUN_DAYS * 86_400_000L
         var added = 0
+        var rows = 0
+        var lastTs = -1L
         // Имя контакта кэшируем на время импорта: запрос к книге на каждую из тысяч строк
         // растягивал бы импорт на минуты (та же причина, что в [Importer]).
         val names = HashMap<String, String?>()
@@ -87,10 +97,15 @@ object WaImporter {
                     val iTs = c.getColumnIndexOrThrow("ts")
                     val iBody = c.getColumnIndexOrThrow("body")
                     while (c.moveToNext()) {
+                        rows++
+                        // ts — ДО любых continue: SQL сортирует по timestamp, так что ts
+                        // последней просмотренной строки (даже пропущенной) — верная граница
+                        // прохода для watermark, независимо от того, была ли строка вставлена.
+                        val ts = c.getLong(iTs)
+                        lastTs = ts
                         val raw = c.getString(iNum) ?: continue
                         val body = c.getString(iBody)?.trim().orEmpty()
                         if (body.isEmpty()) continue
-                        val ts = c.getLong(iTs)
                         val dir = if (c.getInt(iFm) == 1) "out" else "in"
                         // jid.user — цифры без «+»; приводим к тому же виду, что SMS и звонки,
                         // иначе PersonThreads не склеит ветки одного человека.
@@ -122,6 +137,6 @@ object WaImporter {
             try { db.close() } catch (_: Exception) {}
         }
         if (added > 0) PersonThreads.invalidate()
-        return added
+        return Result(added, if (rows > 0) lastTs else -1)
     }
 }

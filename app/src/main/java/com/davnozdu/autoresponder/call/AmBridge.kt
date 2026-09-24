@@ -11,10 +11,10 @@ import java.io.File
  * его не запросить. Поэтому проигрывание приветствия в линию делает нативный `pal_inject`
  * под root, а приложение лишь шлёт ему команду файлом (как MsgrBridge для баз мессенджеров).
  *
- * Протокол — одна строка в `files/am/req`:
- *   play <raw_pcm_abspath> <loops>   проиграть приветствие (PCM 48к/16/stereo)
- *   stop                              снять проигрывание
- *   muteout on|off                    root-fallback заглушения вывода владельцу
+ * Протокол — одна строка в `files/am/req`, первый токен — id команды (см. [write]):
+ *   <id> play <raw_pcm_abspath> <loops>   проиграть приветствие (PCM 48к/16/stereo)
+ *   <id> stop                              снять проигрывание
+ *   <id> muteout on|off                    root-fallback заглушения вывода владельцу
  *
  * Модуля может не быть — тогда req никто не читает; приложение это переживает (приветствие
  * просто не прозвучит, остальной автоответчик работает).
@@ -37,7 +37,14 @@ object AmBridge {
      *  приветствие не звучало, хотя демон был жив и остальные команды исправно доходили.
      *  Поэтому здесь ждём ответ демона (reply() в answermachine.sh пишет его на КАЖДУЮ
      *  команду) перед тем как разрешить следующей команде перезаписать req; не дождались —
-     *  не страшно, отвечаем по факту таймаута и едем дальше (демон может быть не установлен). */
+     *  не страшно, отвечаем по факту таймаута и едем дальше (демон может быть не установлен).
+     *
+     *  Каждой команде — свой id (первый токен строки, эхом возвращается в resp): раньше ack
+     *  считали по факту "текст resp изменился", а resp — "<epoch> ok|err <detail>" без
+     *  привязки к конкретной команде. Две одинаковые команды в одну секунду давали
+     *  идентичный resp (ack не засчитывался, ждали весь таймаут впустую), а старый resp от
+     *  ПРЕДЫДУЩЕЙ команды мог быть принят за ACK следующей, если демон не успел его
+     *  перезаписать. Сверка по id исключает оба случая. */
     private const val ACK_TIMEOUT_MS = 400L
     private const val ACK_POLL_MS = 15L
 
@@ -46,12 +53,15 @@ object AmBridge {
         try {
             val d = dir(app); if (!d.isDirectory) d.mkdirs()
             val respFile = resp(app)
-            val before = runCatching { respFile.readText() }.getOrDefault("")
-            req(app).writeText(line)
+            val id = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+            req(app).writeText("$id $line")
             val deadline = System.currentTimeMillis() + ACK_TIMEOUT_MS
             while (System.currentTimeMillis() < deadline) {
                 val now = runCatching { respFile.readText() }.getOrDefault("")
-                if (now.isNotEmpty() && now != before) return
+                // resp: "<epoch> <id> ok|err <detail>" — ack засчитываем, только если id
+                // совпадает с этой командой.
+                val respId = now.split(' ', limit = 3).getOrNull(1)
+                if (respId == id) return
                 Thread.sleep(ACK_POLL_MS)
             }
         } catch (e: Exception) {
@@ -76,9 +86,6 @@ object AmBridge {
      *  от [screenOff]. Портировано из github.com/davnozdu/vr-usb-monitor. Демон сам следит за
      *  [appPid] root-сторожем и откатит блокировку, если процесс исчезнет без [blockOff]. */
     fun blockOn(ctx: Context, appPid: Int) = write(ctx, "blockon $appPid")
-
-    /** DisplayManager перебивает подсветку через пару секунд — звать на каждом тике ожидания. */
-    fun redim(ctx: Context) = write(ctx, "redim")
 
     fun blockOff(ctx: Context) = write(ctx, "blockoff")
 

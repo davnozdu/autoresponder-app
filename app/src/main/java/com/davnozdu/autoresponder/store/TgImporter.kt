@@ -40,20 +40,23 @@ object TgImporter {
      */
     private val SERVICE_UIDS = setOf(777000L, 1271266957L, 93372553L)
 
-    /** @return число добавленных записей, -1 если базы нет или её не открыть. */
-    fun import(context: Context, dbFile: File, since: Long): Int {
-        if (!dbFile.exists()) return -1
+    /** @return [WaImporter.Result]; added=-1 если базы нет или её не открыть, lastTs в мс
+     *  (как и [WaImporter.Result.lastTs]), хотя `date` у Telegram в секундах. */
+    fun import(context: Context, dbFile: File, since: Long): WaImporter.Result {
+        if (!dbFile.exists()) return WaImporter.Result(-1, -1)
         val prefix = com.davnozdu.autoresponder.data.Settings(context).aiPrefix.trim()
         val log = EventLog(context)
         val db = try {
             SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
         } catch (e: Exception) {
-            log.add("TG импорт: база не открылась (${e.message})"); return -1
+            log.add("TG импорт: база не открылась (${e.message})"); return WaImporter.Result(-1, -1)
         }
         // Секунды: у Telegram `date` в секундах, у нашей истории — в миллисекундах.
         val fromSec = ((if (since > 0) since
             else System.currentTimeMillis() - FIRST_RUN_DAYS * 86_400_000L) / 1000L)
         var added = 0
+        var rows = 0
+        var lastTsSec = -1L
         val threads = HashMap<String, List<String>>()
         try {
             val people = loadPeople(context, db)
@@ -65,9 +68,12 @@ object TgImporter {
                     arrayOf(fromSec.toString())
                 ).use { c ->
                     while (c.moveToNext()) {
+                        rows++
+                        // date — ДО любых continue, та же логика watermark, что в WaImporter.
+                        val dateSec = c.getInt(1)
+                        lastTsSec = dateSec.toLong()
                         val uid = c.getLong(0)
                         val person = people[uid] ?: continue   // бот или незнакомец без имени
-                        val dateSec = c.getInt(1)
                         val dir = if (c.getInt(2) == 1) "out" else "in"
                         val blob = c.getBlob(3) ?: continue
                         if (TlBlob.isService(blob)) continue   // звонки и «вошёл в чат» — не реплики
@@ -98,7 +104,7 @@ object TgImporter {
             try { db.close() } catch (_: Exception) {}
         }
         if (added > 0) PersonThreads.invalidate()
-        return added
+        return WaImporter.Result(added, if (rows > 0) lastTsSec * 1000L else -1)
     }
 
     /** Ключ ветки и имя для одного собеседника. */

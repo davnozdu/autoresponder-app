@@ -234,23 +234,27 @@ object MsgrBridge {
     private fun importOne(context: Context, db: File, channel: String, key: String,
                           p: android.content.SharedPreferences): Int? {
         if (!db.exists()) return null
-        val added = WaImporter.import(context, db, channel, since(p, key))
-        p.edit().putString("health_${db.parentFile?.name}", if(added<0) "Ошибка импорта" else "Импорт OK · ${java.text.SimpleDateFormat("dd.MM HH:mm",java.util.Locale.getDefault()).format(java.util.Date())} · +$added").apply()
-        if (added < 0) return null
-        // Водяной знак двигаем по времени копии, а не по последнему сообщению: сообщений
-        // может не быть вовсе, и тогда следующий импорт снова перебирал бы 120 дней.
-        p.edit().putLong(key, db.lastModifiedSafe()).apply()
-        return added
+        val r = WaImporter.import(context, db, channel, since(p, key))
+        p.edit().putString("health_${db.parentFile?.name}", if(r.added<0) "Ошибка импорта" else "Импорт OK · ${java.text.SimpleDateFormat("dd.MM HH:mm",java.util.Locale.getDefault()).format(java.util.Date())} · +${r.added}").apply()
+        if (r.added < 0) return null
+        // Водяной знак — по timestamp последней ПРОСМОТРЕННОЙ строки прохода (r.lastTs), а
+        // не по mtime копии: SQL режет проход на 4000 строк, и при большой первичной истории
+        // mtime сразу перепрыгивал бы весь backlog, теряя навсегда всё за пределами первых
+        // 4000. r.lastTs == -1 — проход не вернул ни одной строки (реально нечего импортить),
+        // тогда безопасно и эффективнее продвинуться до mtime, а не пере-сканировать 120 дней
+        // на каждом следующем проходе.
+        p.edit().putLong(key, if (r.lastTs >= 0) r.lastTs else db.lastModifiedSafe()).apply()
+        return r.added
     }
 
     private fun importTelegram(context: Context, db: File,
                                p: android.content.SharedPreferences): Int? {
         if (!db.exists()) return null
-        val added = TgImporter.import(context, db, since(p, K_TG))
-        p.edit().putString("health_${db.parentFile?.name}", if(added<0) "Ошибка импорта" else "Импорт OK · ${java.text.SimpleDateFormat("dd.MM HH:mm",java.util.Locale.getDefault()).format(java.util.Date())} · +$added").apply()
-        if (added < 0) return null
-        p.edit().putLong(K_TG, db.lastModifiedSafe()).apply()
-        return added
+        val r = TgImporter.import(context, db, since(p, K_TG))
+        p.edit().putString("health_${db.parentFile?.name}", if(r.added<0) "Ошибка импорта" else "Импорт OK · ${java.text.SimpleDateFormat("dd.MM HH:mm",java.util.Locale.getDefault()).format(java.util.Date())} · +${r.added}").apply()
+        if (r.added < 0) return null
+        p.edit().putLong(K_TG, if (r.lastTs >= 0) r.lastTs else db.lastModifiedSafe()).apply()
+        return r.added
     }
     fun health(context: Context): String {
         val p=prefs(context)

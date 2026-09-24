@@ -61,10 +61,17 @@ object Greeting {
 
     private fun dir(ctx: Context) = File(ctx.applicationContext.filesDir, DIR).apply { mkdirs() }
 
-    /** Имя файла кэша = хэш ключа: разные (текст,язык)/(файл,mtime) физически не могут
-     *  попасть в один слот, поэтому сверять ключ отдельным .key-файлом больше не нужно. */
+    /** SHA-256 ключа, не Java String.hashCode() — тот 32-битный и коллизии обычное дело
+     *  (напр. "Aa" и "BB" дают одинаковый hashCode). Имя файла кэша = хэш ключа: разные
+     *  (текст,язык)/(файл,mtime) на практике не попадают в один слот, сверять ключ
+     *  отдельным .key-файлом не нужно. */
+    private fun keyDigest(key: String): String {
+        val d = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
+        return d.joinToString("") { "%02x".format(it) }
+    }
+
     private fun cacheFile(app: Context, key: String): File =
-        File(dir(app), "greeting-${key.hashCode().toUInt().toString(16)}.pcm")
+        File(dir(app), "greeting-${keyDigest(key)}.pcm")
 
     private fun cleanupOldCaches(app: Context, exceptFile: File) {
         // Легаси-имя из версии, где все приветствия делили один слот — больше не читается
@@ -105,27 +112,37 @@ object Greeting {
             text = (overrideText?.takeIf { it.isNotBlank() }
                 ?: s.amGreetingText).ifBlank { Settings.DEF_AM_GREETING }
             lc = (lang?.takeIf { it.isNotBlank() } ?: Locale.getDefault().language)
-            key = "$SYNTH_VER:tts:$lc:${text.hashCode()}"
+            // Сам текст в ключе, не text.hashCode() — 32-битный Java hashCode уже здесь
+            // мог бы склеить два разных приветствия («Aa»/«BB» и т.п.) в один ключ ещё до
+            // хэширования имени файла ниже.
+            key = "$SYNTH_VER:tts:$lc:$text"
         }
         val out = cacheFile(app, key)
         if (out.exists() && out.length() > 0) return out.absolutePath
 
+        // Пишем во временный файл и переименовываем в конце — если параллельный вызов
+        // (напр. соседний контакт ЧС с тем же текстом) застанет out.exists() посреди
+        // записи, он не должен прочитать недописанный/битый PCM.
+        val tmp = File(dir(app), "${out.name}.${System.nanoTime()}.tmp")
         if (useFile) {
-            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, out.absolutePath)) {
-                EventLog(app).add("AM приветствие: не сконвертировал файл ${src.name}"); return null
+            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, tmp.absolutePath)) {
+                EventLog(app).add("AM приветствие: не сконвертировал файл ${src.name}"); tmp.delete(); return null
             }
         } else {
             val wav = synthTts(app, text, lc) ?: run {
                 EventLog(app).add("AM приветствие: TTS недоступен/не ответил вовремя"); return null
             }
-            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, out.absolutePath)
+            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, tmp.absolutePath)
             wav.delete()
-            if (!ok) { EventLog(app).add("AM приветствие: не сконвертировал TTS"); return null }
+            if (!ok) { EventLog(app).add("AM приветствие: не сконвертировал TTS"); tmp.delete(); return null }
         }
         // Дописываем бип ПОСЛЕ речи — это headerless PCM, поэтому обычный append байтов и
         // даёт правильную склейку без перекодирования и без щелчка на стыке (есть fade).
-        try { FileOutputStream(out, true).use { it.write(beepTailPcm()) } }
+        try { FileOutputStream(tmp, true).use { it.write(beepTailPcm()) } }
         catch (e: Exception) { EventLog(app).add("AM приветствие: не добавил бип (${e.message})") }
+        if (!tmp.renameTo(out)) {
+            EventLog(app).add("AM приветствие: не завершил запись кэша"); tmp.delete(); return null
+        }
         cleanupOldCaches(app, out)
         return out.absolutePath
     }
@@ -171,7 +188,7 @@ object Greeting {
     fun repeatingBeepPcm(maxTotalMs: Int): ByteArray = tileToLength(beepTailPcm(), maxTotalMs)
 
     private fun holdCacheFile(app: Context, srcPath: String, mtime: Long): File =
-        File(dir(app), "hold-${(srcPath + mtime).hashCode().toUInt().toString(16)}.pcm")
+        File(dir(app), "hold-${keyDigest("$srcPath:$mtime")}.pcm")
 
     /** Конвертирует загруженный «файл после приветствия» в raw PCM один раз (кэш по пути+
      *  mtime, как и у остального), возвращает сами байты для тайлинга — это НЕ то же самое,

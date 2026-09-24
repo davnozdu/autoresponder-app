@@ -56,7 +56,9 @@ object Backup {
             db.rawQuery("PRAGMA integrity_check", null).use { c ->
                 check(c.moveToFirst() && c.getString(0) == "ok" && !c.moveToNext()) { "Бэкап повреждён" }
             }
-            check(db.version == 9) { "Неподдерживаемая версия базы: ${db.version}; нужна 9" }
+            check(db.version == HistoryDb.DB_VERSION) {
+                "Неподдерживаемая версия базы: ${db.version}; нужна ${HistoryDb.DB_VERSION}"
+            }
             for (table in TABLES) db.rawQuery("SELECT * FROM $table LIMIT 0",null).use { }
         }
     }
@@ -133,7 +135,7 @@ object Backup {
         return (if(at==0L) "Проверенный бэкап ещё не создан" else "Проверен: ${p.getString("verified_name","")}") +
             if(error.isBlank()) "" else "\nОшибка: $error"
     }
-    private val TABLES=listOf("events","blacklist","qa","bl_pending","sms_hold","inbox_done")
+    private val TABLES=listOf("events","blacklist","qa","bl_pending","sms_hold","inbox_done","am_rec")
 
     /** Запланировать следующий ежедневный бэкап (идемпотентно). */
     fun schedule(context: Context) {

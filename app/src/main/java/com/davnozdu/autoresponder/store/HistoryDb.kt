@@ -41,7 +41,7 @@ data class AmRec(
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
 class HistoryDb internal constructor(context: Context, name: String = "history.db") :
-    SQLiteOpenHelper(context.applicationContext, name, null, 11) {
+    SQLiteOpenHelper(context.applicationContext, name, null, DB_VERSION) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -597,6 +597,10 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     }
 
     companion object {
+        /** Версия схемы — сверяется в [com.davnozdu.autoresponder.store.Backup.validate], чтобы
+         *  не разойтись с магическим числом там при следующем изменении схемы. */
+        const val DB_VERSION = 11
+
         /**
          * Окно сверки дублей для мессенджеров. Отметка времени у мессенджера серверная, а
          * уведомление приходит с задержкой доставки: на устройстве наблюдались расхождения

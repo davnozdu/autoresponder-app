@@ -50,18 +50,22 @@ object AudioConvert {
         var rate = 0; var channels = 0; var bits = 0; var dataOff = -1; var dataLen = 0
         while (pos + 8 <= bytes.size) {
             val id = String(bytes, pos, 4)
-            val sz = bb.getInt(pos + 4)
+            // Unsigned: signed Int для повреждённого/враждебного chunk size (напр. -8) даёт
+            // pos = body + sz + (sz and 1) == pos — цикл не двигается и виснет на рабочем
+            // потоке звонка без таймаута. Границу проверяем ДО арифметики, а не после.
+            val sz = bb.getInt(pos + 4).toLong() and 0xFFFFFFFFL
             val body = pos + 8
+            if (sz > bytes.size - body) break // усечённый/битый chunk — дальше не парсим
             when (id) {
-                "fmt " -> {
+                "fmt " -> if (body + 16 <= bytes.size) {
                     channels = bb.getShort(body + 2).toInt()
                     rate = bb.getInt(body + 4)
                     bits = bb.getShort(body + 14).toInt()
                 }
-                "data" -> { dataOff = body; dataLen = sz }
+                "data" -> { dataOff = body; dataLen = sz.toInt() }
             }
             if (dataOff >= 0 && rate > 0) break
-            pos = body + sz + (sz and 1) // чанки выровнены по 2 байта
+            pos = body + sz.toInt() + (sz.toInt() and 1) // чанки выровнены по 2 байта; body+8 гарантирует рост даже при sz=0
         }
         if (dataOff < 0 || rate <= 0 || channels <= 0 || bits != 16) return null
         val n = minOf(dataLen, bytes.size - dataOff) / 2

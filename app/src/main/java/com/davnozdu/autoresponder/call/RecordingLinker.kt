@@ -53,7 +53,10 @@ object RecordingLinker {
             val safeNum = (number ?: "unknown").replace(Regex("[^+0-9]"), "")
             val name = "${tsName(sinceMs)}_${safeNum}.$ext"
             val dst = File(dstDir, name)
-            src.copyTo(dst, overwrite = true)
+            // overwrite=false: имя теперь до миллисекунды + номер, совпадение означает
+            // повторный вызов linkLatest для того же звонка — тихая перезапись здесь
+            // раньше молча стирала первую запись при коллизии по минуте.
+            src.copyTo(dst, overwrite = false)
             val dur = durationMs(dst.absolutePath)
             EventLog(app).add("AM запись: ${src.name} → ${dst.name} (${dur/1000}s)")
             dst.absolutePath to dur
@@ -89,6 +92,8 @@ object RecordingLinker {
         }
     } catch (e: Exception) { 0L }
 
+    // До миллисекунды: два звонка с одного номера в ту же минуту раньше делили одно имя
+    // (yyyyMMdd-HHmm) и copyTo(overwrite=true) молча стирал первую запись второй.
     private fun tsName(ts: Long): String =
-        java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(ts))
+        java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", java.util.Locale.US).format(java.util.Date(ts))
 }

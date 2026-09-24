@@ -43,13 +43,24 @@ class AnswerMachineService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
-        active = this
         val number = intent?.getStringExtra(EX_NUMBER)
         val name = intent?.getStringExtra(EX_NAME)
         val reason = intent?.getStringExtra(EX_REASON) ?: "closed"
         val lang = intent?.getStringExtra(EX_LANG)
         val text = intent?.getStringExtra(EX_TEXT)
         val testSec = intent?.getIntExtra(EX_TEST_SEC, 0) ?: 0
+        // Второй звонок может стартовать сервис, пока первый ещё не завершился (call
+        // waiting) — onStartCommand у Service вызывается на том же экземпляре повторно.
+        // Весь протокол демона (req/resp, PID-файлы, единственный rec.wav) на одну сессию,
+        // не на звонок, поэтому второй параллельный сценарий ломал бы состояние первого.
+        // onStartCommand всегда на главном потоке — проверка-и-установка без гонки.
+        if (busy) {
+            EventLog(applicationContext).add("AM: параллельный вызов ${number ?: "?"} пропущен — уже идёт другая сессия")
+            stopSelfSafe()
+            return START_NOT_STICKY
+        }
+        busy = true
+        active = this
         scope.launch {
             try {
                 when (reason) {
@@ -59,7 +70,7 @@ class AnswerMachineService : Service() {
                 }
             }
             catch (e: Exception) { EventLog(applicationContext).add("AM: сбой (${e.message})") }
-            finally { stopSelfSafe() }
+            finally { busy = false; stopSelfSafe() }
         }
         return START_NOT_STICKY
     }
@@ -73,17 +84,13 @@ class AnswerMachineService : Service() {
         EventLog(app).add("AM ТЕСТ: старт на ${seconds}с (blockon: подсветка+тач)")
         AmBridge.blockOn(app, android.os.Process.myPid())
         AmBlockOverlay.show(app)
-        // Временная проверка гонки play->redim (см. AmBridge.write): шлём play несуществующим
-        // путём (демон ответит err nofile — это ожидаемо и не мешает проверке) вплотную перед
-        // тем же циклом redim, что и в runFlow, чтобы поймать live-звонком найденную потерю
-        // команды без реального звонка.
+        // Смоук-тест команды play (демон ответит err nofile на несуществующий путь — это
+        // ожидаемо и не мешает проверке самой доставки команды/ack).
         AmBridge.play(app, "/data/local/tmp/am_race_test_nofile.pcm", 1)
         try {
-            val deadline = System.currentTimeMillis() + seconds * 1000L
-            while (System.currentTimeMillis() < deadline) {
-                AmBridge.redim(app)
-                delay(400)
-            }
+            // Подсветку теперь держит локальный цикл демона (redim_loop.sh, запускается
+            // самим blockon) — просто ждём истечения теста.
+            delay(seconds * 1000L)
         } finally {
             AmBlockOverlay.hide(app)
             AmBridge.blockOff(app)
@@ -131,7 +138,7 @@ class AnswerMachineService : Service() {
             // пока после звонка не выяснится, что штатная запись не появилась (см. шаг 7).
             val safeNum = (number ?: "unknown").replace(Regex("[^+0-9]"), "")
             val ownRecPath = "/sdcard/AutoResponder/recordings/" +
-                java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(start)) +
+                java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", java.util.Locale.US).format(java.util.Date(start)) +
                 "_${safeNum}_own.wav"
             val maxSec = s.amMaxMessageSec.coerceIn(5, 300)
             AmBridge.recStart(app, maxSec)
@@ -257,7 +264,7 @@ class AnswerMachineService : Service() {
             }
             val safeNum = (number ?: "unknown").replace(Regex("[^+0-9]"), "")
             val ownRecPath = "/sdcard/AutoResponder/recordings/" +
-                java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(start)) +
+                java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", java.util.Locale.US).format(java.util.Date(start)) +
                 "_${safeNum}_own.wav"
             val maxSec = s.amMaxMessageSec.coerceIn(5, 300)
             AmBridge.recStart(app, maxSec)
@@ -371,6 +378,12 @@ class AnswerMachineService : Service() {
         // не стоит долбить acceptRingingCall() ещё несколько секунд впустую.
         while (System.currentTimeMillis() < deadline && !offhook && !idle) {
             try { tm.acceptRingingCall() } catch (_: Exception) {}
+            // Резервный путь, независимый от broadcast: Android документирует, что системный
+            // OFFHOOK-broadcast от привилегированного отправителя может не дойти до
+            // RECEIVER_NOT_EXPORTED-ресивера на части OEM-прошивок (см. registerWatcher).
+            // TelecomManager.isInCall() ничего не ждёт от системы вещания — если он уже
+            // видит активный вызов, считаем «ответили», не дожидаясь broadcast вовсе.
+            if (runCatching { tm.isInCall() }.getOrDefault(false)) { offhook = true; break }
             delay(400)
         }
     }
@@ -390,13 +403,14 @@ class AnswerMachineService : Service() {
         while (System.currentTimeMillis() < deadline && !idle) delay(300)
     }
 
-    /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость (что-то сбрасывает
-     *  их при смене состояния экрана, разовой установки недостаточно) и повторяет [AmBridge.redim]
-     *  (DisplayManager перебивает подсветку через пару секунд). Тик — это и окно видимой глазом
-     *  вспышки подсветки между переустановками (экран держим логически «включённым» намеренно —
-     *  настоящий сон меняет маршрут звука, см. комментарий у шага 6), поэтому короткий: 30мс
-     *  вместо 200 — дешёвая операция (redim теперь ждёт ack от демона, см. AmBridge.write), а
-     *  окно вспышки почти не видно глазом вместо заметного мигания. */
+    /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость — что-то сбрасывает
+     *  их при смене состояния экрана, разовой установки недостаточно. Подсветку раньше
+     *  переустанавливал тот же тик через [AmBridge.redim] (IPC-файл на каждый цикл — до ~33
+     *  файловых round-trip'ов в секунду на весь звонок); теперь это отдельный локальный цикл
+     *  демона (redim_loop.sh, запускается самим blockon — см. answermachine.sh), без всякого
+     *  IPC отсюда. Частоту тика (30мс, а не 200) трогать нельзя: DisplayManager перебивает
+     *  подсветку через пару секунд, а на реальном звонке проверялось, что более редкий тик
+     *  делает системные вспышки экрана на ответе/отбое заметными глазом. */
     private suspend fun waitIdleKeepingSilent(budgetMs: Long, app: Context, am: AudioManager, silentToOwner: Boolean) {
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline && !idle) {
@@ -405,7 +419,6 @@ class AnswerMachineService : Service() {
             // привязан к конкретному аудио-маршруту (earpiece/speaker/bt_sco/...), а флаг мьюта
             // нет, так что повторный вызов безопасен независимо от того, куда уехал маршрут.
             if (silentToOwner) runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
-            AmBridge.redim(app)
             delay(30)
         }
     }
@@ -516,6 +529,8 @@ class AnswerMachineService : Service() {
         const val EX_TEST_SEC = "test_sec"
 
         @Volatile private var active: AnswerMachineService? = null
+        /** Есть ли сейчас идущая сессия — см. guard в onStartCommand. */
+        @Volatile private var busy = false
 
         /** Вызывается из CallerOverlay по тапу «Принять» — сигнализирует в текущий
          *  экземпляр сервиса, тот же паттерн, что уже используют idle/offhook. */
