@@ -41,11 +41,6 @@ class AnswerMachineService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onDestroy() {
-        if (active === this) active = null
-        super.onDestroy()
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
         active = this
@@ -480,6 +475,7 @@ class AnswerMachineService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         watcher?.let { runCatching { unregisterReceiver(it) } }
+        if (active === this) active = null
     }
 
     companion object {
