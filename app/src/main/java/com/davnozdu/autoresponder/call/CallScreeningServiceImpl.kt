@@ -34,17 +34,33 @@ class CallScreeningServiceImpl : CallScreeningService() {
 
         val number = callDetails.handle?.schemeSpecificPart // tel:+420... -> +420...
         val callSubId = SimUtil.subIdFromCall(this, callDetails)  // SIM, на которую пришёл звонок
-        // История и диагностика — в фон: onScreenCall выполняется на главном потоке и должен
-        // ответить системе быстро, а запись в SQLite + поиск имени в книге контактов небыстрые.
         val app = applicationContext
         val handleId = callDetails.accountHandle?.id
+        val s = Settings(this)
+        // Заранее — нужно решить, звать ли CallerCardNotifier ниже (до её bg.launch), не
+        // дублируя вычисление skip дважды. Условие СОВПАДАЕТ с финальным screeningTrigger
+        // ниже (кроме проверки ЧС — она в редком краевом случае могла бы разойтись, но ЧС
+        // и так подавляет собственное уведомление отдельно, не через этот путь).
+        val skipEarly = SkipPolicy.reason(this, number, s, isCall = true) != null
+        val overlayOkEarly = android.provider.Settings.canDrawOverlays(this)
+        val alreadyInCallEarly = getSystemService(android.telephony.TelephonyManager::class.java)
+            ?.callState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK
+        val likelyScreening = s.screeningEnabled && ScreeningPolicy.isInWindow(this, s) &&
+            !skipEarly && overlayOkEarly && !alreadyInCallEarly
+        // История и диагностика — в фон: onScreenCall выполняется на главном потоке и должен
+        // ответить системе быстро, а запись в SQLite + поиск имени в книге контактов небыстрые.
         bg.launch {
             if (number != null) HistoryLogger.record(app, number, "call", "in", "входящий звонок")
-            // Кто звонит и что у него в работе — из памяти, кеш CRM прогрет при запуске.
-            com.davnozdu.autoresponder.notif.CallerCardNotifier.onIncoming(app, number)
+            // Кто звонит и что у него в работе — из памяти, кеш CRM прогрет при запуске. НЕ
+            // зовём для скрининга: CallerCardNotifier.show() — это отдельное Android-
+            // уведомление (своя поверхность, свой z-order), а не наш CallerOverlay — на экране
+            // оно накладывалось на карточку скрининга с кнопками Ответить/Отклонить вместо
+            // того, чтобы встать под ней (живой тест, две карточки одна поверх другой). Для
+            // скрининга CRM-данные подтягивает сам AnswerMachineService.runScreeningFlow в тот
+            // же CallerOverlay — единственное окно, весь порядок под нашим контролем.
+            if (!likelyScreening) com.davnozdu.autoresponder.notif.CallerCardNotifier.onIncoming(app, number)
             EventLog(app).add("CALL вход: handle=$handleId -> subId=$callSubId | ${SimUtil.describe(app)}")
         }
-        val s = Settings(this)
         // Главный тумблер и «отвечать на звонки» гейтят ВСЮ работу со звонками, включая чёрный
         // список. Иначе при выключенном автоответчике звонок из ЧС всё равно отклонялся, а SMS
         // не уходила (Responder.process выходит на !s.enabled) — звонки пропадали молча.
@@ -65,19 +81,18 @@ class CallScreeningServiceImpl : CallScreeningService() {
 
         val closedReason = ClosedState.reason(this, s)
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
-        val skip = SkipPolicy.reason(this, number, s, isCall = true) != null
+        val skip = skipEarly
 
         // Без разрешения на оверлей карточка физически не нарисуется (CallerOverlay.show
         // тихо выходит) — тогда скрининг молча авто-отвечал бы и играл зуммер БЕЗ единого
         // способа его принять. Без разрешения — падаем на обычную маршрутизацию (гарнитура/
         // закрыто/звонит нормально), а не остаёмся в тупике. Найдено ревью ветки.
-        val overlayOk = android.provider.Settings.canDrawOverlays(this)
+        val overlayOk = overlayOkEarly
         // Уже идёт звонок (владелец разговаривает — со скринингом, гарнитурой или обычный) →
         // новый non-favorite звонок НЕ должен его перехватывать: acceptRingingCall() поставил
         // бы текущий разговор на удержание. Пусть звонит как обычный call waiting. Найдено
         // ревью ветки.
-        val tm = getSystemService(android.telephony.TelephonyManager::class.java)
-        val alreadyInCall = tm?.callState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK
+        val alreadyInCall = alreadyInCallEarly
 
         // Скрининг: в настроенное рабочее время звонок от НЕ избранного получает видимую
         // интерактивную карточку (Принять/Отклонить), а не тихий автоответчик — проверяется

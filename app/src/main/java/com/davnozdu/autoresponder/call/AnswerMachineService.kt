@@ -267,12 +267,26 @@ class AnswerMachineService : Service() {
             runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
 
             // Карточка — СРАЗУ, без ожидания CRM (lookup=null): владелец должен мочь нажать
-            // «Ответить» немедленно, а не после сетевого похода за CRM-данными. Карточка с
-            // CRM сама дорисуется чуть позже — CallerCardNotifier.onIncoming уже делает свой
-            // lookup параллельно (см. bg.launch в CallScreeningServiceImpl) и вызовет обычный
-            // show() для того же номера; кнопки сохранятся (см. CallerOverlay.acceptDeclineFor).
+            // «Ответить» немедленно, а не после сетевого похода за CRM-данными.
             com.davnozdu.autoresponder.notif.CallerOverlay.showScreening(app, normNumber, null,
                 onAccept = { screeningAccept() }, onDecline = { screeningDecline() })
+            // CRM донасыщается ПАРАЛЛЕЛЬНО, не блокируя карточку/кнопки — в фоновой корутине,
+            // тем же CallerOverlay.show() (кнопки сохранятся по normNumber, см.
+            // CallerOverlay.acceptDeclineFor), а НЕ через CallerCardNotifier: та зовёт
+            // NotificationCompat — ОТДЕЛЬНОЕ Android-уведомление, своя поверхность и z-order,
+            // и на экране накладывалась на карточку скрининга вместо того, чтобы уйти под неё
+            // (живой тест: две карточки одна поверх другой). Для скрининга
+            // CallScreeningServiceImpl вообще не зовёт CallerCardNotifier — см. likelyScreening
+            // там же — единственное окно на весь сценарий, весь порядок элементов внутри него
+            // под нашим контролем.
+            scope.launch {
+                val lookup = runCatching {
+                    com.davnozdu.autoresponder.crm.CrmFlow.lookup(app, listOf(normNumber))
+                }.getOrNull()
+                if (lookup != null) {
+                    com.davnozdu.autoresponder.notif.CallerOverlay.show(app, normNumber, lookup)
+                }
+            }
 
             val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
                 Greeting.prepareScreening(app, s.screeningDefaultLang, maxSec * 1000)
