@@ -6,8 +6,10 @@ import com.davnozdu.autoresponder.data.EventLog
 import com.davnozdu.autoresponder.data.Settings
 import com.davnozdu.autoresponder.respond.Kind
 import com.davnozdu.autoresponder.respond.Responder
+import com.davnozdu.autoresponder.rules.AudioRouteUtil
 import com.davnozdu.autoresponder.rules.AutoReplyState
 import com.davnozdu.autoresponder.rules.ClosedState
+import com.davnozdu.autoresponder.rules.HeadsetPolicy
 import com.davnozdu.autoresponder.rules.PhoneMask
 import com.davnozdu.autoresponder.rules.SimUtil
 import com.davnozdu.autoresponder.rules.SkipPolicy
@@ -64,7 +66,17 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
         val skip = SkipPolicy.reason(this, number, s, isCall = true) != null
 
-        if (closedReason != null && matches && !skip) {
+        // Bluetooth-гарнитура подключена и звонящий не избранный → всегда голосовой
+        // автоответчик, независимо от открытых/закрытых часов и режима SMS/голос (проверяется
+        // раньше «закрытых часов» — при совпадении обоих условий выигрывает гарнитура).
+        val headsetTrigger = HeadsetPolicy.shouldForceAnswer(
+            s.headsetForceAnswer, AudioRouteUtil.isBluetoothHeadsetActive(this), skip)
+
+        if (headsetTrigger) {
+            respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
+            EventLog(this).add("CALL ${number ?: "?"} — гарнитура → автоответчик")
+            AnswerMachineService.start(this, number, null, "headset", s.amGreetingLang.ifBlank { null }, null)
+        } else if (closedReason != null && matches && !skip) {
             if (s.callClosedMode == 1) {
                 // Тумблер = голосовой автоответчик: глушим рингтон, отвечаем и обрабатываем сами.
                 respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())

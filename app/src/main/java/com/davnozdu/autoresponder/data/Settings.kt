@@ -259,6 +259,12 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_RESP_SMS, true)
         set(v) = sp.edit().putBoolean(K_RESP_SMS, v).apply()
 
+    /** При подключённой Bluetooth-гарнитуре звонки НЕ от избранных всегда идут на голосовой
+     *  автоответчик, независимо от открытых/закрытых часов и режима SMS/голос. */
+    var headsetForceAnswer: Boolean
+        get() = sp.getBoolean(K_HEADSET_FORCE_ANSWER, false)
+        set(v) = sp.edit().putBoolean(K_HEADSET_FORCE_ANSWER, v).apply()
+
     // --- голосовой автоответчик ---
     /** Как обрабатывать входящий ЗВОНОК в закрытом режиме: 0 = ответ по SMS (как раньше),
      *  1 = голосовой автоответчик. Чёрный список всегда идёт на голос независимо от этого. */
@@ -676,6 +682,7 @@ class Settings(context: Context) {
         private const val K_RESPECT_DND = "respect_dnd"
         private const val K_RESP_CALLS = "resp_calls"
         private const val K_RESP_SMS = "resp_sms"
+        private const val K_HEADSET_FORCE_ANSWER = "headset_force_answer"
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"

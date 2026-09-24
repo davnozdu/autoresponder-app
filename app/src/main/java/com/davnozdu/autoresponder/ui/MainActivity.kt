@@ -110,6 +110,7 @@ fun AppScreen() {
     var exStarred by remember { mutableStateOf(s.excludeStarred) }
     var exContacts by remember { mutableStateOf(s.excludeContacts) }
     var respectDnd by remember { mutableStateOf(s.respectDndPriority) }
+    var headsetForceAnswer by remember { mutableStateOf(s.headsetForceAnswer) }
     var promptCall by remember { mutableStateOf(s.promptCall) }
     var promptSms by remember { mutableStateOf(s.promptSms) }
     var aiPrefix by remember { mutableStateOf(s.aiPrefix) }
@@ -672,6 +673,12 @@ fun AppScreen() {
                     + "из уведомления, потому что номера WhatsApp и Telegram не передают.",
                     style = MaterialTheme.typography.bodySmall)
                 SwitchRow("Уважать приоритетных в «Не беспокоить»", respectDnd) { respectDnd = it; s.respectDndPriority = it }
+                SwitchRow("При Bluetooth-гарнитуре — не-избранные звонки на автоответчик",
+                    headsetForceAnswer) { headsetForceAnswer = it; s.headsetForceAnswer = it }
+                Text("Пока подключены Bluetooth-наушники/колонка, звонки не из «Избранных» "
+                    + "всегда идут на голосовой автоответчик — независимо от открытых/закрытых "
+                    + "часов и режима SMS/голос ниже.",
+                    style = MaterialTheme.typography.bodySmall)
 
                 Text("Список один на все каналы: звонки, SMS, WhatsApp, Telegram",
                     style = MaterialTheme.typography.titleSmall)
