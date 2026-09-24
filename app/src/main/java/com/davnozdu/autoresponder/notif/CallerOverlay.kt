@@ -65,7 +65,7 @@ object CallerOverlay {
                 removeCurrentView(app)
                 val card = CallerCard.render(lookup?.name?.ifBlank { null }, number, lookup)
                 val view = build(app, number, card, lookup)
-                wm(app).addView(view, params(wake = screening))
+                wm(app).addView(view, params(app, wake = screening))
                 shown = view
                 shownFor = number
                 // Скрининг сам владеет своим временем жизни (таймаут — amMaxMessageSec внутри
@@ -127,7 +127,7 @@ object CallerOverlay {
      *  владелец ничего не видел — mWakefulness=Dozing в момент звонка. Обычная (не
      *  скрининговая) карточка эти флаги не получает — во время звонка, на который и так
      *  звонит система, экран обычно уже включён. */
-    private fun params(wake: Boolean = false) = WindowManager.LayoutParams(
+    private fun params(app: Context, wake: Boolean = false) = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -139,7 +139,17 @@ object CallerOverlay {
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
              else 0)),
         PixelFormat.TRANSLUCENT
-    ).apply { gravity = Gravity.TOP }
+    ).apply {
+        gravity = Gravity.TOP
+        // Живой звонок поймал: системная «таблетка» активного звонка (имя+таймер+отбой)
+        // рисуется ПОВЕРХ нашего окна и закрывает верх карточки (имя/статус заказа) — видны
+        // остаются только нижние ряды кнопок. Systembar-инсеты её не покрывают (это не
+        // статус-бар, отдельный плавающий чип), поэтому сдвигаем окно целиком вниз на
+        // фиксированный отступ (эмпирически — высота статус-бара + сама таблетка).
+        val statusBar = app.resources.getIdentifier("status_bar_height", "dimen", "android")
+            .let { if (it > 0) app.resources.getDimensionPixelSize(it) else 0 }
+        y = statusBar + (96 * app.resources.displayMetrics.density).toInt()
+    }
 
     private fun build(app: Context, number: String, card: CallerCard.Card, lookup: CrmLookup?): View {
         val d = app.resources.displayMetrics.density
