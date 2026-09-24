@@ -142,17 +142,20 @@ object CallerOverlay {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, gap, 0, 0)
         }
+        // Крупные кнопки, чтобы не промахнуться: высота — ещё +10% высоты экрана поверх
+        // тех ~30%, что уже занимает карточка (details у CallerCard ограничены 30%, см. build()).
+        val btnHeight = (app.resources.displayMetrics.heightPixels * 0.10).toInt()
         fun button(label: String, color: String, onClick: () -> Unit) = Button(app).apply {
-            text = label; textSize = 14f; setTextColor(Color.WHITE)
+            text = label; textSize = 20f; setTextColor(Color.WHITE)
             background = GradientDrawable().apply {
                 setColor(Color.parseColor(color)); cornerRadius = gap.toFloat() * 1.5f
             }
-            layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = gap }
+            layoutParams = LinearLayout.LayoutParams(0, btnHeight, 1f).apply { marginEnd = gap }
             // hide() СРАЗУ по тапу — второй тап (двойное нажатие) бьёт по пустому месту,
             // не по кнопке: гонка «оба нажаты» физически исключена.
             setOnClickListener { hide(app); onClick() }
         }
-        row.addView(button("Принять", "#0A6E2E") { ad.onAccept() })
+        row.addView(button("Ответить", "#0A6E2E") { ad.onAccept() })
         row.addView(button("Отклонить", "#8E1B1B") { ad.onDecline() })
         return row
     }
