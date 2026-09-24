@@ -35,13 +35,19 @@ object CallerOverlay {
     private val main = Handler(Looper.getMainLooper())
     private var shown: View? = null
     private var shownFor: String? = null
+    private data class AcceptDecline(val onAccept: () -> Unit, val onDecline: () -> Unit)
+    private var acceptDecline: AcceptDecline? = null
 
     fun show(context: Context, number: String, lookup: CrmLookup?) {
         val app = context.applicationContext
         if (!AndroidSettings.canDrawOverlays(app)) return   // модуль ещё не выдал — молча живём уведомлением
         main.post {
             runCatching {
-                hideNow(app)
+                // Разные звонки — старые кнопки Принять/Отклонить не имеют смысла для НОВОГО
+                // номера. Тот же номер (перерисовка карточки после прихода данных CRM из
+                // CallerCardNotifier.onIncoming) — кнопки сохраняются, см. showScreening.
+                if (shownFor != number) acceptDecline = null
+                removeCurrentView(app)
                 val card = CallerCard.render(lookup?.name?.ifBlank { null }, number, lookup)
                 val view = build(app, number, card, lookup)
                 wm(app).addView(view, params())
@@ -52,12 +58,22 @@ object CallerOverlay {
         }
     }
 
-    fun hide(context: Context) {
-        val app = context.applicationContext
-        main.post { runCatching { hideNow(app) } }
+    /** Как [show], но с кнопками «Принять»/«Отклонить» — для интерактивного скрининга
+     *  (см. AnswerMachineService.runScreeningFlow). [onAccept]/[onDecline] вызываются на
+     *  главном потоке при нажатии; карточка убирается сама сразу по первому тапу — второй
+     *  тап (двойное нажатие) бьёт по уже отсутствующей вью. */
+    fun showScreening(context: Context, number: String, lookup: CrmLookup?,
+                       onAccept: () -> Unit, onDecline: () -> Unit) {
+        acceptDecline = AcceptDecline(onAccept, onDecline)
+        show(context, number, lookup)
     }
 
-    private fun hideNow(app: Context) {
+    fun hide(context: Context) {
+        val app = context.applicationContext
+        main.post { runCatching { removeCurrentView(app); acceptDecline = null } }
+    }
+
+    private fun removeCurrentView(app: Context) {
         shown?.let { runCatching { wm(app).removeView(it) } }
         shown = null
         shownFor = null
@@ -117,7 +133,28 @@ object CallerOverlay {
             })
         }
         if (lookup != null && lookup.records.isNotEmpty()) root.addView(actions(app, number, px(8)))
+        acceptDecline?.let { ad -> root.addView(acceptDeclineRow(app, px(8), ad)) }
         return root
+    }
+
+    private fun acceptDeclineRow(app: Context, gap: Int, ad: AcceptDecline): View {
+        val row = LinearLayout(app).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, gap, 0, 0)
+        }
+        fun button(label: String, color: String, onClick: () -> Unit) = Button(app).apply {
+            text = label; textSize = 14f; setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(color)); cornerRadius = gap.toFloat() * 1.5f
+            }
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = gap }
+            // hide() СРАЗУ по тапу — второй тап (двойное нажатие) бьёт по пустому месту,
+            // не по кнопке: гонка «оба нажаты» физически исключена.
+            setOnClickListener { hide(app); onClick() }
+        }
+        row.addView(button("Принять", "#0A6E2E") { ad.onAccept() })
+        row.addView(button("Отклонить", "#8E1B1B") { ad.onDecline() })
+        return row
     }
 
     private fun actions(app: Context, number: String, gap: Int): View {
