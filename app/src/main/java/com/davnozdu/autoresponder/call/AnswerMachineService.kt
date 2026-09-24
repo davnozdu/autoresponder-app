@@ -35,12 +35,20 @@ class AnswerMachineService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var idle = false
     @Volatile private var offhook = false
+    @Volatile private var accepted = false
+    @Volatile private var declined = false
     private var watcher: BroadcastReceiver? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onDestroy() {
+        if (active === this) active = null
+        super.onDestroy()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
+        active = this
         val number = intent?.getStringExtra(EX_NUMBER)
         val name = intent?.getStringExtra(EX_NAME)
         val reason = intent?.getStringExtra(EX_REASON) ?: "closed"
@@ -49,8 +57,11 @@ class AnswerMachineService : Service() {
         val testSec = intent?.getIntExtra(EX_TEST_SEC, 0) ?: 0
         scope.launch {
             try {
-                if (reason == "test") runTestFlow(testSec.coerceIn(3, 120))
-                else runFlow(number, name, reason, lang, text)
+                when (reason) {
+                    "test" -> runTestFlow(testSec.coerceIn(3, 120))
+                    "screening" -> runScreeningFlow(number, name)
+                    else -> runFlow(number, name, reason, lang, text)
+                }
             }
             catch (e: Exception) { EventLog(applicationContext).add("AM: сбой (${e.message})") }
             finally { stopSelfSafe() }
@@ -224,6 +235,112 @@ class AnswerMachineService : Service() {
         }
     }
 
+    /** Интерактивный скрининг: отвечаем, играем приветствие+зуммер, абонент ждёт, владелец
+     *  решает через карточку CallerOverlay. В отличие от [runFlow] — экран НЕ гасится и НЕ
+     *  блокируется (никакого AmBlockOverlay/AmBridge.blockOn): это видимый, а не тихий режим.
+     *  «Принять» — снять мьют и отдать линию владельцу (звонок не пересоединяется, он был
+     *  активен всё это время); «Отклонить» — обычный отбой. */
+    private suspend fun runScreeningFlow(number: String?, nameIn: String?) {
+        val app = applicationContext
+        val s = Settings(app)
+        val db = HistoryDb.get(app)
+        val start = System.currentTimeMillis()
+        val name = nameIn ?: contactName(app, number)
+        EventLog(app).add("AM: старт ${number ?: "?"} (screening)")
+        accepted = false; declined = false
+
+        registerWatcher(app)
+        try {
+            answerCall(app)
+            if (!offhook) {
+                EventLog(app).add("AM: не ответили вовремя ${number ?: "?"} — пропуск")
+                return
+            }
+            val recId = db.amRecInsert(number, name, start, 0, null, "screening")
+            val safeNum = (number ?: "unknown").replace(Regex("[^+0-9]"), "")
+            val ownRecPath = "/sdcard/AutoResponder/recordings/" +
+                java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(start)) +
+                "_${safeNum}_own.wav"
+            val maxSec = s.amMaxMessageSec.coerceIn(5, 300)
+            AmBridge.recStart(app, maxSec)
+
+            val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            runCatching { am.isMicrophoneMute = true }
+            runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
+
+            val lookup = runCatching {
+                com.davnozdu.autoresponder.crm.CrmFlow.lookup(app, listOfNotNull(number))
+            }.getOrNull()
+            com.davnozdu.autoresponder.notif.CallerOverlay.showScreening(app, number ?: "", lookup,
+                onAccept = { screeningAccept() }, onDecline = { screeningDecline() })
+
+            val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                Greeting.prepareScreening(app, s.screeningDefaultLang, maxSec * 1000)
+            }
+            if (greet != null) AmBridge.play(app, greet, 1)
+            else EventLog(app).add("AM: приветствие для скрининга не готово — молчим")
+
+            waitScreeningDecision(maxSec * 1000L, am)
+
+            if (accepted) {
+                AmBridge.stop(app)
+                runCatching { am.isMicrophoneMute = false }
+                runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
+                EventLog(app).add("AM: скрининг — владелец принял ${number ?: "?"}")
+                com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
+                AmBridge.recStop(app)
+                // Дальше это обычный разговор — штатная запись звонилки (если включена)
+                // продолжает сама, как у любого вручную принятого звонка; свою запись
+                // не связываем, строку журнала просто закрываем.
+                db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+                return
+            }
+
+            if (declined || !idle) endCall(app)
+            AmBridge.stop(app)
+            AmBridge.recStop(app)
+            delay(500)
+            com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
+
+            waitIdleOr(5_000L)
+            val link = RecordingLinker.linkLatest(app, number, start)
+            if (link != null) {
+                db.amRecSetFile(recId, link.first, link.second)
+                AmBridge.recDiscard(app)
+            } else {
+                AmBridge.recSave(app, ownRecPath)
+                val ownFile = java.io.File(ownRecPath)
+                if (ownFile.exists() && ownFile.length() > 44) {
+                    val dur = RecordingLinker.durationMs(ownFile.absolutePath)
+                    db.amRecSetFile(recId, ownFile.absolutePath, dur)
+                    EventLog(app).add("AM запись: штатный рекордер не сработал — оставил свою (${dur/1000}s)")
+                } else {
+                    db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+                }
+            }
+            EventLog(app).add("AM: завершено ${number ?: "?"}")
+        } finally {
+            // Как и в runFlow — гарантированно снимаем мьют/запись даже при исключении
+            // между recStart и explicit recStop в обеих ветках выше (accept/decline/idle).
+            unregisterWatcher(app)
+            com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
+            val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            runCatching { am.isMicrophoneMute = false }
+            runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
+            AmBridge.stop(app)
+            AmBridge.recStop(app)
+        }
+    }
+
+    private suspend fun waitScreeningDecision(budgetMs: Long, am: AudioManager) {
+        val deadline = System.currentTimeMillis() + budgetMs
+        while (System.currentTimeMillis() < deadline && !idle && !accepted && !declined) {
+            runCatching { am.isMicrophoneMute = true }
+            runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
+            delay(300)
+        }
+    }
+
     @android.annotation.SuppressLint("MissingPermission")
     private suspend fun answerCall(ctx: Context) {
         val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
@@ -374,6 +491,13 @@ class AnswerMachineService : Service() {
         const val EX_LANG = "lang"
         const val EX_TEXT = "text"
         const val EX_TEST_SEC = "test_sec"
+
+        @Volatile private var active: AnswerMachineService? = null
+
+        /** Вызывается из CallerOverlay по тапу «Принять» — сигнализирует в текущий
+         *  экземпляр сервиса, тот же паттерн, что уже используют idle/offhook. */
+        fun screeningAccept() { active?.let { it.accepted = true } }
+        fun screeningDecline() { active?.let { it.declined = true } }
 
         /** Ручная проверка блокировки экрана/тача БЕЗ звонка (та же защита от заморозки
          *  процесса, что и в реальном вызове — foreground-сервис). Вызывается из AmTestReceiver. */
