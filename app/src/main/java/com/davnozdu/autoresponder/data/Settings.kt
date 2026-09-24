@@ -84,6 +84,25 @@ class Settings(context: Context) {
         get() = sp.getInt(K_SCHED_END, 9 * 60)
         set(v) = sp.edit().putInt(K_SCHED_END, v).apply()
 
+    // --- скрининг звонков: своё расписание, независимое от расписания «закрыто» ---
+    /** Включён ли интерактивный скрининг (карточка «Принять»/«Отклонить» в рабочее время). */
+    var screeningEnabled: Boolean
+        get() = sp.getBoolean(K_SCREEN_ENABLED, false)
+        set(v) = sp.edit().putBoolean(K_SCREEN_ENABLED, v).apply()
+
+    /** Битовая маска дней скрининга (Calendar.DAY_OF_WEEK 1..7), по умолчанию Пн-Пт = 124. */
+    var screeningWorkDaysMask: Int
+        get() = sp.getInt(K_SCREEN_DAYS, 124)
+        set(v) = sp.edit().putInt(K_SCREEN_DAYS, v).apply()
+
+    var screeningStartMin: Int
+        get() = sp.getInt(K_SCREEN_START, 9 * 60)
+        set(v) = sp.edit().putInt(K_SCREEN_START, v).apply()
+
+    var screeningEndMin: Int
+        get() = sp.getInt(K_SCREEN_END, 18 * 60)
+        set(v) = sp.edit().putInt(K_SCREEN_END, v).apply()
+
     // --- маска стран, раздельно по SIM ---
     // Номер обслуживается, если попал в список ЛЮБОЙ из карт; с какой карты отвечаем —
     // определяет то, в чей список он попал (см. slotForNumber).
@@ -683,6 +702,10 @@ class Settings(context: Context) {
         private const val K_RESP_CALLS = "resp_calls"
         private const val K_RESP_SMS = "resp_sms"
         private const val K_HEADSET_FORCE_ANSWER = "headset_force_answer"
+        private const val K_SCREEN_ENABLED = "screen_enabled"
+        private const val K_SCREEN_DAYS = "screen_days"
+        private const val K_SCREEN_START = "screen_start"
+        private const val K_SCREEN_END = "screen_end"
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"

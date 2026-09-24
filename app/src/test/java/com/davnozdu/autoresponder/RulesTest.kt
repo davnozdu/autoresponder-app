@@ -4,6 +4,7 @@ import com.davnozdu.autoresponder.respond.Dedup
 import com.davnozdu.autoresponder.respond.SegmentBudget
 import com.davnozdu.autoresponder.rules.ClosedState
 import com.davnozdu.autoresponder.rules.LangDetect
+import com.davnozdu.autoresponder.rules.ScreeningPolicy
 import com.davnozdu.autoresponder.store.BlackEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,6 +46,39 @@ class ScheduleTest {
         assertTrue(work(10 * 60, 7))           // суббота — тоже
         assertFalse(work(9 * 60, 6))           // пятница ровно в 9:00 — открыто
         assertTrue(work(18 * 60, 6))           // в 18:00 уже закрыто
+    }
+}
+
+class ScreeningPolicyTest {
+
+    private fun active(now: Int, dow: Int, days: Int = 124, start: Int = 9 * 60, end: Int = 18 * 60) =
+        ScreeningPolicy.activeBySchedule(now, dow, days, start, end)
+
+    @Test fun `рабочее время активно, вне его — нет`() {
+        assertTrue(active(10 * 60, 3))            // вторник 10:00 — внутри 9-18
+        assertFalse(active(20 * 60, 3))           // вторник 20:00 — вне окна
+        assertFalse(active(8 * 60, 3))            // до открытия
+        assertTrue(active(9 * 60, 3))             // граница начала включительно
+        assertFalse(active(18 * 60, 3))           // граница конца — уже не активно
+    }
+
+    @Test fun `нерабочий день не активен даже в рабочие часы`() {
+        assertFalse(active(10 * 60, 1))           // воскресенье
+        assertFalse(active(10 * 60, 7))           // суббота
+    }
+
+    @Test fun `совпадающие границы расписания — скрининг никогда не активен`() {
+        // Пустое окно [X, X) — намеренная тихая деградация: фича молча не работает,
+        // если пользователь не поменял значения по умолчанию местами. См. Review Focus.
+        assertFalse(active(12 * 60, 3, start = 9 * 60, end = 9 * 60))
+        assertFalse(active(0, 3, start = 9 * 60, end = 9 * 60))
+    }
+
+    @Test fun `shouldScreen требует все три условия`() {
+        assertTrue(ScreeningPolicy.shouldScreen(enabled = true, inWindow = true, skip = false))
+        assertFalse(ScreeningPolicy.shouldScreen(enabled = false, inWindow = true, skip = false))
+        assertFalse(ScreeningPolicy.shouldScreen(enabled = true, inWindow = false, skip = false))
+        assertFalse(ScreeningPolicy.shouldScreen(enabled = true, inWindow = true, skip = true))
     }
 }
 
