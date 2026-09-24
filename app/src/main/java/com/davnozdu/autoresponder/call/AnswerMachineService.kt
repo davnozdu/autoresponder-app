@@ -133,12 +133,17 @@ class AnswerMachineService : Service() {
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
             // 2) Заглушить: микрофон (абонент не слышит комнату) и, в тихом режиме, вывод к владельцу.
-            val prevMute = am.isMicrophoneMute
+            // ADJUST_MUTE/ADJUST_UNMUTE вместо явного индекса громкости: индекс у STREAM_VOICE_CALL
+            // свой для каждого маршрута (earpiece/speaker/bt_sco/...), а API get/setStreamVolume
+            // без указания устройства бьёт по ТЕКУЩЕМУ активному — если маршрут сменится между
+            // «заглушить» и «вернуть» (гарнитура, PAL-переключения), восстановится не тот
+            // маршрут, а исходный так и останется на нуле (живой баг: bt_sco у владельца осел
+            // на минимуме после серии тестовых звонков). Флаг мьюта не привязан к устройству —
+            // снимается тем же ADJUST_UNMUTE независимо от того, куда успела уехать активная
+            // маршрутизация, и безопасен даже если стрим не был заглушен вовсе.
             runCatching { am.isMicrophoneMute = true }
-            var prevVol = -1
             if (s.amSilentToOwner) {
-                prevVol = runCatching { am.getStreamVolume(AudioManager.STREAM_VOICE_CALL) }.getOrDefault(-1)
-                runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
+                runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
                 AmBridge.muteOut(app, true)
             }
 
@@ -177,8 +182,6 @@ class AnswerMachineService : Service() {
             // до 15с как подстраховку). Небольшая пауза здесь дешевле, чем читать наш файл
             // с нулевым/неполным заголовком чуть ниже.
             delay(500)
-            runCatching { am.isMicrophoneMute = prevMute }
-            if (prevVol >= 0) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, prevVol, 0) }
             if (s.amSilentToOwner) AmBridge.muteOut(app, false)
             AmBridge.blockOff(app)
             AmBlockOverlay.hide(app)
@@ -206,10 +209,14 @@ class AnswerMachineService : Service() {
 
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
-            // Гарантированно снимаем ресивер, накладку и железную блокировку даже при раннем
-            // return/исключении — залипший тёмный нетрогаемый экран был бы худшим возможным
-            // отказом. Root-сторож в демоне страхует только смерть ПРОЦЕССА; исключение внутри
-            // ещё живого процесса он не увидит — снимаем сами.
+            // Гарантированно снимаем ресивер, накладку, железную блокировку И заглушку звука
+            // даже при раннем return/исключении — залипший тёмный нетрогаемый экран или
+            // навсегда заглушенный голос звонка были бы худшим возможным отказом. Root-сторож
+            // в демоне страхует только смерть ПРОЦЕССА; исключение внутри ещё живого процесса
+            // он не увидит — снимаем сами. ADJUST_UNMUTE безопасен, даже если мьюта не было.
+            val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            runCatching { am.isMicrophoneMute = false }
+            runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
             unregisterWatcher(app)
             AmBlockOverlay.hide(app)
             AmBridge.blockOff(app)
@@ -255,7 +262,10 @@ class AnswerMachineService : Service() {
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline && !idle) {
             runCatching { am.isMicrophoneMute = true }
-            if (silentToOwner) runCatching { am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0) }
+            // ADJUST_MUTE, не явный индекс — см. комментарий у шага 2 в runFlow: индекс
+            // привязан к конкретному аудио-маршруту (earpiece/speaker/bt_sco/...), а флаг мьюта
+            // нет, так что повторный вызов безопасен независимо от того, куда уехал маршрут.
+            if (silentToOwner) runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
             AmBridge.redim(app)
             delay(30)
         }
