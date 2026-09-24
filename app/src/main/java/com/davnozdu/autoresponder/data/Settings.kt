@@ -314,6 +314,43 @@ class Settings(context: Context) {
         get() = sp.getString(K_AM_GREET_LANG, "") ?: ""
         set(v) = sp.edit().putString(K_AM_GREET_LANG, v).apply()
 
+    /** Язык приветствия скрининга по умолчанию для ВСЕХ звонков (не автоопределение —
+     *  пользователь явно хочет чешский по умолчанию, независимо от языка/страны абонента). */
+    var screeningDefaultLang: String
+        get() = sp.getString(K_SCREEN_LANG, "cs") ?: "cs"
+        set(v) = sp.edit().putString(K_SCREEN_LANG, v).apply()
+
+    // --- библиотека приветствий скрининга: свой слот на каждый из трёх языков ---
+    var screeningGreetingSourceCs: Int
+        get() = sp.getInt(K_SCREEN_SRC_CS, 0)
+        set(v) = sp.edit().putInt(K_SCREEN_SRC_CS, v).apply()
+    var screeningGreetingFileCs: String
+        get() = sp.getString(K_SCREEN_FILE_CS, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_FILE_CS, v).apply()
+    var screeningGreetingTextCs: String
+        get() = sp.getString(K_SCREEN_TEXT_CS, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_TEXT_CS, v).apply()
+
+    var screeningGreetingSourceRu: Int
+        get() = sp.getInt(K_SCREEN_SRC_RU, 0)
+        set(v) = sp.edit().putInt(K_SCREEN_SRC_RU, v).apply()
+    var screeningGreetingFileRu: String
+        get() = sp.getString(K_SCREEN_FILE_RU, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_FILE_RU, v).apply()
+    var screeningGreetingTextRu: String
+        get() = sp.getString(K_SCREEN_TEXT_RU, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_TEXT_RU, v).apply()
+
+    var screeningGreetingSourceEn: Int
+        get() = sp.getInt(K_SCREEN_SRC_EN, 0)
+        set(v) = sp.edit().putInt(K_SCREEN_SRC_EN, v).apply()
+    var screeningGreetingFileEn: String
+        get() = sp.getString(K_SCREEN_FILE_EN, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_FILE_EN, v).apply()
+    var screeningGreetingTextEn: String
+        get() = sp.getString(K_SCREEN_TEXT_EN, "") ?: ""
+        set(v) = sp.edit().putString(K_SCREEN_TEXT_EN, v).apply()
+
     /** Сколько секунд держим линию под сообщение клиента, затем отбой. */
     var amMaxMessageSec: Int
         get() = sp.getInt(K_AM_MSG_SEC, 45)
@@ -706,6 +743,16 @@ class Settings(context: Context) {
         private const val K_SCREEN_DAYS = "screen_days"
         private const val K_SCREEN_START = "screen_start"
         private const val K_SCREEN_END = "screen_end"
+        private const val K_SCREEN_LANG = "screen_lang"
+        private const val K_SCREEN_SRC_CS = "screen_src_cs"
+        private const val K_SCREEN_FILE_CS = "screen_file_cs"
+        private const val K_SCREEN_TEXT_CS = "screen_text_cs"
+        private const val K_SCREEN_SRC_RU = "screen_src_ru"
+        private const val K_SCREEN_FILE_RU = "screen_file_ru"
+        private const val K_SCREEN_TEXT_RU = "screen_text_ru"
+        private const val K_SCREEN_SRC_EN = "screen_src_en"
+        private const val K_SCREEN_FILE_EN = "screen_file_en"
+        private const val K_SCREEN_TEXT_EN = "screen_text_en"
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"

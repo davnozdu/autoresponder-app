@@ -1,5 +1,6 @@
 package com.davnozdu.autoresponder
 
+import com.davnozdu.autoresponder.call.Greeting
 import com.davnozdu.autoresponder.respond.Dedup
 import com.davnozdu.autoresponder.respond.SegmentBudget
 import com.davnozdu.autoresponder.rules.ClosedState
@@ -79,6 +80,26 @@ class ScreeningPolicyTest {
         assertFalse(ScreeningPolicy.shouldScreen(enabled = false, inWindow = true, skip = false))
         assertFalse(ScreeningPolicy.shouldScreen(enabled = true, inWindow = false, skip = false))
         assertFalse(ScreeningPolicy.shouldScreen(enabled = true, inWindow = true, skip = true))
+    }
+}
+
+class ScreeningBeepTest {
+
+    @Test fun `нулевая и отрицательная длительность дают минимум один повтор`() {
+        val zero = Greeting.repeatingBeepPcm(0)
+        val negative = Greeting.repeatingBeepPcm(-500)
+        assertTrue(zero.isNotEmpty())
+        assertEquals(zero.size, negative.size)
+    }
+
+    @Test fun `бОльшая длительность даёт больше повторов`() {
+        assertTrue(Greeting.repeatingBeepPcm(10_000).size > Greeting.repeatingBeepPcm(1_000).size)
+    }
+
+    @Test fun `повтор длины кратен единичному биппер-блоку`() {
+        val one = Greeting.repeatingBeepPcm(1)          // минимум 1 повтор
+        val many = Greeting.repeatingBeepPcm(one.size * 5) // должно дать >= 5 повторов по размеру
+        assertEquals(0, many.size % one.size)
     }
 }
 

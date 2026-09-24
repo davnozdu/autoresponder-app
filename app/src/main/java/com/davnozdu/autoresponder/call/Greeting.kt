@@ -140,6 +140,66 @@ object Greeting {
         return bb.array()
     }
 
+    /** Один и тот же блок бипа, повторённый столько раз, чтобы покрыть [maxTotalMs] —
+     *  для зуммера скрининга: абонент слышит повторяющийся сигнал, пока владелец не решит
+     *  («Принять»/«Отклонить») или пока не истечёт [Settings.amMaxMessageSec]. Минимум один
+     *  повтор всегда, даже при [maxTotalMs] <= 0 (испорченная настройка не должна давать
+     *  пустой/битый PCM). */
+    fun repeatingBeepPcm(maxTotalMs: Int): ByteArray {
+        val unit = beepTailPcm()
+        val unitMs = BEEP_GAP_MS + BEEP_MS
+        val repeats = (maxTotalMs / unitMs).coerceAtLeast(1)
+        val out = ByteArray(unit.size * repeats)
+        for (i in 0 until repeats) unit.copyInto(out, i * unit.size)
+        return out
+    }
+
+    /** Приветствие скрининга: как [prepare], но источник — своя тройка настроек на [lang]
+     *  ("cs"/"ru"/"en") вместо общих `amGreeting*`, и после речи повторяющийся зуммер
+     *  ([repeatingBeepPcm]) вместо одного бипа — абонент ждёт под сигнал, пока владелец не
+     *  решит через карточку. Обрывается штатным [AmBridge.stop], отдельного протокола не
+     *  требуется — файл просто длинный (речь + зуммер на всю [maxTotalMs]). */
+    suspend fun prepareScreening(ctx: Context, lang: String, maxTotalMs: Int): String? {
+        val app = ctx.applicationContext
+        val s = Settings(app)
+        val source: Int; val file: String; val text: String
+        when (lang) {
+            "ru" -> { source = s.screeningGreetingSourceRu; file = s.screeningGreetingFileRu; text = s.screeningGreetingTextRu }
+            "en" -> { source = s.screeningGreetingSourceEn; file = s.screeningGreetingFileEn; text = s.screeningGreetingTextEn }
+            else -> { source = s.screeningGreetingSourceCs; file = s.screeningGreetingFileCs; text = s.screeningGreetingTextCs }
+        }
+        val useFile = source == 1 && file.isNotBlank()
+        val src: File?
+        val key: String
+        if (useFile) {
+            src = File(file)
+            if (!src.exists()) { EventLog(app).add("AM скрининг: файла нет — $file"); return null }
+            key = "$SYNTH_VER:screen:file:$lang:${src.absolutePath}:${src.lastModified()}:$maxTotalMs"
+        } else {
+            src = null
+            key = "$SYNTH_VER:screen:tts:$lang:${text.hashCode()}:$maxTotalMs"
+        }
+        val out = cacheFile(app, key)
+        if (out.exists() && out.length() > 0) return out.absolutePath
+
+        if (useFile) {
+            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, out.absolutePath)) {
+                EventLog(app).add("AM скрининг: не сконвертировал файл ${src.name}"); return null
+            }
+        } else {
+            val wav = synthTts(app, text.ifBlank { Settings.DEF_AM_GREETING }, lang) ?: run {
+                EventLog(app).add("AM скрининг: TTS недоступен/не ответил вовремя"); return null
+            }
+            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, out.absolutePath)
+            wav.delete()
+            if (!ok) { EventLog(app).add("AM скрининг: не сконвертировал TTS"); return null }
+        }
+        try { FileOutputStream(out, true).use { it.write(repeatingBeepPcm(maxTotalMs)) } }
+        catch (e: Exception) { EventLog(app).add("AM скрининг: не добавил зуммер (${e.message})") }
+        cleanupOldCaches(app, out)
+        return out.absolutePath
+    }
+
     private fun localeFor(lang: String): Locale = when (lang.lowercase()) {
         "ru" -> Locale("ru"); "cs" -> Locale("cs"); "uk" -> Locale("uk")
         "en" -> Locale.ENGLISH; else -> Locale.getDefault()
