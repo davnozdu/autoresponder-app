@@ -537,12 +537,12 @@ fun AppScreen() {
 
             ExpandableSection("Скрининг звонков") {
                 var screenOn by remember { mutableStateOf(s.screeningEnabled) }
-                SwitchRow("Интерактивный скрининг (Принять/Отклонить)", screenOn) {
+                SwitchRow("Интерактивный скрининг (Ответить/Отклонить)", screenOn) {
                     screenOn = it; s.screeningEnabled = it
                 }
                 Text("В настроенное время звонок не от избранного отвечается сам, абоненту "
                     + "играет приветствие и зуммер, а на экране появляется карточка с кнопками "
-                    + "«Принять»/«Отклонить» — экран при этом яркий и видимый, не тихий режим. "
+                    + "«Ответить»/«Отклонить» — экран при этом яркий и видимый, не тихий режим. "
                     + "Проверяется раньше гарнитуры: даже с подключёнными наушниками владелец "
                     + "увидит карточку и сможет ответить с телефона.",
                     style = MaterialTheme.typography.bodySmall)
@@ -581,17 +581,20 @@ fun AppScreen() {
                 GreetingLangSlot(ctx, scope, "Чешский", "cs",
                     s.screeningGreetingSourceCs, { s.screeningGreetingSourceCs = it },
                     s.screeningGreetingFileCs, { s.screeningGreetingFileCs = it },
-                    s.screeningGreetingTextCs, { s.screeningGreetingTextCs = it })
+                    s.screeningGreetingTextCs, { s.screeningGreetingTextCs = it },
+                    s.screeningGreetingLangCs, { s.screeningGreetingLangCs = it })
                 Spacer(Modifier.height(12.dp))
                 GreetingLangSlot(ctx, scope, "Русский", "ru",
                     s.screeningGreetingSourceRu, { s.screeningGreetingSourceRu = it },
                     s.screeningGreetingFileRu, { s.screeningGreetingFileRu = it },
-                    s.screeningGreetingTextRu, { s.screeningGreetingTextRu = it })
+                    s.screeningGreetingTextRu, { s.screeningGreetingTextRu = it },
+                    s.screeningGreetingLangRu, { s.screeningGreetingLangRu = it })
                 Spacer(Modifier.height(12.dp))
                 GreetingLangSlot(ctx, scope, "English", "en",
                     s.screeningGreetingSourceEn, { s.screeningGreetingSourceEn = it },
                     s.screeningGreetingFileEn, { s.screeningGreetingFileEn = it },
-                    s.screeningGreetingTextEn, { s.screeningGreetingTextEn = it })
+                    s.screeningGreetingTextEn, { s.screeningGreetingTextEn = it },
+                    s.screeningGreetingLangEn, { s.screeningGreetingLangEn = it })
             }
 
             ExpandableSection("Управление по SMS") {
@@ -1363,7 +1366,8 @@ private fun GreetingLangSlot(
     title: String, slot: String,
     source: Int, onSource: (Int) -> Unit,
     file: String, onFile: (String) -> Unit,
-    text: String, onText: (String) -> Unit
+    text: String, onText: (String) -> Unit,
+    lang: String, onLang: (String) -> Unit
 ) {
     Text(title, style = MaterialTheme.typography.titleSmall)
     var src by remember(slot) { mutableStateOf(source) }
@@ -1372,6 +1376,14 @@ private fun GreetingLangSlot(
         FilterChip(src == 1, { src = 1; onSource(1) }, { Text("Свой файл") })
     }
     if (src == 0) {
+        var gLang by remember(slot) { mutableStateOf(lang) }
+        Text("Язык голоса TTS (явно, независимо от того, в какой это коробке):",
+            style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LangChip("CS", "cs", gLang) { gLang = it; onLang(it) }
+            LangChip("RU", "ru", gLang) { gLang = it; onLang(it) }
+            LangChip("EN", "en", gLang) { gLang = it; onLang(it) }
+        }
         var gText by remember(slot) { mutableStateOf(text) }
         OutlinedTextField(gText, { gText = it; onText(it) },
             label = { Text("Текст приветствия ($title)") }, modifier = Modifier.fillMaxWidth())

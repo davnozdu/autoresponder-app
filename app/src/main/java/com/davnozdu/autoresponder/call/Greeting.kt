@@ -45,7 +45,7 @@ object Greeting {
 
     // Параметры бипа — «долгий гудок, как у классического автоответчика».
     private const val SR = 48000
-    private const val BEEP_GAP_MS = 400   // пауза после речи перед сигналом
+    private const val BEEP_GAP_MS = 800   // пауза между бипами (была 400 — пользователь попросил вдвое больше)
     private const val BEEP_MS = 1300      // сам сигнал — долгий, ни с чем не спутать
     private const val BEEP_HZ = 1000.0
     private const val BEEP_AMP = 0.6
@@ -159,14 +159,21 @@ object Greeting {
      *  ([repeatingBeepPcm]) вместо одного бипа — абонент ждёт под сигнал, пока владелец не
      *  решит через карточку. Обрывается штатным [AmBridge.stop], отдельного протокола не
      *  требуется — файл просто длинный (речь + зуммер на всю [maxTotalMs]). */
-    suspend fun prepareScreening(ctx: Context, lang: String, maxTotalMs: Int): String? {
+    /** [slot] выбирает, какую из трёх коробок читать ("ru"/"en"/иначе cs) — НЕ обязательно
+     *  язык TTS: у каждой коробки свой явный язык синтеза (`screeningGreetingLang*`),
+     *  независимый от того, в какой коробке лежит текст (пользователь попросил явный чип,
+     *  а не неявную привязку языка синтеза к позиции коробки). */
+    suspend fun prepareScreening(ctx: Context, slot: String, maxTotalMs: Int): String? {
         val app = ctx.applicationContext
         val s = Settings(app)
-        val source: Int; val file: String; val text: String
-        when (lang) {
-            "ru" -> { source = s.screeningGreetingSourceRu; file = s.screeningGreetingFileRu; text = s.screeningGreetingTextRu }
-            "en" -> { source = s.screeningGreetingSourceEn; file = s.screeningGreetingFileEn; text = s.screeningGreetingTextEn }
-            else -> { source = s.screeningGreetingSourceCs; file = s.screeningGreetingFileCs; text = s.screeningGreetingTextCs }
+        val source: Int; val file: String; val text: String; val ttsLang: String; val defText: String
+        when (slot) {
+            "ru" -> { source = s.screeningGreetingSourceRu; file = s.screeningGreetingFileRu; text = s.screeningGreetingTextRu
+                      ttsLang = s.screeningGreetingLangRu; defText = Settings.DEF_SCREEN_GREETING_RU }
+            "en" -> { source = s.screeningGreetingSourceEn; file = s.screeningGreetingFileEn; text = s.screeningGreetingTextEn
+                      ttsLang = s.screeningGreetingLangEn; defText = Settings.DEF_SCREEN_GREETING_EN }
+            else -> { source = s.screeningGreetingSourceCs; file = s.screeningGreetingFileCs; text = s.screeningGreetingTextCs
+                      ttsLang = s.screeningGreetingLangCs; defText = Settings.DEF_SCREEN_GREETING_CS }
         }
         val useFile = source == 1 && file.isNotBlank()
         val src: File?
@@ -174,10 +181,10 @@ object Greeting {
         if (useFile) {
             src = File(file)
             if (!src.exists()) { EventLog(app).add("AM скрининг: файла нет — $file"); return null }
-            key = "$SYNTH_VER:screen:file:$lang:${src.absolutePath}:${src.lastModified()}:$maxTotalMs"
+            key = "$SYNTH_VER:screen:file:$slot:${src.absolutePath}:${src.lastModified()}:$maxTotalMs"
         } else {
             src = null
-            key = "$SYNTH_VER:screen:tts:$lang:${text.hashCode()}:$maxTotalMs"
+            key = "$SYNTH_VER:screen:tts:$slot:$ttsLang:${text.hashCode()}:$maxTotalMs"
         }
         val out = cacheFile(app, key)
         if (out.exists() && out.length() > 0) return out.absolutePath
@@ -187,7 +194,7 @@ object Greeting {
                 EventLog(app).add("AM скрининг: не сконвертировал файл ${src.name}"); return null
             }
         } else {
-            val wav = synthTts(app, text.ifBlank { Settings.DEF_AM_GREETING }, lang) ?: run {
+            val wav = synthTts(app, text.ifBlank { defText }, ttsLang) ?: run {
                 EventLog(app).add("AM скрининг: TTS недоступен/не ответил вовремя"); return null
             }
             val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, out.absolutePath)

@@ -67,19 +67,31 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val matches = PhoneMask.matches(number, s.allowedPrefixes)
         val skip = SkipPolicy.reason(this, number, s, isCall = true) != null
 
+        // Без разрешения на оверлей карточка физически не нарисуется (CallerOverlay.show
+        // тихо выходит) — тогда скрининг молча авто-отвечал бы и играл зуммер БЕЗ единого
+        // способа его принять. Без разрешения — падаем на обычную маршрутизацию (гарнитура/
+        // закрыто/звонит нормально), а не остаёмся в тупике. Найдено ревью ветки.
+        val overlayOk = android.provider.Settings.canDrawOverlays(this)
+        // Уже идёт звонок (владелец разговаривает — со скринингом, гарнитурой или обычный) →
+        // новый non-favorite звонок НЕ должен его перехватывать: acceptRingingCall() поставил
+        // бы текущий разговор на удержание. Пусть звонит как обычный call waiting. Найдено
+        // ревью ветки.
+        val tm = getSystemService(android.telephony.TelephonyManager::class.java)
+        val alreadyInCall = tm?.callState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK
+
         // Скрининг: в настроенное рабочее время звонок от НЕ избранного получает видимую
         // интерактивную карточку (Принять/Отклонить), а не тихий автоответчик — проверяется
         // РАНЬШЕ гарнитуры: даже с подключённой гарнитурой (например, за рулём) владелец
         // хочет видеть карточку и мочь ответить с телефона (решение пользователя при ревью).
         val screeningTrigger = ScreeningPolicy.shouldScreen(
-            s.screeningEnabled, ScreeningPolicy.isInWindow(this, s), skip)
+            s.screeningEnabled, ScreeningPolicy.isInWindow(this, s), skip) && overlayOk && !alreadyInCall
 
         // Bluetooth-гарнитура подключена и звонящий не избранный → всегда голосовой
         // автоответчик, независимо от открытых/закрытых часов и режима SMS/голос (проверяется
         // раньше «закрытых часов» — при совпадении обоих условий выигрывает гарнитура; но
         // ПОЗЖЕ скрининга — см. выше).
         val headsetTrigger = HeadsetPolicy.shouldForceAnswer(
-            s.headsetForceAnswer, AudioRouteUtil.isBluetoothHeadsetActive(this), skip)
+            s.headsetForceAnswer, AudioRouteUtil.isBluetoothHeadsetActive(this), skip) && !alreadyInCall
 
         if (screeningTrigger) {
             respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())

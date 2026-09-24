@@ -37,47 +37,84 @@ object CallerOverlay {
     private var shownFor: String? = null
     private data class AcceptDecline(val onAccept: () -> Unit, val onDecline: () -> Unit)
     private var acceptDecline: AcceptDecline? = null
+    // Отдельный ключ, а НЕ shownFor: до первой отрисовки shownFor == null, и сравнение
+    // «shownFor != number» (null != "+420…") было true — кнопки стирались ДО того, как
+    // карточка вообще появлялась на экране, для любого звонящего без готовой CRM-карточки
+    // (типичный случай — незнакомый номер, ровно то, для чего скрининг существует). Найдено
+    // ревью ветки. Сравниваем с этим ключом, а не с «что сейчас на экране».
+    private var acceptDeclineFor: String? = null
+    // Именной Runnable для авто-hide, а НЕ removeCallbacksAndMessages(null): тот стирал
+    // ЛЮБЫЕ отложенные post() на этом Handler'е — включая параллельный ещё не выполнившийся
+    // show() из CallerCardNotifier.onIncoming (карточка с CRM-данными приходит на том же
+    // Handler'е чуть позже). Гонка, найденная ревью ветки: тот, чей post() выполнится первым,
+    // стирал post второго — карточка/кнопки второго вызова никогда не отрисовывались.
+    private var autoHide: Runnable? = null
 
     fun show(context: Context, number: String, lookup: CrmLookup?) {
         val app = context.applicationContext
         if (!AndroidSettings.canDrawOverlays(app)) return   // модуль ещё не выдал — молча живём уведомлением
         main.post {
             runCatching {
-                // Разные звонки — старые кнопки Принять/Отклонить не имеют смысла для НОВОГО
+                // Разные звонки — старые кнопки Ответить/Отклонить не имеют смысла для НОВОГО
                 // номера. Тот же номер (перерисовка карточки после прихода данных CRM из
                 // CallerCardNotifier.onIncoming) — кнопки сохраняются, см. showScreening.
-                if (shownFor != number) acceptDecline = null
+                if (acceptDeclineFor != null && acceptDeclineFor != number) {
+                    acceptDecline = null; acceptDeclineFor = null
+                }
+                val screening = acceptDecline != null
                 removeCurrentView(app)
                 val card = CallerCard.render(lookup?.name?.ifBlank { null }, number, lookup)
                 val view = build(app, number, card, lookup)
                 wm(app).addView(view, params())
                 shown = view
                 shownFor = number
-                main.postDelayed({ hide(app) }, TIMEOUT_MS)
+                // Скрининг сам владеет своим временем жизни (таймаут — amMaxMessageSec внутри
+                // AnswerMachineService.waitScreeningDecision, может быть больше 2 минут) — свой
+                // авто-hide тут только мешал бы, стирая кнопки раньше срока. Обычная карточка
+                // (без кнопок) — как раньше, 2 минуты и убралась сама.
+                if (!screening) {
+                    val r = Runnable { hide(app) }
+                    autoHide = r
+                    main.postDelayed(r, TIMEOUT_MS)
+                }
             }.onFailure { EventLog(app).add("ОКНО: не показать — ${it.javaClass.simpleName}: ${it.message}") }
         }
     }
 
-    /** Как [show], но с кнопками «Принять»/«Отклонить» — для интерактивного скрининга
+    /** Как [show], но с кнопками «Ответить»/«Отклонить» — для интерактивного скрининга
      *  (см. AnswerMachineService.runScreeningFlow). [onAccept]/[onDecline] вызываются на
      *  главном потоке при нажатии; карточка убирается сама сразу по первому тапу — второй
-     *  тап (двойное нажатие) бьёт по уже отсутствующей вью. */
+     *  тап (двойное нажатие) бьёт по уже отсутствующей вью. Крестик/шапка во время скрининга
+     *  трактуются как «Отклонить», а не тихое закрытие — иначе абонент повисал бы без решения. */
     fun showScreening(context: Context, number: String, lookup: CrmLookup?,
                        onAccept: () -> Unit, onDecline: () -> Unit) {
         acceptDecline = AcceptDecline(onAccept, onDecline)
+        acceptDeclineFor = number
         show(context, number, lookup)
     }
 
     fun hide(context: Context) {
         val app = context.applicationContext
-        main.post { runCatching { removeCurrentView(app); acceptDecline = null } }
+        main.post { runCatching { removeCurrentView(app); acceptDecline = null; acceptDeclineFor = null } }
+    }
+
+    /** Крестик/шапка: во время скрининга закрытие карточки БЕЗ решения оставляло бы
+     *  абонента висеть под зуммером до полного таймаута, а владельца — без возможности
+     *  передумать («Ответить» уже пропало вместе с карточкой). Трактуем закрытие как явный
+     *  отказ — тот же путь, что и кнопка «Отклонить». Обычная (не скрининговая) карточка —
+     *  как раньше, просто прячется. */
+    private fun closeOrDecline(app: Context) {
+        val ad = acceptDecline
+        hide(app)
+        ad?.onDecline()
     }
 
     private fun removeCurrentView(app: Context) {
         shown?.let { runCatching { wm(app).removeView(it) } }
         shown = null
         shownFor = null
-        main.removeCallbacksAndMessages(null)
+        autoHide?.let { main.removeCallbacks(it) }
+        autoHide = null
     }
 
     private fun wm(c: Context) = c.getSystemService(WindowManager::class.java)
@@ -113,9 +150,9 @@ object CallerOverlay {
         head.addView(TextView(app).apply {
             text = "✕"; setTextColor(Color.parseColor("#9E9EA3")); textSize = 20f
             setPadding(px(12), 0, px(4), 0)
-            setOnClickListener { hide(app) }
+            setOnClickListener { closeOrDecline(app) }
         })
-        head.setOnClickListener { hide(app) }
+        head.setOnClickListener { closeOrDecline(app) }
         root.addView(head)
 
         root.addView(TextView(app).apply {

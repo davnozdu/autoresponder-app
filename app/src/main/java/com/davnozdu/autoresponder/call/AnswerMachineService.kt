@@ -241,6 +241,10 @@ class AnswerMachineService : Service() {
         val db = HistoryDb.get(app)
         val start = System.currentTimeMillis()
         val name = nameIn ?: contactName(app, number)
+        // Тот же вид номера, что использует CallerCardNotifier.onIncoming (PhoneMask.normalize)
+        // — иначе CallerOverlay.show() увидел бы РАЗНЫЕ ключи для одного и того же звонка
+        // («+420…» вместо «00420…») и стёр бы кнопки, приняв его за другой номер.
+        val normNumber = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number) ?: (number ?: "")
         EventLog(app).add("AM: старт ${number ?: "?"} (screening)")
         accepted = false; declined = false
 
@@ -251,7 +255,6 @@ class AnswerMachineService : Service() {
                 EventLog(app).add("AM: не ответили вовремя ${number ?: "?"} — пропуск")
                 return
             }
-            val recId = db.amRecInsert(number, name, start, 0, null, "screening")
             val safeNum = (number ?: "unknown").replace(Regex("[^+0-9]"), "")
             val ownRecPath = "/sdcard/AutoResponder/recordings/" +
                 java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date(start)) +
@@ -263,17 +266,21 @@ class AnswerMachineService : Service() {
             runCatching { am.isMicrophoneMute = true }
             runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
 
-            val lookup = runCatching {
-                com.davnozdu.autoresponder.crm.CrmFlow.lookup(app, listOfNotNull(number))
-            }.getOrNull()
-            com.davnozdu.autoresponder.notif.CallerOverlay.showScreening(app, number ?: "", lookup,
+            // Карточка — СРАЗУ, без ожидания CRM (lookup=null): владелец должен мочь нажать
+            // «Ответить» немедленно, а не после сетевого похода за CRM-данными. Карточка с
+            // CRM сама дорисуется чуть позже — CallerCardNotifier.onIncoming уже делает свой
+            // lookup параллельно (см. bg.launch в CallScreeningServiceImpl) и вызовет обычный
+            // show() для того же номера; кнопки сохранятся (см. CallerOverlay.acceptDeclineFor).
+            com.davnozdu.autoresponder.notif.CallerOverlay.showScreening(app, normNumber, null,
                 onAccept = { screeningAccept() }, onDecline = { screeningDecline() })
 
             val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
                 Greeting.prepareScreening(app, s.screeningDefaultLang, maxSec * 1000)
             }
-            if (greet != null) AmBridge.play(app, greet, 1)
-            else EventLog(app).add("AM: приветствие для скрининга не готово — молчим")
+            // Пока готовился TTS (до 15с), владелец мог уже нажать «Ответить»/«Отклонить» —
+            // тогда играть приветствие незачем, оно тут же оборвётся.
+            if (greet != null && !accepted && !declined) AmBridge.play(app, greet, 1)
+            else if (greet == null) EventLog(app).add("AM: приветствие для скрининга не готово — молчим")
 
             waitScreeningDecision(maxSec * 1000L, am)
 
@@ -283,11 +290,13 @@ class AnswerMachineService : Service() {
                 runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
                 EventLog(app).add("AM: скрининг — владелец принял ${number ?: "?"}")
                 com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
-                AmBridge.recStop(app)
                 // Дальше это обычный разговор — штатная запись звонилки (если включена)
-                // продолжает сама, как у любого вручную принятого звонка; свою запись
-                // не связываем, строку журнала просто закрываем.
-                db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+                // продолжает сама, как у любого вручную принятого звонка. Свой буфер
+                // (pal_record) тут не нужен — отбрасываем, а не сохраняем: сохранённый файл
+                // содержал бы только приветствие+зуммер до момента ответа, не сам разговор, и
+                // создавать под него запись в журнале (которую нечем будет проиграть) незачем.
+                AmBridge.recStop(app)
+                AmBridge.recDiscard(app)
                 return
             }
 
@@ -297,6 +306,10 @@ class AnswerMachineService : Service() {
             delay(500)
             com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
 
+            // Запись в журнал — только теперь, когда точно знаем, что звонок НЕ был принят
+            // владельцем (Отклонить/таймаут/абонент положил трубку сам): у принятых звонков
+            // строка в истории не нужна (см. ветку accepted выше).
+            val recId = db.amRecInsert(number, name, start, 0, null, "screening")
             waitIdleOr(5_000L)
             val link = RecordingLinker.linkLatest(app, number, start)
             if (link != null) {

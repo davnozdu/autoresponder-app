@@ -321,6 +321,10 @@ class Settings(context: Context) {
         set(v) = sp.edit().putString(K_SCREEN_LANG, v).apply()
 
     // --- библиотека приветствий скрининга: свой слот на каждый из трёх языков ---
+    // У каждого слота ЕЩЁ и свой явный язык TTS (screeningGreetingLang*, по умолчанию
+    // совпадает с языком слота) — раньше язык синтеза молча выводился из того, какая из
+    // трёх коробок читается (см. Greeting.prepareScreening), пользователь попросил явный
+    // чип в каждой коробке, а не неявную привязку к позиции коробки.
     var screeningGreetingSourceCs: Int
         get() = sp.getInt(K_SCREEN_SRC_CS, 0)
         set(v) = sp.edit().putInt(K_SCREEN_SRC_CS, v).apply()
@@ -328,8 +332,11 @@ class Settings(context: Context) {
         get() = sp.getString(K_SCREEN_FILE_CS, "") ?: ""
         set(v) = sp.edit().putString(K_SCREEN_FILE_CS, v).apply()
     var screeningGreetingTextCs: String
-        get() = sp.getString(K_SCREEN_TEXT_CS, "") ?: ""
+        get() = sp.getString(K_SCREEN_TEXT_CS, DEF_SCREEN_GREETING_CS) ?: DEF_SCREEN_GREETING_CS
         set(v) = sp.edit().putString(K_SCREEN_TEXT_CS, v).apply()
+    var screeningGreetingLangCs: String
+        get() = sp.getString(K_SCREEN_LANG_CS, "cs") ?: "cs"
+        set(v) = sp.edit().putString(K_SCREEN_LANG_CS, v).apply()
 
     var screeningGreetingSourceRu: Int
         get() = sp.getInt(K_SCREEN_SRC_RU, 0)
@@ -338,8 +345,11 @@ class Settings(context: Context) {
         get() = sp.getString(K_SCREEN_FILE_RU, "") ?: ""
         set(v) = sp.edit().putString(K_SCREEN_FILE_RU, v).apply()
     var screeningGreetingTextRu: String
-        get() = sp.getString(K_SCREEN_TEXT_RU, "") ?: ""
+        get() = sp.getString(K_SCREEN_TEXT_RU, DEF_SCREEN_GREETING_RU) ?: DEF_SCREEN_GREETING_RU
         set(v) = sp.edit().putString(K_SCREEN_TEXT_RU, v).apply()
+    var screeningGreetingLangRu: String
+        get() = sp.getString(K_SCREEN_LANG_RU, "ru") ?: "ru"
+        set(v) = sp.edit().putString(K_SCREEN_LANG_RU, v).apply()
 
     var screeningGreetingSourceEn: Int
         get() = sp.getInt(K_SCREEN_SRC_EN, 0)
@@ -348,8 +358,11 @@ class Settings(context: Context) {
         get() = sp.getString(K_SCREEN_FILE_EN, "") ?: ""
         set(v) = sp.edit().putString(K_SCREEN_FILE_EN, v).apply()
     var screeningGreetingTextEn: String
-        get() = sp.getString(K_SCREEN_TEXT_EN, "") ?: ""
+        get() = sp.getString(K_SCREEN_TEXT_EN, DEF_SCREEN_GREETING_EN) ?: DEF_SCREEN_GREETING_EN
         set(v) = sp.edit().putString(K_SCREEN_TEXT_EN, v).apply()
+    var screeningGreetingLangEn: String
+        get() = sp.getString(K_SCREEN_LANG_EN, "en") ?: "en"
+        set(v) = sp.edit().putString(K_SCREEN_LANG_EN, v).apply()
 
     /** Сколько секунд держим линию под сообщение клиента, затем отбой. */
     var amMaxMessageSec: Int
@@ -747,12 +760,15 @@ class Settings(context: Context) {
         private const val K_SCREEN_SRC_CS = "screen_src_cs"
         private const val K_SCREEN_FILE_CS = "screen_file_cs"
         private const val K_SCREEN_TEXT_CS = "screen_text_cs"
+        private const val K_SCREEN_LANG_CS = "screen_lang_cs"
         private const val K_SCREEN_SRC_RU = "screen_src_ru"
         private const val K_SCREEN_FILE_RU = "screen_file_ru"
         private const val K_SCREEN_TEXT_RU = "screen_text_ru"
+        private const val K_SCREEN_LANG_RU = "screen_lang_ru"
         private const val K_SCREEN_SRC_EN = "screen_src_en"
         private const val K_SCREEN_FILE_EN = "screen_file_en"
         private const val K_SCREEN_TEXT_EN = "screen_text_en"
+        private const val K_SCREEN_LANG_EN = "screen_lang_en"
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
@@ -824,6 +840,12 @@ class Settings(context: Context) {
         const val DEF_AM_GREETING =
             "Здравствуйте! Сейчас нерабочее время, ответить не можем. " +
             "Оставьте сообщение после сигнала — мы прослушаем его в ближайшее рабочее время."
+        // Скрининг звонит именно В рабочее время (не после часов) — отдельные дефолты на
+        // каждый язык, а не DEF_AM_GREETING («сейчас нерабочее время»), которое звучало бы
+        // прямо противоположно происходящему. См. ревью ветки, finding 5.
+        const val DEF_SCREEN_GREETING_CS = "Dobrý den, prosím počkejte, brzy vás spojíme."
+        const val DEF_SCREEN_GREETING_RU = "Здравствуйте, пожалуйста подождите, скоро мы вас соединим."
+        const val DEF_SCREEN_GREETING_EN = "Hello, please hold, we will connect you shortly."
         const val DEF_PROMPT_CALL =
             "Ты — вежливый автоответчик компании (сейчас нерабочее время). " +
             "Клиент звонил, но мы не можем ответить сейчас. Кратко, в рамках лимита символов, " +
