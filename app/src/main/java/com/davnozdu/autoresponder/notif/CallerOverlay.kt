@@ -65,7 +65,7 @@ object CallerOverlay {
                 removeCurrentView(app)
                 val card = CallerCard.render(lookup?.name?.ifBlank { null }, number, lookup)
                 val view = build(app, number, card, lookup)
-                wm(app).addView(view, params())
+                wm(app).addView(view, params(wake = screening))
                 shown = view
                 shownFor = number
                 // Скрининг сам владеет своим временем жизни (таймаут — amMaxMessageSec внутри
@@ -119,12 +119,25 @@ object CallerOverlay {
 
     private fun wm(c: Context) = c.getSystemService(WindowManager::class.java)
 
-    private fun params() = WindowManager.LayoutParams(
+    /** [wake] — только для скрининга: телефон в этот момент чаще всего лежит с погашенным/
+     *  заблокированным экраном (никто его не ждёт держащим в руке, в отличие от обычного
+     *  входящего звонка) — окно добавляется («addWindow», реально видимое по WindowManager),
+     *  но БЕЗ этих флагов ничего физически не видно на погасшем/залоченном экране. Найдено
+     *  живым звонком: окно создавалось (WindowManager: addWindow, viewVisibility=0), а
+     *  владелец ничего не видел — mWakefulness=Dozing в момент звонка. Обычная (не
+     *  скрининговая) карточка эти флаги не получает — во время звонка, на который и так
+     *  звонит система, экран обычно уже включён. */
+    private fun params(wake: Boolean = false) = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+        (WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            (if (wake) WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+             else 0)),
         PixelFormat.TRANSLUCENT
     ).apply { gravity = Gravity.TOP }
 
