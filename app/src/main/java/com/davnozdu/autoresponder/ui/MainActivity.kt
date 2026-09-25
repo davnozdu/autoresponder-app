@@ -566,6 +566,24 @@ fun AppScreen() {
                         }, label = { Text(lbl) })
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                var openScreenOn by remember { mutableStateOf(s.openHoursScreeningEnabled) }
+                SwitchRow("Та же карточка и в обычные рабочие (открытые) часы", openScreenOn) {
+                    openScreenOn = it; s.openHoursScreeningEnabled = it
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Кнопка «Перебросить на автоответчик» на карточке — тексты и звук ниже, "
+                    + "в секции «Голосовая почта».", style = MaterialTheme.typography.bodySmall)
+                var waitMin by remember { mutableStateOf((s.screeningWaitSec / 60).toString()) }
+                var vmMaxMin by remember { mutableStateOf((s.voicemailMaxSec / 60).toString()) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(waitMin, { waitMin = it; it.toIntOrNull()?.let { v -> s.screeningWaitSec = (v * 60).coerceIn(5, 300) } },
+                        label = { Text("Ждать решения, мин") }, modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    OutlinedTextField(vmMaxMin, { vmMaxMin = it; it.toIntOrNull()?.let { v -> s.voicemailMaxSec = (v * 60).coerceIn(5, 300) } },
+                        label = { Text("Запись после переброса, мин") }, modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                }
             }
 
             ExpandableSection("Приветствия") {
@@ -599,6 +617,35 @@ fun AppScreen() {
                     s.screeningGreetingTextEn, { s.screeningGreetingTextEn = it },
                     s.screeningGreetingLangEn, { s.screeningGreetingLangEn = it },
                     s.screeningHoldFileEn, { s.screeningHoldFileEn = it })
+            }
+
+            ExpandableSection("Голосовая почта (после переброса)") {
+                Text("Приветствие, которое слышит клиент СРАЗУ после того, как вы нажали "
+                    + "«Перебросить на автоответчик» на карточке скрининга (или сработал "
+                    + "автоматический таймаут) — своё на каждый язык, без варианта «по кругу»: "
+                    + "сразу после этой фразы стартует запись.",
+                    style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                GreetingLangSlot(ctx, scope, "Чешский", "cs",
+                    s.voicemailGreetingSourceCs, { s.voicemailGreetingSourceCs = it },
+                    s.voicemailGreetingFileCs, { s.voicemailGreetingFileCs = it },
+                    s.voicemailGreetingTextCs, { s.voicemailGreetingTextCs = it },
+                    s.voicemailGreetingLangCs, { s.voicemailGreetingLangCs = it },
+                    slotPrefix = "voicemail")
+                Spacer(Modifier.height(12.dp))
+                GreetingLangSlot(ctx, scope, "Русский", "ru",
+                    s.voicemailGreetingSourceRu, { s.voicemailGreetingSourceRu = it },
+                    s.voicemailGreetingFileRu, { s.voicemailGreetingFileRu = it },
+                    s.voicemailGreetingTextRu, { s.voicemailGreetingTextRu = it },
+                    s.voicemailGreetingLangRu, { s.voicemailGreetingLangRu = it },
+                    slotPrefix = "voicemail")
+                Spacer(Modifier.height(12.dp))
+                GreetingLangSlot(ctx, scope, "English", "en",
+                    s.voicemailGreetingSourceEn, { s.voicemailGreetingSourceEn = it },
+                    s.voicemailGreetingFileEn, { s.voicemailGreetingFileEn = it },
+                    s.voicemailGreetingTextEn, { s.voicemailGreetingTextEn = it },
+                    s.voicemailGreetingLangEn, { s.voicemailGreetingLangEn = it },
+                    slotPrefix = "voicemail")
             }
 
             ExpandableSection("Управление по SMS") {
@@ -1371,7 +1418,8 @@ private fun GreetingLangSlot(
     file: String, onFile: (String) -> Unit,
     text: String, onText: (String) -> Unit,
     lang: String, onLang: (String) -> Unit,
-    holdFile: String, onHoldFile: (String) -> Unit
+    holdFile: String? = null, onHoldFile: ((String) -> Unit)? = null,
+    slotPrefix: String = "screen"
 ) {
     Text(title, style = MaterialTheme.typography.titleSmall)
     var src by remember(slot) { mutableStateOf(source) }
@@ -1395,7 +1443,7 @@ private fun GreetingLangSlot(
         var gFile by remember(slot) { mutableStateOf(file) }
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             if (uri != null) scope.launch {
-                val p = withContext(Dispatchers.IO) { importGreetingFile(ctx, uri, "screen_greeting_$slot") }
+                val p = withContext(Dispatchers.IO) { importGreetingFile(ctx, uri, "${slotPrefix}_greeting_$slot") }
                 if (p != null) { onFile(p); gFile = p }
             }
         }
@@ -1403,24 +1451,28 @@ private fun GreetingLangSlot(
         Text(if (gFile.isNotBlank()) "Файл: ${java.io.File(gFile).name}" else "Файл не выбран",
             style = MaterialTheme.typography.bodySmall)
     }
-    Spacer(Modifier.height(6.dp))
-    Text("После приветствия (по кругу, пока абонент ждёт) — необязательно:",
-        style = MaterialTheme.typography.bodySmall)
-    var gHold by remember(slot) { mutableStateOf(holdFile) }
-    val holdPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) scope.launch {
-            val p = withContext(Dispatchers.IO) { importGreetingFile(ctx, uri, "screen_hold_$slot") }
-            if (p != null) { onHoldFile(p); gHold = p }
+    // Hold-файл («по кругу, пока абонент ждёт») — только у скрининга, не у voicemail-фазы
+    // (та проигрывается один раз, дальше сразу идёт запись — нечему тут крутиться по кругу).
+    if (holdFile != null && onHoldFile != null) {
+        Spacer(Modifier.height(6.dp))
+        Text("После приветствия (по кругу, пока абонент ждёт) — необязательно:",
+            style = MaterialTheme.typography.bodySmall)
+        var gHold by remember(slot) { mutableStateOf(holdFile) }
+        val holdPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) scope.launch {
+                val p = withContext(Dispatchers.IO) { importGreetingFile(ctx, uri, "${slotPrefix}_hold_$slot") }
+                if (p != null) { onHoldFile(p); gHold = p }
+            }
         }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = { holdPicker.launch("audio/*") }) { Text("Выбрать музыку/сообщение") }
-        if (gHold.isNotBlank()) {
-            TextButton(onClick = { onHoldFile(""); gHold = "" }) { Text("Убрать") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { holdPicker.launch("audio/*") }) { Text("Выбрать музыку/сообщение") }
+            if (gHold.isNotBlank()) {
+                TextButton(onClick = { onHoldFile(""); gHold = "" }) { Text("Убрать") }
+            }
         }
+        Text(if (gHold.isNotBlank()) "Файл: ${java.io.File(gHold).name} (по кругу)" else "Не задано — играет обычный зуммер",
+            style = MaterialTheme.typography.bodySmall)
     }
-    Text(if (gHold.isNotBlank()) "Файл: ${java.io.File(gHold).name} (по кругу)" else "Не задано — играет обычный зуммер",
-        style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
