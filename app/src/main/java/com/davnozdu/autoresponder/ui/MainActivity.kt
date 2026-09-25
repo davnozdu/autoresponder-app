@@ -645,6 +645,10 @@ fun AppScreen() {
                     + "скрининг возвращается сам.",
                     style = MaterialTheme.typography.bodySmall)
 
+                if (autoScreenDnd) Text("Пока включён тумблер выше — окно и дни ниже " +
+                    "ИГНОРИРУЮТСЯ: расписанием служит сам «Не беспокоить».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
                 var screenStart by remember { mutableStateOf(s.screeningStartMin) }
                 var screenEnd by remember { mutableStateOf(s.screeningEndMin) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

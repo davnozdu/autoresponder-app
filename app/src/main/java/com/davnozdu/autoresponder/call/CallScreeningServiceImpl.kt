@@ -49,8 +49,14 @@ class CallScreeningServiceImpl : CallScreeningService() {
         // closedReason/matches дальше — не только для экономии.
         val closedReasonEarly = ClosedState.reason(this, s)
         val matchesEarly = PhoneMask.matches(number, s.allowedPrefixes)
+        // Своё окно «Активно с/до + дни» имеет смысл только когда включённость скрининга
+        // решает владелец сам. Если включена DND-автоматика (autoScreeningByDnd), «расписание»
+        // уже и есть сам DND — AutoNotifications.onDndChanged переключает screeningEnabled по
+        // его переходам, а отдельное окно поверх этого только молча гасило скрининг вне своих
+        // часов, даже когда DND выключен и screeningEnabled=true. Отсюда и баг.
+        val inScreeningWindow = s.autoScreeningByDnd || ScreeningPolicy.isInWindow(this, s)
         val screeningWindowTrigger = ScreeningPolicy.shouldScreen(
-            s.screeningEnabled, ScreeningPolicy.isInWindow(this, s), skipEarly) && overlayOkEarly && !alreadyInCallEarly
+            s.screeningEnabled, inScreeningWindow, skipEarly) && overlayOkEarly && !alreadyInCallEarly
         val likelyScreening = screeningWindowTrigger
         // История и диагностика — в фон: onScreenCall выполняется на главном потоке и должен
         // ответить системе быстро, а запись в SQLite + поиск имени в книге контактов небыстрые.
