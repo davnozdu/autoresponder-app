@@ -24,7 +24,7 @@ import java.io.File
  *         screen_greeting (приветствие скрининга, требует lang) |
  *         screen_hold (файл «после приветствия» скрининга по кругу, требует lang) |
  *         voicemail_greeting (приветствие после переброса на автоответчик, требует lang)
- *   lang: cs|ru|en (только для screen_*/voicemail_greeting)
+ *   lang: cs|ru|en (только для screen_greeting/screen_hold/voicemail_greeting)
  *   src: абсолютный путь на устройстве (публичное хранилище, НЕ files/ приложения)
  */
 class ImportAudioActivity : Activity() {
