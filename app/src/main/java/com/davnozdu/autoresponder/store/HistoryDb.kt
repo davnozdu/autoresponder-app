@@ -587,9 +587,14 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     }
     fun smsHoldClear() { writableDatabase.delete("sms_hold", null, null) }
 
-    fun humanReplyAfter(identity: String, since: Long): Boolean = readableDatabase.rawQuery(
-        "SELECT 1 FROM events WHERE number=? AND direction='out' AND auto=0 AND channel!='call' AND ts>? LIMIT 1",
-        arrayOf(identity,since.toString())).use { it.moveToFirst() }
+    /** Канал последнего ЛИЧНОГО (не авто) исходящего сообщения этому адресату после [since], или
+     *  null, если такого не было. Раньше это был просто Boolean (humanReplyAfter) — терялась
+     *  информация, в каком именно канале владелец уже ответил, а она нужна, чтобы на канале, где
+     *  автоответ отменяется, послать короткое «ответили вам в X» вместо тишины: клиент мог
+     *  написать сразу в несколько каналов и не узнать, что ему вообще ответили. */
+    fun humanReplyChannelAfter(identity: String, since: Long): String? = readableDatabase.rawQuery(
+        "SELECT channel FROM events WHERE number=? AND direction='out' AND auto=0 AND channel!='call' AND ts>? ORDER BY ts DESC LIMIT 1",
+        arrayOf(identity,since.toString())).use { if (it.moveToFirst()) it.getString(0) else null }
 
     /** Принудительный WAL-checkpoint перед копированием файла БД (для бэкапа). */
     fun checkpoint() {

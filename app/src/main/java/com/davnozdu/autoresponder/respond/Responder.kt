@@ -38,8 +38,13 @@ object Responder {
         val app = context.applicationContext
         val who = number ?: return
         val payload = org.json.JSONObject().put("number", who).put("text", incomingText.orEmpty()).put("subId", incomingSubId)
+        // Сборка сообщений (batchWaitMs, только для SMS — у звонка нечего накапливать):
+        // ttl должен пережить окно тишины с запасом, иначе задержанное сообщение истечёт,
+        // так и не дождавшись своей очереди.
+        val batchMs = if (kind == Kind.SMS) Settings(app).batchWaitMs else 0L
+        val ttl = maxOf(15 * 60_000L, batchMs + 5 * 60_000L)
         EventQueue.enqueue(app, Handoff.key(app, who, "sms"), kind.name, payload,
-            EventQueue.token("${kind.name}:$who:$eventAt:${incomingText.orEmpty()}"), 15 * 60_000L)
+            EventQueue.token("${kind.name}:$who:$eventAt:${incomingText.orEmpty()}"), ttl, batchMs)
     }
 
     /** DEBUG: выполнить запрос моделей и записать результат/ошибку в журнал. */
@@ -222,9 +227,25 @@ object Responder {
             log.add("$tag $norm — SIM отправки: слот${slot + 1} subId=$subId " +
                     "(правило префикса; входящая subId=$incomingSubId; по умолчанию слот${s.smsSlot + 1})")
             if (!Settings(context).enabled || AutoReplyState.isPaused(context) ||
-                Handoff.blocked(context, norm, "sms", receivedAt) ||
-                HistoryDb.get(context).humanReplyAfter(norm, receivedAt)) {
+                Handoff.blocked(context, norm, "sms", receivedAt)) {
                 log.add("$tag $norm — пауза или ручной ответ во время подготовки, ответ отменён"); return@withKey
+            }
+            // Клиент мог написать сразу в несколько каналов (напр. SMS и WhatsApp одновременно) —
+            // если владелец уже ЛИЧНО ответил ему в ДРУГОМ канале, вместо тишины по SMS шлём
+            // короткое «ответили вам в X»: иначе выглядит так, будто человека вообще пропустили,
+            // хотя ему уже ответили — просто не сюда. Тот же канал (owner ответил именно по SMS) —
+            // по-прежнему тихий пропуск, как раньше.
+            val humanCh = HistoryDb.get(context).humanReplyChannelAfter(norm, receivedAt)
+            if (humanCh != null) {
+                if (humanCh == "sms") {
+                    log.add("$tag $norm — вы уже ответили сами, автоответ отменён"); return@withKey
+                }
+                val notice = "Ответили вам в ${channelLabel(humanCh)}."
+                val nsegs = SmsSender.send(context, norm, notice, subId, jobId = jobId,
+                    historyChannel = if (kind == Kind.CALL) "call" else "sms", limitKey = norm, timeoutHours = s.timeoutHours)
+                if (nsegs >= 0) log.add("$tag $norm — короткое уведомление (уже ответили в $humanCh): $notice")
+                else log.add("$tag $norm — ОШИБКА отправки уведомления о кросс-канальном ответе")
+                return@withKey
             }
             val segs = SmsSender.send(context, norm, clamped, subId, jobId = jobId,
                 historyChannel = if (kind == Kind.CALL) "call" else "sms", limitKey = norm, timeoutHours = s.timeoutHours)
@@ -300,6 +321,16 @@ object Responder {
     private fun applyPrefix(prefix: String, text: String): String {
         val p = prefix.trim()
         return if (p.isEmpty()) text else "$p $text"
+    }
+
+    /** Человекочитаемое имя канала для короткого кросс-канального уведомления
+     *  («Ответили вам в X») — см. [HistoryDb.humanReplyChannelAfter]. */
+    fun channelLabel(channel: String): String = when (channel) {
+        "sms" -> "SMS"
+        "whatsapp" -> "WhatsApp"
+        "telegram" -> "Telegram"
+        "rcs" -> "RCS"
+        else -> channel
     }
 
     /**

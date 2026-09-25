@@ -41,9 +41,13 @@ object NotifResponder {
             val payload = org.json.JSONObject().put("key", sbn.key).put("sender", sender).put("text", text)
                 .put("channel", channel.name).put("tag", tag).put("group", isGroup).put("ts", ts)
                 .put("uris", org.json.JSONArray(senderUris))
+            // Сборка сообщений (batchWaitMs, см. Responder.handle) — ttl с запасом над окном
+            // тишины, иначе задержанное сообщение истечёт раньше своей очереди.
+            val batchMs = Settings(app).batchWaitMs
+            val ttl = maxOf(Settings(app).notifMaxAgeMin.coerceAtLeast(1) * 60_000L, batchMs + 5 * 60_000L)
             EventQueue.enqueue(app, com.davnozdu.autoresponder.respond.Handoff.key(app, sender, tag),
                 "notification", payload, EventQueue.token("${sbn.packageName}:$sender:$ts:$text"),
-                Settings(app).notifMaxAgeMin.coerceAtLeast(1) * 60_000L)
+                ttl, batchMs)
         }
     }
 
@@ -249,10 +253,36 @@ object NotifResponder {
             // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
             if (!Settings(context).enabled || AutoReplyState.isPaused(context) ||
                 com.davnozdu.autoresponder.respond.Handoff.blocked(context, histKeyEarly, inCh, receivedAt) ||
-                HistoryDb.get(context).humanReplyAfter(histKeyEarly, receivedAt) ||
                 !NotifListenerService.current(sbn.key)?.notification?.extras
                     ?.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY).isNullOrEmpty()) {
                 log.add("NOTIF[$tag] — пауза или ручной ответ во время подготовки, ответ отменён"); return@withKey
+            }
+            // Клиент мог написать сразу в несколько каналов — если владелец уже ЛИЧНО ответил в
+            // ДРУГОМ канале, вместо тишины здесь шлём короткое «ответили вам в X» (см. Responder.kt,
+            // тот же приём для SMS). Тот же канал — по-прежнему тихий пропуск, как раньше.
+            val humanCh = HistoryDb.get(context).humanReplyChannelAfter(histKeyEarly, receivedAt)
+            if (humanCh != null) {
+                if (humanCh == inCh) {
+                    log.add("NOTIF[$tag] — вы уже ответили сами, автоответ отменён"); return@withKey
+                }
+                val notice = "Ответили вам в ${com.davnozdu.autoresponder.respond.Responder.channelLabel(humanCh)}."
+                if (EventQueue.beforeSend(context, jobId) && tryRemoteInputReply(context, sbn, notice)) {
+                    store.markReplied(key, s.timeoutHours)
+                    recordOut(context, inId, inCh, notice)
+                    DndStats.onAutoReply(context)
+                    NotifListenerService.dismiss(sbn.key)
+                    log.add("NOTIF[$tag] $key — короткое уведомление (уже ответили в $humanCh): $notice")
+                    return@withKey
+                }
+                // Тот же запасной SMS-путь, что и у обычного ответа (см. ниже): у RCS кнопка
+                // «Ответить» не всегда рабочая.
+                if (channel == Channel.MESSAGES && number != null) {
+                    val subId = SimUtil.resolveSubId(context, s.slotForNumber(number))
+                    val segs = SmsSender.send(context, key, notice, subId, jobId = jobId, historyChannel = "sms", limitKey = key, timeoutHours = s.timeoutHours)
+                    if (segs >= 0) { log.add("NOTIF[$tag] $key — короткое уведомление запасным SMS (уже ответили в $humanCh): $notice"); return@withKey }
+                }
+                log.add("NOTIF[$tag] $key — не удалось отправить уведомление о кросс-канальном ответе")
+                return@withKey
             }
             if (!EventQueue.beforeSend(context, jobId)) return@withKey
             val transportId = com.davnozdu.autoresponder.respond.Outgoing.startRemote(context, histKeyEarly, inCh, reply, jobId)
