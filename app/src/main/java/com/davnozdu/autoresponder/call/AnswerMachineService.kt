@@ -228,9 +228,13 @@ class AnswerMachineService : Service() {
             // навсегда заглушенный голос звонка были бы худшим возможным отказом. Root-сторож
             // в демоне страхует только смерть ПРОЦЕССА; исключение внутри ещё живого процесса
             // он не увидит — снимаем сами. ADJUST_UNMUTE безопасен, даже если мьюта не было.
+            // AmBridge.muteOut(false) — та же гарантия для демон-стороны: раньше это был
+            // no-op, теперь реально пишет в mixer-контрол усилителя (TFA Mute), и залипший
+            // "on" молча глушил бы ВСЕ последующие обычные звонки владельца, а не только этот.
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             runCatching { am.isMicrophoneMute = false }
             runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
+            AmBridge.muteOut(app, false)
             unregisterWatcher(app)
             AmBlockOverlay.hide(app)
             AmBridge.blockOff(app)
@@ -278,6 +282,12 @@ class AnswerMachineService : Service() {
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             runCatching { am.isMicrophoneMute = true }
             runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
+            // AudioManager-мьют STREAM_VOICE_CALL на этом телефоне НЕ глушит приём в наушник
+            // во время активного звонка — на нём работает отдельный smart-усилитель (см.
+            // комментарий у muteOut в runFlow/answermachine.sh). Реальный мьют — только через
+            // daemon-контрол; ставится один раз (не на каждый тик, в отличие от AudioManager-
+            // мьюта — это НЕ Android-стрим, ничего в системе его не сбрасывает).
+            AmBridge.muteOut(app, true)
 
             // Карточка — СРАЗУ, без ожидания CRM (lookup=null): владелец должен мочь нажать
             // «Ответить» немедленно, а не после сетевого похода за CRM-данными.
@@ -415,6 +425,7 @@ class AnswerMachineService : Service() {
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             runCatching { am.isMicrophoneMute = false }
             runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
+            AmBridge.muteOut(app, false)
             AmBridge.stop(app)
             AmBridge.recStop(app)
         }
