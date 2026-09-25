@@ -375,6 +375,67 @@ class Settings(context: Context) {
         get() = sp.getString(K_SCREEN_HOLD_EN, "") ?: ""
         set(v) = sp.edit().putString(K_SCREEN_HOLD_EN, v).apply()
 
+    // --- переброс на автоответчик (кнопка на карточке скрининга) ---
+    /** Та же карточка скрининга (Ответить/Отклонить/Перебросить) появляется не только в
+     *  своё расписание, но и в обычные открытые (не закрытые) часы. */
+    var openHoursScreeningEnabled: Boolean
+        get() = sp.getBoolean(K_OPEN_SCREEN, false)
+        set(v) = sp.edit().putBoolean(K_OPEN_SCREEN, v).apply()
+
+    /** Сколько секунд карточка ждёт решения владельца, прежде чем автоматически
+     *  переброситься на автоответчик — ОТДЕЛЬНО от amMaxMessageSec (тот отвечает только за
+     *  длительность записи сообщения, не за ожидание карточки). */
+    var screeningWaitSec: Int
+        get() = sp.getInt(K_SCREEN_WAIT, 300)
+        set(v) = sp.edit().putInt(K_SCREEN_WAIT, v).apply()
+
+    /** Длительность записи клиента ПОСЛЕ переброса на автоответчик. */
+    var voicemailMaxSec: Int
+        get() = sp.getInt(K_VM_MAX_SEC, 60)
+        set(v) = sp.edit().putInt(K_VM_MAX_SEC, v).apply()
+
+    // --- voicemail-приветствие («мы не можем сейчас связаться, оставьте сообщение»),
+    // свой слот на каждый из трёх языков — зеркалит screeningGreeting*, но БЕЗ hold-файла
+    // (эта фраза проигрывается один раз, следом сразу стартует запись). ---
+    var voicemailGreetingSourceCs: Int
+        get() = sp.getInt(K_VM_SRC_CS, 0)
+        set(v) = sp.edit().putInt(K_VM_SRC_CS, v).apply()
+    var voicemailGreetingFileCs: String
+        get() = sp.getString(K_VM_FILE_CS, "") ?: ""
+        set(v) = sp.edit().putString(K_VM_FILE_CS, v).apply()
+    var voicemailGreetingTextCs: String
+        get() = sp.getString(K_VM_TEXT_CS, DEF_VOICEMAIL_GREETING_CS) ?: DEF_VOICEMAIL_GREETING_CS
+        set(v) = sp.edit().putString(K_VM_TEXT_CS, v).apply()
+    var voicemailGreetingLangCs: String
+        get() = sp.getString(K_VM_LANG_CS, "cs") ?: "cs"
+        set(v) = sp.edit().putString(K_VM_LANG_CS, v).apply()
+
+    var voicemailGreetingSourceRu: Int
+        get() = sp.getInt(K_VM_SRC_RU, 0)
+        set(v) = sp.edit().putInt(K_VM_SRC_RU, v).apply()
+    var voicemailGreetingFileRu: String
+        get() = sp.getString(K_VM_FILE_RU, "") ?: ""
+        set(v) = sp.edit().putString(K_VM_FILE_RU, v).apply()
+    var voicemailGreetingTextRu: String
+        get() = sp.getString(K_VM_TEXT_RU, DEF_VOICEMAIL_GREETING_RU) ?: DEF_VOICEMAIL_GREETING_RU
+        set(v) = sp.edit().putString(K_VM_TEXT_RU, v).apply()
+    var voicemailGreetingLangRu: String
+        get() = sp.getString(K_VM_LANG_RU, "ru") ?: "ru"
+        set(v) = sp.edit().putString(K_VM_LANG_RU, v).apply()
+
+    var voicemailGreetingSourceEn: Int
+        get() = sp.getInt(K_VM_SRC_EN, 0)
+        set(v) = sp.edit().putInt(K_VM_SRC_EN, v).apply()
+    var voicemailGreetingFileEn: String
+        get() = sp.getString(K_VM_FILE_EN, "") ?: ""
+        set(v) = sp.edit().putString(K_VM_FILE_EN, v).apply()
+    var voicemailGreetingTextEn: String
+        get() = sp.getString(K_VM_TEXT_EN, DEF_VOICEMAIL_GREETING_EN) ?: DEF_VOICEMAIL_GREETING_EN
+        set(v) = sp.edit().putString(K_VM_TEXT_EN, v).apply()
+    var voicemailGreetingLangEn: String
+        get() = sp.getString(K_VM_LANG_EN, "en") ?: "en"
+        set(v) = sp.edit().putString(K_VM_LANG_EN, v).apply()
+
     /** Сколько секунд держим линию под сообщение клиента, затем отбой. */
     var amMaxMessageSec: Int
         get() = sp.getInt(K_AM_MSG_SEC, 45)
@@ -791,6 +852,21 @@ class Settings(context: Context) {
         private const val K_SCREEN_TEXT_EN = "screen_text_en"
         private const val K_SCREEN_LANG_EN = "screen_lang_en"
         private const val K_SCREEN_HOLD_EN = "screen_hold_en"
+        private const val K_OPEN_SCREEN = "open_hours_screening"
+        private const val K_SCREEN_WAIT = "screen_wait_sec"
+        private const val K_VM_MAX_SEC = "vm_max_sec"
+        private const val K_VM_SRC_CS = "vm_src_cs"
+        private const val K_VM_FILE_CS = "vm_file_cs"
+        private const val K_VM_TEXT_CS = "vm_text_cs"
+        private const val K_VM_LANG_CS = "vm_lang_cs"
+        private const val K_VM_SRC_RU = "vm_src_ru"
+        private const val K_VM_FILE_RU = "vm_file_ru"
+        private const val K_VM_TEXT_RU = "vm_text_ru"
+        private const val K_VM_LANG_RU = "vm_lang_ru"
+        private const val K_VM_SRC_EN = "vm_src_en"
+        private const val K_VM_FILE_EN = "vm_file_en"
+        private const val K_VM_TEXT_EN = "vm_text_en"
+        private const val K_VM_LANG_EN = "vm_lang_en"
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
@@ -869,6 +945,9 @@ class Settings(context: Context) {
         const val DEF_SCREEN_GREETING_CS = "Dobrý den, prosím počkejte, brzy vás spojíme."
         const val DEF_SCREEN_GREETING_RU = "Здравствуйте, пожалуйста подождите, скоро мы вас соединим."
         const val DEF_SCREEN_GREETING_EN = "Hello, please hold, we will connect you shortly."
+        const val DEF_VOICEMAIL_GREETING_CS = "Momentálně se s vámi nemůžeme spojit. Prosím, zanechte zprávu."
+        const val DEF_VOICEMAIL_GREETING_RU = "Сейчас мы не можем с вами связаться. Пожалуйста, оставьте сообщение."
+        const val DEF_VOICEMAIL_GREETING_EN = "We're unable to take your call right now. Please leave a message."
         const val DEF_PROMPT_CALL =
             "Ты — вежливый автоответчик компании (сейчас нерабочее время). " +
             "Клиент звонил, но мы не можем ответить сейчас. Кратко, в рамках лимита символов, " +
