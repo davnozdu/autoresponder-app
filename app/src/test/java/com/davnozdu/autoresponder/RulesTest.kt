@@ -98,7 +98,10 @@ class ScreeningBeepTest {
 
     @Test fun `повтор длины кратен единичному биппер-блоку`() {
         val one = Greeting.repeatingBeepPcm(1)          // минимум 1 повтор
-        val many = Greeting.repeatingBeepPcm(one.size * 5) // должно дать >= 5 повторов по размеру
+        // one.size — байты PCM, а repeatingBeepPcm ждёт миллисекунды: one.size*5 здесь раньше
+        // передавался как мс (~сотни МБ, OutOfMemoryError в CI) — просто заведомо больше
+        // одного блока (единичный блок — секунды), без аллокации гигантского массива.
+        val many = Greeting.repeatingBeepPcm(15_000)
         assertEquals(0, many.size % one.size)
     }
 }
