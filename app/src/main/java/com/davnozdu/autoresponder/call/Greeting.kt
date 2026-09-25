@@ -139,8 +139,12 @@ object Greeting {
         }
         // Дописываем бип ПОСЛЕ речи — это headerless PCM, поэтому обычный append байтов и
         // даёт правильную склейку без перекодирования и без щелчка на стыке (есть fade).
-        try { FileOutputStream(tmp, true).use { it.write(beepTailPcm()) } }
-        catch (e: Exception) { EventLog(app).add("AM приветствие: не добавил бип (${e.message})") }
+        // Только для TTS: загруженный файл пользователь мог уже свести со своим бипом сам
+        // (см. Settings.amGreetingFile) — автодобавление поверх дало бы два бипа подряд.
+        if (!useFile) {
+            try { FileOutputStream(tmp, true).use { it.write(beepTailPcm()) } }
+            catch (e: Exception) { EventLog(app).add("AM приветствие: не добавил бип (${e.message})") }
+        }
         if (!tmp.renameTo(out)) {
             EventLog(app).add("AM приветствие: не завершил запись кэша"); tmp.delete(); return null
         }
