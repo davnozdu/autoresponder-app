@@ -376,12 +376,6 @@ class Settings(context: Context) {
         set(v) = sp.edit().putString(K_SCREEN_HOLD_EN, v).apply()
 
     // --- переброс на автоответчик (кнопка на карточке скрининга) ---
-    /** Та же карточка скрининга (Ответить/Отклонить/Перебросить) появляется не только в
-     *  своё расписание, но и в обычные открытые (не закрытые) часы. */
-    var openHoursScreeningEnabled: Boolean
-        get() = sp.getBoolean(K_OPEN_SCREEN, false)
-        set(v) = sp.edit().putBoolean(K_OPEN_SCREEN, v).apply()
-
     /** Сколько секунд карточка ждёт решения владельца, прежде чем автоматически
      *  переброситься на автоответчик — ОТДЕЛЬНО от amMaxMessageSec (тот отвечает только за
      *  длительность записи сообщения, не за ожидание карточки). */
@@ -852,7 +846,6 @@ class Settings(context: Context) {
         private const val K_SCREEN_TEXT_EN = "screen_text_en"
         private const val K_SCREEN_LANG_EN = "screen_lang_en"
         private const val K_SCREEN_HOLD_EN = "screen_hold_en"
-        private const val K_OPEN_SCREEN = "open_hours_screening"
         private const val K_SCREEN_WAIT = "screen_wait_sec"
         private const val K_VM_MAX_SEC = "vm_max_sec"
         private const val K_VM_SRC_CS = "vm_src_cs"

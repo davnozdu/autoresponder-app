@@ -45,22 +45,13 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val overlayOkEarly = android.provider.Settings.canDrawOverlays(this)
         val alreadyInCallEarly = getSystemService(android.telephony.TelephonyManager::class.java)
             ?.callState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK
-        // Посчитаны уже здесь (а не только ниже, у screeningTrigger/openHoursTrigger) и
-        // переиспользуются как closedReason/matches дальше — не только для экономии, а чтобы
-        // likelyScreening видел ОБА пути показа карточки скрининга. Раньше он учитывал только
-        // расписание (screeningWindowTrigger), и звонок, которого вёл openHoursTrigger
-        // (скрининг в открытые часы), НЕ считался «вероятным скринингом» тут — тогда ниже
-        // всё равно звался CallerCardNotifier.onIncoming, и его heads-up-уведомление
-        // накладывалось на карточку скрининга вместо того, чтобы уйти под неё — ровно тот же
-        // живой баг «две карточки одна поверх другой», который уже один раз чинили для
-        // обычного скрининга. Найдено финальным ревью ветки.
+        // Посчитаны уже здесь (а не только ниже, у screeningTrigger) и переиспользуются как
+        // closedReason/matches дальше — не только для экономии.
         val closedReasonEarly = ClosedState.reason(this, s)
         val matchesEarly = PhoneMask.matches(number, s.allowedPrefixes)
         val screeningWindowTrigger = ScreeningPolicy.shouldScreen(
             s.screeningEnabled, ScreeningPolicy.isInWindow(this, s), skipEarly) && overlayOkEarly && !alreadyInCallEarly
-        val openHoursScreeningTrigger = s.screeningEnabled && s.openHoursScreeningEnabled &&
-            closedReasonEarly == null && matchesEarly && !skipEarly && overlayOkEarly && !alreadyInCallEarly
-        val likelyScreening = screeningWindowTrigger || openHoursScreeningTrigger
+        val likelyScreening = screeningWindowTrigger
         // История и диагностика — в фон: onScreenCall выполняется на главном потоке и должен
         // ответить системе быстро, а запись в SQLite + поиск имени в книге контактов небыстрые.
         bg.launch {
@@ -114,16 +105,6 @@ class CallScreeningServiceImpl : CallScreeningService() {
         // хочет видеть карточку и мочь ответить с телефона (решение пользователя при ревью).
         val screeningTrigger = screeningWindowTrigger
 
-        // Та же карточка скрининга — и в обычные ОТКРЫТЫЕ часы (не только в своё отдельное
-        // расписание выше): closedReason == null — это и есть «открыто», тот же признак, что
-        // уже определяет финальную ветку "иначе — звонит нормально" ниже. s.screeningEnabled
-        // проверяется явно: тумблер «скрининг в открытые часы» лежит В секции «Скрининг
-        // звонков», ПОД главным переключателем скрининга в UI — без этой проверки выключение
-        // главного скрининга не выключало скрининг в рабочие часы, что для владельца выглядит
-        // как «я выключил скрининг, а звонки всё равно перехватывает автоответчик». Найдено
-        // финальным ревью ветки.
-        val openHoursTrigger = openHoursScreeningTrigger
-
         // Bluetooth-гарнитура подключена и звонящий не избранный → всегда голосовой
         // автоответчик, независимо от открытых/закрытых часов и режима SMS/голос (проверяется
         // раньше «закрытых часов» — при совпадении обоих условий выигрывает гарнитура; но
@@ -131,7 +112,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val headsetTrigger = HeadsetPolicy.shouldForceAnswer(
             s.headsetForceAnswer, AudioRouteUtil.isBluetoothHeadsetActive(this), skip) && !alreadyInCall
 
-        if (screeningTrigger || openHoursTrigger) {
+        if (screeningTrigger) {
             respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
             EventLog(this).add("CALL ${number ?: "?"} — скрининг → экран")
             AnswerMachineService.start(this, number, null, "screening", null, null)

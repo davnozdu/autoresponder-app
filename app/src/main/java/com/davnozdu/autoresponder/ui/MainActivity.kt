@@ -349,7 +349,8 @@ fun AppScreen() {
                         // без учёта регистра — не по разделам содержимого: пункт может лежать в
                         // секции, чьё название вообще не содержит искомое слово (пример — сам
                         // пользователь: «Чёрный список» находится в секции «Списки и приложения»).
-                        val results = settingsSearchIndex.filter { it.label.contains(searchQuery, ignoreCase = true) }
+                        val foldedQuery = searchFold(searchQuery)
+                        val results = settingsSearchIndex.filter { searchFold(it.label).contains(foldedQuery) }
                         if (results.isEmpty()) {
                             Text("Ничего не найдено", style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.padding(top = 8.dp))
@@ -646,11 +647,6 @@ fun AppScreen() {
                             screenDays = screenDays xor (1 shl d); s.screeningWorkDaysMask = screenDays
                         }, label = { Text(lbl) })
                     }
-                }
-                Spacer(Modifier.height(8.dp))
-                var openScreenOn by remember { mutableStateOf(s.openHoursScreeningEnabled) }
-                SwitchRow("Та же карточка и в обычные рабочие (открытые) часы", openScreenOn) {
-                    openScreenOn = it; s.openHoursScreeningEnabled = it
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("Кнопка «Перебросить на автоответчик» на карточке — тексты и звук ниже, "
@@ -1450,6 +1446,11 @@ private fun StatusPill(label: String, on: Boolean) {
     }
 }
 
+/** Е и Ё — по вводу одна и та же буква для пользователя (раскладка обычно не даёт лёгкого
+ *  доступа к Ё), а обычный String.contains их различает. Сводим обе к Е перед сравнением —
+ *  и в самом запросе, и в заголовках реестра — так «черный список» находит «Чёрный список». */
+private fun searchFold(s: String): String = s.lowercase().replace('ё', 'е')
+
 /** Заголовок настройки → секция, где она лежит — для поиска по настройкам (строка поиска
  *  вверху экрана). Реестр ведётся вручную: в проекте нет инфраструктуры для автосбора текста
  *  из дерева Compose. При добавлении новой настройки — добавьте строку сюда же. */
@@ -1476,7 +1477,6 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Интерактивный скрининг (Ответить/Отклонить)", "Скрининг звонков"),
     SettingSearchEntry("Активно с — до (скрининг)", "Скрининг звонков"),
     SettingSearchEntry("Дни скрининга", "Скрининг звонков"),
-    SettingSearchEntry("Та же карточка в открытые (рабочие) часы", "Скрининг звонков"),
     SettingSearchEntry("Ждать решения, мин", "Скрининг звонков"),
     SettingSearchEntry("Запись после переброса, мин", "Скрининг звонков"),
     SettingSearchEntry("Перебросить на автоответчик", "Скрининг звонков"),
