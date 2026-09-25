@@ -18,7 +18,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -30,6 +33,7 @@ import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.ExpandLess
@@ -40,6 +44,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SimCard
 import androidx.compose.material.icons.outlined.Sms
@@ -48,7 +53,6 @@ import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Alignment
@@ -61,6 +65,7 @@ import com.davnozdu.autoresponder.rules.SimUtil
 import com.davnozdu.autoresponder.llm.LlmConfig
 import com.davnozdu.autoresponder.llm.LlmFactory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -167,6 +172,27 @@ fun AppScreen() {
             updStatus = updLabel(res)
         }
     }
+    // Поиск по настройкам: sectionOpen/requesters общие на весь экран (не внутри каждой
+    // ExpandableSection по отдельности) — иначе прыжок из поиска не мог бы раскрыть и
+    // прокрутить секцию, ничего не зная о её внутреннем состоянии. Прокидываются вниз через
+    // CompositionLocal (LocalSectionOpen и т.п. у ExpandableSection), а не параметрами — иначе
+    // пришлось бы править сигнатуру всех ~27 существующих вызовов ExpandableSection.
+    var searchQuery by remember { mutableStateOf("") }
+    val sectionOpen = remember { mutableStateMapOf<String, Boolean>() }
+    val sectionRequesters = remember { mutableMapOf<String, BringIntoViewRequester>() }
+    var highlightedSection by remember { mutableStateOf<String?>(null) }
+    fun jumpToSetting(section: String) {
+        searchQuery = ""
+        sectionOpen[section] = true
+        highlightedSection = section
+        scope.launch {
+            delay(120) // дать Compose переразметить только что раскрывшуюся секцию
+            sectionRequesters[section]?.bringIntoView()
+            delay(1200)
+            if (highlightedSection == section) highlightedSection = null
+        }
+    }
+
     var llm2On by remember { mutableStateOf(s.llm2Enabled) }
     var provider2 by remember { mutableStateOf(s.llm2Provider) }
     var baseUrl2 by remember { mutableStateOf(s.llm2BaseUrl) }
@@ -299,6 +325,60 @@ fun AppScreen() {
             Modifier.padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Первым элементом, а не за иконкой в TopAppBar — экран и так один длинный скролл,
+            // поле сразу видно без лишнего тапа/раскрытия, а результаты просто раздвигают
+            // контент ниже как обычная карточка, без абсолютного позиционирования поверх экрана.
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = { Text("Искать настройку…") },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (searchQuery.isNotBlank()) IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Очистить")
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (searchQuery.isNotBlank()) {
+                        // По вхождению подстроки в ЗАГОЛОВОК пункта (см. settingsSearchIndex),
+                        // без учёта регистра — не по разделам содержимого: пункт может лежать в
+                        // секции, чьё название вообще не содержит искомое слово (пример — сам
+                        // пользователь: «Чёрный список» находится в секции «Списки и приложения»).
+                        val results = settingsSearchIndex.filter { it.label.contains(searchQuery, ignoreCase = true) }
+                        if (results.isEmpty()) {
+                            Text("Ничего не найдено", style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 8.dp))
+                        } else {
+                            Column(Modifier.padding(top = 4.dp)) {
+                                results.forEach { r ->
+                                    Row(
+                                        Modifier.fillMaxWidth()
+                                            .clickable { jumpToSetting(r.section) }
+                                            .padding(vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(r.label, style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.weight(1f))
+                                        Text(r.section, style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            CompositionLocalProvider(
+                LocalSectionOpen provides sectionOpen,
+                LocalSectionRequesters provides sectionRequesters,
+                LocalHighlightedSection provides highlightedSection
+            ) {
             update?.let { u ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
@@ -1273,6 +1353,7 @@ fun AppScreen() {
             }
 
             Spacer(Modifier.height(24.dp))
+            } // CompositionLocalProvider
         }
     }
 }
@@ -1368,22 +1449,142 @@ private fun StatusPill(label: String, on: Boolean) {
     }
 }
 
+/** Заголовок настройки → секция, где она лежит — для поиска по настройкам (строка поиска
+ *  вверху экрана). Реестр ведётся вручную: в проекте нет инфраструктуры для автосбора текста
+ *  из дерева Compose. При добавлении новой настройки — добавьте строку сюда же. */
+private data class SettingSearchEntry(val label: String, val section: String)
+
+private val settingsSearchIndex = listOf(
+    SettingSearchEntry("Записи автоответчика", "Голосовой автоответчик"),
+    SettingSearchEntry("Использовать автоответчик (закрытый режим)", "Голосовой автоответчик"),
+    SettingSearchEntry("Приветствие: текст или файл", "Голосовой автоответчик"),
+    SettingSearchEntry("Секунд на сообщение клиента", "Голосовой автоответчик"),
+    SettingSearchEntry("Тихий режим", "Голосовой автоответчик"),
+    SettingSearchEntry("Проверить обновления", "Версия приложения"),
+    SettingSearchEntry("Включён", "Основное"),
+    SettingSearchEntry("Отвечать на звонки", "Основное"),
+    SettingSearchEntry("Отвечать на SMS", "Основное"),
+    SettingSearchEntry("Уведомления (сводка, статус DND)", "Основное"),
+    SettingSearchEntry("Язык по умолчанию", "Основное"),
+    SettingSearchEntry("Уведомления о чёрном списке", "Уведомления о чёрном списке"),
+    SettingSearchEntry("Время сводки", "Уведомления о чёрном списке"),
+    SettingSearchEntry("По системному режиму «Не беспокоить»", "Когда «закрыто» (расписание)"),
+    SettingSearchEntry("По расписанию", "Когда «закрыто» (расписание)"),
+    SettingSearchEntry("Рабочие часы и дни", "Когда «закрыто» (расписание)"),
+    SettingSearchEntry("Закрыто с — до", "Когда «закрыто» (расписание)"),
+    SettingSearchEntry("Интерактивный скрининг (Ответить/Отклонить)", "Скрининг звонков"),
+    SettingSearchEntry("Активно с — до (скрининг)", "Скрининг звонков"),
+    SettingSearchEntry("Дни скрининга", "Скрининг звонков"),
+    SettingSearchEntry("Та же карточка в открытые (рабочие) часы", "Скрининг звонков"),
+    SettingSearchEntry("Ждать решения, мин", "Скрининг звонков"),
+    SettingSearchEntry("Запись после переброса, мин", "Скрининг звонков"),
+    SettingSearchEntry("Перебросить на автоответчик", "Скрининг звонков"),
+    SettingSearchEntry("Приветствия скрининга (CS/RU/EN)", "Приветствия"),
+    SettingSearchEntry("Файл «после приветствия» (hold)", "Приветствия"),
+    SettingSearchEntry("Голосовая почта — приветствие (CS/RU/EN)", "Голосовая почта (после переброса)"),
+    SettingSearchEntry("Принимать команды с доверенных номеров", "Управление по SMS"),
+    SettingSearchEntry("Доверенный номер", "Управление по SMS"),
+    SettingSearchEntry("Присылать сводку при выключении DND", "Сводка после «Не беспокоить»"),
+    SettingSearchEntry("Не будить SMS ночью", "Тихий час (ночные SMS)"),
+    SettingSearchEntry("Тихий час — с до", "Тихий час (ночные SMS)"),
+    SettingSearchEntry("SIM 1 — префиксы", "Маска стран и SIM"),
+    SettingSearchEntry("SIM 2 — префиксы", "Маска стран и SIM"),
+    SettingSearchEntry("SIM по умолчанию", "Маска стран и SIM"),
+    SettingSearchEntry("Не отвечать звёздным контактам", "Избранные (не отвечать)"),
+    SettingSearchEntry("Не отвечать всем контактам из книги", "Избранные (не отвечать)"),
+    SettingSearchEntry("Уважать приоритетных в «Не беспокоить»", "Избранные (не отвечать)"),
+    SettingSearchEntry("Bluetooth-гарнитура — на автоответчик", "Избранные (не отвечать)"),
+    SettingSearchEntry("Добавить из контактов", "Избранные (не отвечать)"),
+    SettingSearchEntry("Импортировать избранные контакты", "Избранные (не отвечать)"),
+    SettingSearchEntry("CRM: включить", "CRM: статус заказа"),
+    SettingSearchEntry("Адрес CRM", "CRM: статус заказа"),
+    SettingSearchEntry("Токен CRM", "CRM: статус заказа"),
+    SettingSearchEntry("CRM отвечать и в рабочее время", "CRM: статус заказа"),
+    SettingSearchEntry("Предупреждение перед тишиной", "Лимиты и предупреждение"),
+    SettingSearchEntry("Макс. ответов", "Лимиты и предупреждение"),
+    SettingSearchEntry("Таймаут, ч", "Лимиты и предупреждение"),
+    SettingSearchEntry("Макс. SMS-сегментов", "Лимиты и предупреждение"),
+    SettingSearchEntry("Задержка перед авто-ответом", "Лимиты и предупреждение"),
+    SettingSearchEntry("Сборка сообщений: ждать тишины (батчинг)", "Лимиты и предупреждение"),
+    SettingSearchEntry("Не отвечать на сообщения старше", "Лимиты и предупреждение"),
+    SettingSearchEntry("Шаблоны ответа без LLM (RU/CS/EN)", "Шаблоны — ответ БЕЗ LLM (заглушка)"),
+    SettingSearchEntry("Использовать LLM", "LLM — основная модель"),
+    SettingSearchEntry("Режим размышления (reasoning)", "LLM — основная модель"),
+    SettingSearchEntry("Base URL", "LLM — основная модель"),
+    SettingSearchEntry("API key", "LLM — основная модель"),
+    SettingSearchEntry("Модель LLM", "LLM — основная модель"),
+    SettingSearchEntry("Лимит LLM в день", "LLM — основная модель"),
+    SettingSearchEntry("Использовать резервную LLM", "LLM — резервная модель"),
+    SettingSearchEntry("Префикс (пометка ИИ)", "Промпты AI"),
+    SettingSearchEntry("Промпт для SMS", "Промпты AI"),
+    SettingSearchEntry("Промпт для звонков", "Промпты AI"),
+    SettingSearchEntry("Факты о компании (база знаний)", "Промпты AI"),
+    SettingSearchEntry("Файл «О компании» (.md)", "Файл «О компании» (.md)"),
+    SettingSearchEntry("Прайс-лист / цены", "Прайс-лист (цены как факты)"),
+    SettingSearchEntry("Учитывать праздники", "Праздники (гос. выходные)"),
+    SettingSearchEntry("Ежедневный бэкап", "Планировщик: ежедневный бэкап"),
+    SettingSearchEntry("Сделать бэкап сейчас", "Планировщик: ежедневный бэкап"),
+    SettingSearchEntry("Восстановить бэкап", "Планировщик: ежедневный бэкап"),
+    SettingSearchEntry("Выдать разрешения", "Разрешения и роли"),
+    SettingSearchEntry("Стать приложением скрининга звонков", "Разрешения и роли"),
+    SettingSearchEntry("Доступ к уведомлениям", "Разрешения и роли"),
+    SettingSearchEntry("Отключить оптимизацию батареи", "Разрешения и роли"),
+    SettingSearchEntry("Чёрный список", "Списки и приложения"),
+    SettingSearchEntry("Состояние (проверка готовности)", "Списки и приложения"),
+    SettingSearchEntry("История общения", "Списки и приложения"),
+    SettingSearchEntry("История запросов (чат с AI)", "Списки и приложения"),
+    SettingSearchEntry("Приложения для автоответа", "Списки и приложения"),
+    SettingSearchEntry("Выгружать API-ключи LLM", "Импорт / экспорт настроек"),
+    SettingSearchEntry("Копировать / вставить настройки", "Импорт / экспорт настроек"),
+    SettingSearchEntry("Сохранить настройки в файл", "Импорт / экспорт настроек"),
+    SettingSearchEntry("Писать журнал в файл", "Журнал"),
+)
+
+/** Общее для всех [ExpandableSection] состояние «раскрыта/свёрнута» — вынесено из локального
+ *  rememberSaveable(title) в общую карту, чтобы поиск по настройкам мог раскрыть нужную секцию
+ *  извне, не зная о ней ничего, кроме заголовка. Ключ — [title]. Побочный эффект: состояние
+ *  больше не переживает смерть процесса (было — rememberSaveable), только смену конфигурации
+ *  в рамках живого процесса — для экрана настроек, который не поворачивается, это не заметно. */
+private val LocalSectionOpen = staticCompositionLocalOf<androidx.compose.runtime.snapshots.SnapshotStateMap<String, Boolean>> {
+    mutableStateMapOf()
+}
+
+/** Одна общая на весь экран BringIntoViewRequester-регистрация по заголовку секции — так поиск
+ *  по настройкам может прокрутить именно к найденной карточке. Обычный (не snapshot) Map: сами
+ *  BringIntoViewRequester-объекты не меняются, только читаются по клику на результат поиска — не
+ *  часть состояния композиции, просто кэш объектов. */
+private val LocalSectionRequesters = staticCompositionLocalOf<MutableMap<String, BringIntoViewRequester>> {
+    mutableMapOf()
+}
+
+/** Заголовок секции, которую нужно на секунду подсветить рамкой после прыжка из поиска —
+ *  null, если сейчас никого подсвечивать не нужно. */
+private val LocalHighlightedSection = compositionLocalOf<String?> { null }
+
 @Composable
 private fun ExpandableSection(
     title: String,
     initiallyOpen: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    var open by rememberSaveable(title) { mutableStateOf(initiallyOpen) }
+    val sectionOpen = LocalSectionOpen.current
+    val open = sectionOpen[title] ?: initiallyOpen
+    val requester = remember { BringIntoViewRequester() }
+    SideEffect { LocalSectionRequesters.current[title] = requester }
+    val highlighted = LocalHighlightedSection.current == title
     Card(
-        Modifier.fillMaxWidth().animateContentSize(),
+        Modifier.fillMaxWidth().animateContentSize()
+            .bringIntoViewRequester(requester)
+            .then(if (highlighted)
+                Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(20.dp))
+                  else Modifier),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
-                Modifier.fillMaxWidth().clickable { open = !open },
+                Modifier.fillMaxWidth().clickable { sectionOpen[title] = !open },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
