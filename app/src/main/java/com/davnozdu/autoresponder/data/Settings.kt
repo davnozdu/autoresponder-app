@@ -580,6 +580,14 @@ class Settings(context: Context) {
         get() = sp.getLong(K_REPLY_DELAY, 1500L)
         set(v) = sp.edit().putLong(K_REPLY_DELAY, v).apply()
 
+    // --- окно тишины перед ответом на SMS/мессенджер (мс): клиент часто пишет несколько
+    // сообщений подряд с интервалом в минуты — каждое новое сообщение от того же адресата
+    // отодвигает ответ ещё на это время; отвечаем один раз на всё, что накопилось за окно
+    // тишины, а не на каждое сообщение по отдельности. 0 — отвечать сразу, как раньше. ---
+    var batchWaitMs: Long
+        get() = sp.getLong(K_BATCH_WAIT, 180_000L)
+        set(v) = sp.edit().putLong(K_BATCH_WAIT, v).apply()
+
     // --- максимум SMS-сегментов в одном ответе ---
     var maxSegments: Int
         get() = sp.getInt(K_MAX_SEG, 6)
@@ -787,6 +795,7 @@ class Settings(context: Context) {
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
         private const val K_REPLY_DELAY = "reply_delay_ms"
+        private const val K_BATCH_WAIT = "batch_wait_ms"
         private const val K_AM_CLOSED_MODE = "am_closed_mode"
         private const val K_AM_GREET_SRC = "am_greet_src"
         private const val K_AM_GREET_FILE = "am_greet_file"

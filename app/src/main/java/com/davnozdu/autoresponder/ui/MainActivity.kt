@@ -119,6 +119,7 @@ fun AppScreen() {
     var timeoutH by remember { mutableStateOf(s.timeoutHours.toString()) }
     var maxSeg by remember { mutableStateOf(s.maxSegments.toString()) }
     var replyDelay by remember { mutableStateOf(s.replyDelayMs.toString()) }
+    var batchWait by remember { mutableStateOf((s.batchWaitMs / 1000).toString()) }
     var notifAge by remember { mutableStateOf(s.notifMaxAgeMin.toString()) }
     var smsSlot by remember { mutableStateOf(s.smsSlot) }
     var warnOn by remember { mutableStateOf(s.warnEnabled) }
@@ -872,6 +873,10 @@ fun AppScreen() {
                 OutlinedTextField(replyDelay, { replyDelay = it; it.toLongOrNull()?.let { v -> s.replyDelayMs = v } },
                     label = { Text("Задержка перед авто-ответом, мс") }, modifier = Modifier.fillMaxWidth(),
                     supportingText = { Text("Пауза перед отправкой SMS (звонок и SMS). По умолчанию 1500") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                OutlinedTextField(batchWait, { batchWait = it; it.toLongOrNull()?.let { v -> s.batchWaitMs = v * 1000 } },
+                    label = { Text("Сборка сообщений: ждать тишины, сек") }, modifier = Modifier.fillMaxWidth(),
+                    supportingText = { Text("Клиент часто пишет несколько сообщений подряд — каждое новое откладывает ответ ещё на это время, отвечаем один раз на всё сразу. 0 — отвечать сразу. По умолчанию 180 (3 мин)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 OutlinedTextField(notifAge, { notifAge = it; it.toIntOrNull()?.let { v -> s.notifMaxAgeMin = v } },
                     label = { Text("Не отвечать на сообщения старше, мин") }, modifier = Modifier.fillMaxWidth(),

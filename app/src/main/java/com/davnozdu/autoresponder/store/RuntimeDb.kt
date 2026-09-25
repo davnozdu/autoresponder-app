@@ -21,15 +21,27 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
-    @Synchronized fun enqueue(token: String, who: String, kind: String, payload: String, ttl: Long): Long {
+    @Synchronized fun enqueue(token: String, who: String, kind: String, payload: String, ttl: Long, availableInMs: Long = 0): Long {
         val now = System.currentTimeMillis()
         // Prune terminal metadata only. Never evict work to make room for new events.
         writableDatabase.delete("jobs", "created < ? AND state NOT IN ('queued','running','sending')", arrayOf((now - 7 * 86_400_000L).toString()))
         writableDatabase.execSQL("DELETE FROM segments WHERE outgoing IN (SELECT id FROM outgoing WHERE created < ?)", arrayOf(now - 30 * 86_400_000L))
         writableDatabase.delete("outgoing", "created < ?", arrayOf((now - 30 * 86_400_000L).toString()))
+        if (availableInMs > 0) {
+            // Сборка сообщений в одну реплику: новое сообщение от того же адресата отменяет
+            // более раннее ещё не начатое ожидание (SMS/мессенджер) — отвечаем один раз на
+            // всё, что пришло за окно тишины [Settings.batchWaitMs], а не на каждое сообщение
+            // отдельно. Уже начатую (running/sending) обработку не трогаем — она либо уже
+            // отправляет ответ, либо вот-вот отправит; новое сообщение просто заведёт свой
+            // отдельный батч.
+            writableDatabase.execSQL(
+                "UPDATE jobs SET state='superseded',detail='Объединено со следующим сообщением' " +
+                    "WHERE who=? AND kind IN ('SMS','notification') AND state='queued'", arrayOf(who))
+        }
         return writableDatabase.insertWithOnConflict("jobs", null, ContentValues().apply {
             put("token", token); put("who", who); put("kind", kind); put("payload", payload)
             put("created", now); put("expires", now + ttl); put("state", "queued")
+            put("available", now + availableInMs)
         }, SQLiteDatabase.CONFLICT_IGNORE)
     }
     @Synchronized fun recover() {

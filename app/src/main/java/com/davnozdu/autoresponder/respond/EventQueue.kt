@@ -32,10 +32,10 @@ object EventQueue {
         kick(context)
     }
     fun token(raw: String): String = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
-    fun enqueue(context: Context, who: String, kind: String, payload: JSONObject, token: String, ttl: Long) {
+    fun enqueue(context: Context, who: String, kind: String, payload: JSONObject, token: String, ttl: Long, availableInMs: Long = 0) {
         val app = context.applicationContext
         start(app)
-        RuntimeDb.get(app).enqueue(token, who, kind, payload.toString(), ttl)
+        RuntimeDb.get(app).enqueue(token, who, kind, payload.toString(), ttl, availableInMs)
         kick(app)
     }
     fun kick(context: Context) {
