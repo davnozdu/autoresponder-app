@@ -6,8 +6,9 @@
 
 - `greeting.mp3` — приветствие: «Dobrý den. Dovolali jste se do společnosti Big
   Tweak. Zůstaňte prosím na lince, spojíme vás s operátorem.»
-- `hold_loop_30s.mp3` — фраза «Pokud nechcete čekat na lince, napište nám SMS se
-  svým dotazem. Odpovíme vám a co nejdříve vám zavoláme zpět.» поверх фоновой
-  музыки (Glass_Wall_Afternoon, сгенерирована Gemini пользователем), 30с,
-  музыка приглушается на время речи и поднимается обратно после. Тайлится
-  приложением (`Greeting.tileToLength`) на всё время ожидания.
+- `hold_loop_30s.mp3` — «Pokud nechcete čekat na lince, napište nám SMS se svým
+  dotazem. Odpovíme vám a co nejdříve vám zavoláme zpět. Mluvíme česky,
+  anglicky a rusky.» поверх фоновой музыки (../music/Glass_Wall_Afternoon.mp3,
+  сгенерирована Gemini пользователем), 30с, музыка приглушается на время речи
+  и поднимается обратно после. Тайлится приложением (`Greeting.tileToLength`)
+  на всё время ожидания.
