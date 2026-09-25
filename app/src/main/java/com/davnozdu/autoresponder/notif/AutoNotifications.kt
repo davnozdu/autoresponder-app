@@ -49,6 +49,9 @@ object AutoNotifications {
         if (dndOn) {
             if (!s.dndWasOn) {
                 s.dndWasOn = true; s.lastDndOnTime = System.currentTimeMillis()
+                // Личное время: пока DND включён, скрининг с карточкой не нужен — весь трафик
+                // молча идёт на голосовой автоответчик, как любой другой «закрытый» звонок.
+                if (s.autoScreeningByDnd) s.screeningEnabled = false
                 DndStats.startSession(app)
                 // Момент, ради которого мост и нужен: владелец закончил день и включил
                 // «Не беспокоить». Всё, что он писал клиентам руками, уведомлений не
@@ -67,6 +70,8 @@ object AutoNotifications {
         } else if (s.dndWasOn) {
             val from = s.lastDndOnTime
             s.dndWasOn = false
+            // Рабочее время вернулось — скрининг обратно.
+            if (s.autoScreeningByDnd) s.screeningEnabled = true
             AutoReplyState.onDndOff(app)
             cancelDnd(app)
             // Сводка — здесь, а не в назначенный час: телефон только что взяли в руки,

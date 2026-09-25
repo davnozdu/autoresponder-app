@@ -629,6 +629,22 @@ fun AppScreen() {
                     + "Проверяется раньше гарнитуры: даже с подключёнными наушниками владелец "
                     + "увидит карточку и сможет ответить с телефона.",
                     style = MaterialTheme.typography.bodySmall)
+
+                var autoScreenDnd by remember { mutableStateOf(s.autoScreeningByDnd) }
+                SwitchRow("Выключать при «Не беспокоить», включать обратно при выходе", autoScreenDnd) {
+                    autoScreenDnd = it; s.autoScreeningByDnd = it
+                    // Включили тумблер, а DND прямо сейчас уже активен — применяем немедленно,
+                    // не дожидаясь следующей смены DND (которая может случиться через часы).
+                    if (it && com.davnozdu.autoresponder.rules.ClosedState.isDndOn(ctx)) {
+                        screenOn = false; s.screeningEnabled = false
+                    }
+                }
+                Text("Пока включён режим «Не беспокоить» — личное время, карточка скрининга не "
+                    + "показывается, все звонки молча уходят на голосовой автоответчик, как в "
+                    + "любые другие закрытые часы. Как только «Не беспокоить» выключаете — "
+                    + "скрининг возвращается сам.",
+                    style = MaterialTheme.typography.bodySmall)
+
                 var screenStart by remember { mutableStateOf(s.screeningStartMin) }
                 var screenEnd by remember { mutableStateOf(s.screeningEndMin) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1475,6 +1491,7 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Рабочие часы и дни", "Когда «закрыто» (расписание)"),
     SettingSearchEntry("Закрыто с — до", "Когда «закрыто» (расписание)"),
     SettingSearchEntry("Интерактивный скрининг (Ответить/Отклонить)", "Скрининг звонков"),
+    SettingSearchEntry("Выключать скрининг при «Не беспокоить»", "Скрининг звонков"),
     SettingSearchEntry("Активно с — до (скрининг)", "Скрининг звонков"),
     SettingSearchEntry("Дни скрининга", "Скрининг звонков"),
     SettingSearchEntry("Ждать решения, мин", "Скрининг звонков"),

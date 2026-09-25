@@ -90,6 +90,12 @@ class Settings(context: Context) {
         get() = sp.getBoolean(K_SCREEN_ENABLED, false)
         set(v) = sp.edit().putBoolean(K_SCREEN_ENABLED, v).apply()
 
+    /** При входе в DND — выключить скрининг (весь трафик молча на автоответчик, личное время);
+     *  при выходе из DND — включить обратно. См. AutoNotifications.onDndChanged. */
+    var autoScreeningByDnd: Boolean
+        get() = sp.getBoolean(K_AUTO_SCREEN_DND, false)
+        set(v) = sp.edit().putBoolean(K_AUTO_SCREEN_DND, v).apply()
+
     /** Битовая маска дней скрининга (Calendar.DAY_OF_WEEK 1..7), по умолчанию Пн-Пт = 124. */
     var screeningWorkDaysMask: Int
         get() = sp.getInt(K_SCREEN_DAYS, 124)
@@ -827,6 +833,7 @@ class Settings(context: Context) {
         private const val K_RESP_SMS = "resp_sms"
         private const val K_HEADSET_FORCE_ANSWER = "headset_force_answer"
         private const val K_SCREEN_ENABLED = "screen_enabled"
+        private const val K_AUTO_SCREEN_DND = "auto_screen_dnd"
         private const val K_SCREEN_DAYS = "screen_days"
         private const val K_SCREEN_START = "screen_start"
         private const val K_SCREEN_END = "screen_end"
