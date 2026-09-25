@@ -1231,13 +1231,8 @@ fun AppScreen() {
 }
 
 /** Копирует выбранный аудиофайл приветствия в приватную папку и возвращает путь. */
-private fun importGreetingFile(ctx: Context, uri: android.net.Uri, slot: String = "greeting_src"): String? = try {
-    val dir = java.io.File(ctx.filesDir, "am").apply { mkdirs() }
-    val ext = ctx.contentResolver.getType(uri)?.substringAfterLast('/')?.take(4) ?: "dat"
-    val dst = java.io.File(dir, "$slot.$ext")
-    ctx.contentResolver.openInputStream(uri)?.use { input -> dst.outputStream().use { input.copyTo(it) } }
-    if (dst.length() > 0) dst.absolutePath else null
-} catch (e: Exception) { null }
+private fun importGreetingFile(ctx: Context, uri: android.net.Uri, slot: String = "greeting_src"): String? =
+    com.davnozdu.autoresponder.data.AudioImport.importFromUri(ctx, uri, slot)
 
 @Composable
 private fun StatusOverviewCard(

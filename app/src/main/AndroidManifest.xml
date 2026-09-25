@@ -103,6 +103,20 @@
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
+        <!-- adb-импорт аудиофайла приветствия/hold-лупа в обход UI (см. ImportAudioActivity) -->
+        <activity
+            android:name=".ui.ImportAudioActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <!-- adb-переключение частых булевых настроек в обход UI (см. SetFlagActivity) -->
+        <activity
+            android:name=".ui.SetFlagActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
         <!-- Ежедневный бэкап БД истории (+ перепланирование после перезагрузки) -->
         <receiver android:name=".store.BackupReceiver" android:exported="false">
             <intent-filter>
