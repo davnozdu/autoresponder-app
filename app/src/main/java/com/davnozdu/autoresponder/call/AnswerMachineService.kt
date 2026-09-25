@@ -37,6 +37,7 @@ class AnswerMachineService : Service() {
     @Volatile private var offhook = false
     @Volatile private var accepted = false
     @Volatile private var declined = false
+    @Volatile private var transferred = false
     private var watcher: BroadcastReceiver? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -253,7 +254,7 @@ class AnswerMachineService : Service() {
         // («+420…» вместо «00420…») и стёр бы кнопки, приняв его за другой номер.
         val normNumber = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number) ?: (number ?: "")
         EventLog(app).add("AM: старт ${number ?: "?"} (screening)")
-        accepted = false; declined = false
+        accepted = false; declined = false; transferred = false
 
         registerWatcher(app)
         try {
@@ -276,7 +277,8 @@ class AnswerMachineService : Service() {
             // Карточка — СРАЗУ, без ожидания CRM (lookup=null): владелец должен мочь нажать
             // «Ответить» немедленно, а не после сетевого похода за CRM-данными.
             com.davnozdu.autoresponder.notif.CallerOverlay.showScreening(app, normNumber, null,
-                onAccept = { screeningAccept() }, onDecline = { screeningDecline() })
+                onAccept = { screeningAccept() }, onDecline = { screeningDecline() },
+                onTransfer = { screeningTransfer() })
             // CRM донасыщается ПАРАЛЛЕЛЬНО, не блокируя карточку/кнопки — в фоновой корутине,
             // тем же CallerOverlay.show() (кнопки сохранятся по normNumber, см.
             // CallerOverlay.acceptDeclineFor), а НЕ через CallerCardNotifier: та зовёт
@@ -303,7 +305,7 @@ class AnswerMachineService : Service() {
             if (greet != null && !accepted && !declined) AmBridge.play(app, greet, 1)
             else if (greet == null) EventLog(app).add("AM: приветствие для скрининга не готово — молчим")
 
-            waitScreeningDecision(maxSec * 1000L, am)
+            waitScreeningDecision(s.screeningWaitSec.coerceIn(5, 300) * 1000L, am)
 
             if (accepted) {
                 AmBridge.stop(app)
@@ -318,6 +320,49 @@ class AnswerMachineService : Service() {
                 // создавать под него запись в журнале (которую нечем будет проиграть) незачем.
                 AmBridge.recStop(app)
                 AmBridge.recDiscard(app)
+                return
+            }
+
+            if (transferred) {
+                // Буфер, который писался во время ожидания карточки, — не нужен, стираем:
+                // клиент должен услышать voicemail-приветствие и знать, что теперь пишется
+                // именно его сообщение, а не молчаливое продолжение прежней записи.
+                AmBridge.recStop(app)
+                AmBridge.recDiscard(app)
+                AmBridge.stop(app)
+                com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
+
+                val vmGreet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                    Greeting.prepareVoicemail(app, s.screeningDefaultLang)
+                }
+                if (vmGreet != null) AmBridge.play(app, vmGreet, 1)
+                else EventLog(app).add("AM: voicemail-приветствие не готово — молчим")
+
+                val vmMaxSec = s.voicemailMaxSec.coerceIn(5, 300)
+                AmBridge.recStart(app, vmMaxSec)          // запись С НУЛЯ, новый файл
+                waitIdleOr(vmMaxSec * 1000L)
+                if (!idle) endCall(app)
+                AmBridge.stop(app)
+                AmBridge.recStop(app)
+                delay(500)                                 // дать демону дописать WAV-заголовок
+
+                // Своя (передёрнутая) запись — ВСЕГДА главная для этого события.
+                val recId = db.amRecInsert(number, name, start, 0, null, "voicemail")
+                AmBridge.recSave(app, ownRecPath)
+                val ownFile = java.io.File(ownRecPath)
+                if (ownFile.exists() && ownFile.length() > 44) {
+                    db.amRecSetFile(recId, ownFile.absolutePath, RecordingLinker.durationMs(ownFile.absolutePath))
+                } else {
+                    db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
+                }
+                // OEM-запись (если штатный рекордер поймал звонок с начала) сохраняем ОТДЕЛЬНОЙ,
+                // НЕ главной записью — своим recId, не переиспользуя recId выше.
+                val oemLink = RecordingLinker.linkLatest(app, number, start)
+                if (oemLink != null) {
+                    val fullId = db.amRecInsert(number, name, start, 0, null, "voicemail_full")
+                    db.amRecSetFile(fullId, oemLink.first, oemLink.second)
+                }
+                EventLog(app).add("AM: скрининг — переброшено на автоответчик ${number ?: "?"}")
                 return
             }
 
@@ -363,11 +408,15 @@ class AnswerMachineService : Service() {
 
     private suspend fun waitScreeningDecision(budgetMs: Long, am: AudioManager) {
         val deadline = System.currentTimeMillis() + budgetMs
-        while (System.currentTimeMillis() < deadline && !idle && !accepted && !declined) {
+        while (System.currentTimeMillis() < deadline && !idle && !accepted && !declined && !transferred) {
             runCatching { am.isMicrophoneMute = true }
             runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
             delay(300)
         }
+        // Время вышло, а владелец так и не отреагировал — автоматический переброс на
+        // автоответчик, равнозначно нажатию кнопки (см. спеку: "5 минут" — это именно этот
+        // таймаут). !idle: абонент ещё на линии, есть кого перебрасывать.
+        if (System.currentTimeMillis() >= deadline && !idle && !accepted && !declined) transferred = true
     }
 
     @android.annotation.SuppressLint("MissingPermission")
@@ -536,6 +585,7 @@ class AnswerMachineService : Service() {
          *  экземпляр сервиса, тот же паттерн, что уже используют idle/offhook. */
         fun screeningAccept() { active?.let { it.accepted = true } }
         fun screeningDecline() { active?.let { it.declined = true } }
+        fun screeningTransfer() { active?.let { it.transferred = true } }
 
         /** Ручная проверка блокировки экрана/тача БЕЗ звонка (та же защита от заморозки
          *  процесса, что и в реальном вызове — foreground-сервис). Вызывается из AmTestReceiver. */

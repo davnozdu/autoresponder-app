@@ -35,7 +35,8 @@ object CallerOverlay {
     private val main = Handler(Looper.getMainLooper())
     private var shown: View? = null
     private var shownFor: String? = null
-    private data class AcceptDecline(val onAccept: () -> Unit, val onDecline: () -> Unit)
+    private data class AcceptDecline(
+        val onAccept: () -> Unit, val onDecline: () -> Unit, val onTransfer: () -> Unit)
     private var acceptDecline: AcceptDecline? = null
     // Отдельный ключ, а НЕ shownFor: до первой отрисовки shownFor == null, и сравнение
     // «shownFor != number» (null != "+420…") было true — кнопки стирались ДО того, как
@@ -87,8 +88,8 @@ object CallerOverlay {
      *  тап (двойное нажатие) бьёт по уже отсутствующей вью. Крестик/шапка во время скрининга
      *  трактуются как «Отклонить», а не тихое закрытие — иначе абонент повисал бы без решения. */
     fun showScreening(context: Context, number: String, lookup: CrmLookup?,
-                       onAccept: () -> Unit, onDecline: () -> Unit) {
-        acceptDecline = AcceptDecline(onAccept, onDecline)
+                       onAccept: () -> Unit, onDecline: () -> Unit, onTransfer: () -> Unit) {
+        acceptDecline = AcceptDecline(onAccept, onDecline, onTransfer)
         acceptDeclineFor = number
         show(context, number, lookup)
     }
@@ -198,6 +199,7 @@ object CallerOverlay {
     }
 
     private fun acceptDeclineRow(app: Context, gap: Int, ad: AcceptDecline): View {
+        val col = LinearLayout(app).apply { orientation = LinearLayout.VERTICAL }
         val row = LinearLayout(app).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, gap, 0, 0)
@@ -205,19 +207,31 @@ object CallerOverlay {
         // Крупные кнопки, чтобы не промахнуться: высота — ещё +10% высоты экрана поверх
         // тех ~30%, что уже занимает карточка (details у CallerCard ограничены 30%, см. build()).
         val btnHeight = (app.resources.displayMetrics.heightPixels * 0.10).toInt()
-        fun button(label: String, color: String, onClick: () -> Unit) = Button(app).apply {
+        fun button(label: String, color: String, weight: Float, onClick: () -> Unit) = Button(app).apply {
             text = label; textSize = 20f; setTextColor(Color.WHITE)
             background = GradientDrawable().apply {
                 setColor(Color.parseColor(color)); cornerRadius = gap.toFloat() * 1.5f
             }
-            layoutParams = LinearLayout.LayoutParams(0, btnHeight, 1f).apply { marginEnd = gap }
+            layoutParams = LinearLayout.LayoutParams(0, btnHeight, weight).apply { marginEnd = gap }
             // hide() СРАЗУ по тапу — второй тап (двойное нажатие) бьёт по пустому месту,
             // не по кнопке: гонка «оба нажаты» физически исключена.
             setOnClickListener { hide(app); onClick() }
         }
-        row.addView(button("Ответить", "#0A6E2E") { ad.onAccept() })
-        row.addView(button("Отклонить", "#8E1B1B") { ad.onDecline() })
-        return row
+        row.addView(button("Ответить", "#0A6E2E", 1f) { ad.onAccept() })
+        row.addView(button("Отклонить", "#8E1B1B", 1f) { ad.onDecline() })
+        col.addView(row)
+        // Во всю ширину (как обе кнопки выше вместе) — та же высота, синий фон.
+        col.addView(Button(app).apply {
+            text = "Перебросить на автоответчик"; textSize = 18f; setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1565C0")); cornerRadius = gap.toFloat() * 1.5f
+            }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, btnHeight).apply {
+                topMargin = gap
+            }
+            setOnClickListener { hide(app); ad.onTransfer() }
+        })
+        return col
     }
 
     private fun actions(app: Context, number: String, gap: Int): View {
