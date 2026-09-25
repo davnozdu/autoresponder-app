@@ -25,6 +25,8 @@ object AutoNotifications {
     const val ID_BLACKLIST = 1003
     const val CH_DIGEST = "autoresp_digest"
     const val ID_DIGEST = 1004
+    const val CH_AM_REC = "autoresp_am_rec"
+    const val ID_AM_REC = 1005
 
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)
 
@@ -39,6 +41,10 @@ object AutoNotifications {
             NotificationManager.IMPORTANCE_DEFAULT))
         m.createNotificationChannel(NotificationChannel(CH_DIGEST, "Сводка после «Не беспокоить»",
             NotificationManager.IMPORTANCE_DEFAULT))
+        // IMPORTANCE_HIGH — чтобы всплывало (heads-up), а не тихо легло в шторку: пропущенное
+        // голосовое сообщение — то же самое по важности, что и обычный пропущенный звонок.
+        m.createNotificationChannel(NotificationChannel(CH_AM_REC, "Автоответчик: новое сообщение",
+            NotificationManager.IMPORTANCE_HIGH))
     }
 
     /** Реакция на смену режима DND. */
@@ -116,6 +122,29 @@ object AutoNotifications {
     }
 
     fun cancelDnd(context: Context) { nm(context)?.cancel(ID_DND) }
+
+    /** Всплывающее уведомление — клиент оставил сообщение на голосовом автоответчике (любой
+     *  повод: закрыто/гарнитура/ЧС/скрининг-без-ответа/переброс на автоответчик). Один слот на
+     *  все такие уведомления (ID_AM_REC) — новое заменяет предыдущее, а не копится стопкой;
+     *  общее число непрослушанных — в тексте, из той же БД, что и счётчик в самом приложении. */
+    fun showAmRec(context: Context, name: String?, number: String?, durationMs: Long) {
+        ensureChannels(context)
+        val newCount = com.davnozdu.autoresponder.store.HistoryDb.get(context).amRecNewCount()
+        val who = name ?: number ?: "Неизвестный"
+        val durSec = durationMs / 1000
+        val tap = PendingIntent.getActivity(context, 14,
+            Intent(context, com.davnozdu.autoresponder.ui.AmRecordingsActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n = androidx.core.app.NotificationCompat.Builder(context, CH_AM_REC)
+            .setSmallIcon(android.R.drawable.stat_notify_voicemail)
+            .setContentTitle("Автоответчик: $who")
+            .setContentText("Оставил сообщение (${durSec}с) · новых всего: $newCount")
+            .setContentIntent(tap).setAutoCancel(true)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .build()
+        nm(context)?.notify(ID_AM_REC, n)
+    }
 
     fun showBlacklist(context: Context, count: Int, names: String) {
         ensureChannels(context)

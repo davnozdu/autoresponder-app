@@ -206,8 +206,10 @@ class AnswerMachineService : Service() {
             // не трогая флеш вовсе.
             waitIdleOr(5_000L)
             val link = RecordingLinker.linkLatest(app, number, start)
+            var savedFile = ""; var savedDur = 0L
             if (link != null) {
                 db.amRecSetFile(recId, link.first, link.second)
+                savedFile = link.first; savedDur = link.second
                 AmBridge.recDiscard(app)
             } else {
                 AmBridge.recSave(app, ownRecPath)
@@ -215,11 +217,17 @@ class AnswerMachineService : Service() {
                 if (ownFile.exists() && ownFile.length() > 44) {
                     val dur = RecordingLinker.durationMs(ownFile.absolutePath)
                     db.amRecSetFile(recId, ownFile.absolutePath, dur)
+                    savedFile = ownFile.absolutePath; savedDur = dur
                     EventLog(app).add("AM запись: штатный рекордер не сработал — оставил свою (${dur/1000}s)")
                 } else {
                     db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
                 }
             }
+            // Клиент реально что-то оставил (файл есть) — всплывающее уведомление, а не только
+            // счётчик внутри приложения: иначе легко пропустить, что кто-то звонил в закрытое
+            // время, пока телефон лежит экраном вниз.
+            if (savedFile.isNotBlank())
+                com.davnozdu.autoresponder.notif.AutoNotifications.showAmRec(app, name, number, savedDur)
 
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
@@ -371,7 +379,9 @@ class AnswerMachineService : Service() {
                 AmBridge.recSave(app, ownRecPath)
                 val ownFile = java.io.File(ownRecPath)
                 if (ownFile.exists() && ownFile.length() > 44) {
-                    db.amRecSetFile(recId, ownFile.absolutePath, RecordingLinker.durationMs(ownFile.absolutePath))
+                    val dur = RecordingLinker.durationMs(ownFile.absolutePath)
+                    db.amRecSetFile(recId, ownFile.absolutePath, dur)
+                    com.davnozdu.autoresponder.notif.AutoNotifications.showAmRec(app, name, number, dur)
                 } else {
                     db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
                 }
@@ -402,8 +412,10 @@ class AnswerMachineService : Service() {
             val recId = db.amRecInsert(number, name, start, 0, null, "screening")
             waitIdleOr(5_000L)
             val link = RecordingLinker.linkLatest(app, number, start)
+            var savedFile = ""; var savedDur = 0L
             if (link != null) {
                 db.amRecSetFile(recId, link.first, link.second)
+                savedFile = link.first; savedDur = link.second
                 AmBridge.recDiscard(app)
             } else {
                 AmBridge.recSave(app, ownRecPath)
@@ -411,11 +423,17 @@ class AnswerMachineService : Service() {
                 if (ownFile.exists() && ownFile.length() > 44) {
                     val dur = RecordingLinker.durationMs(ownFile.absolutePath)
                     db.amRecSetFile(recId, ownFile.absolutePath, dur)
+                    savedFile = ownFile.absolutePath; savedDur = dur
                     EventLog(app).add("AM запись: штатный рекордер не сработал — оставил свою (${dur/1000}s)")
                 } else {
                     db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
                 }
             }
+            // Клиент реально что-то оставил (файл есть) — всплывающее уведомление, а не только
+            // счётчик внутри приложения: иначе легко пропустить, что кто-то звонил в закрытое
+            // время, пока телефон лежит экраном вниз.
+            if (savedFile.isNotBlank())
+                com.davnozdu.autoresponder.notif.AutoNotifications.showAmRec(app, name, number, savedDur)
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
             // Как и в runFlow — гарантированно снимаем мьют/запись даже при исключении
