@@ -76,7 +76,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun AppScreen() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -1553,6 +1554,7 @@ private val LocalSectionOpen = staticCompositionLocalOf<androidx.compose.runtime
  *  по настройкам может прокрутить именно к найденной карточке. Обычный (не snapshot) Map: сами
  *  BringIntoViewRequester-объекты не меняются, только читаются по клику на результат поиска — не
  *  часть состояния композиции, просто кэш объектов. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 private val LocalSectionRequesters = staticCompositionLocalOf<MutableMap<String, BringIntoViewRequester>> {
     mutableMapOf()
 }
@@ -1561,6 +1563,7 @@ private val LocalSectionRequesters = staticCompositionLocalOf<MutableMap<String,
  *  null, если сейчас никого подсвечивать не нужно. */
 private val LocalHighlightedSection = compositionLocalOf<String?> { null }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ExpandableSection(
     title: String,
@@ -1569,8 +1572,13 @@ private fun ExpandableSection(
 ) {
     val sectionOpen = LocalSectionOpen.current
     val open = sectionOpen[title] ?: initiallyOpen
+    val requesters = LocalSectionRequesters.current
     val requester = remember { BringIntoViewRequester() }
-    SideEffect { LocalSectionRequesters.current[title] = requester }
+    // .current читается ЗДЕСЬ, в теле композируемой функции — SideEffect принимает обычную
+    // (не @Composable) лямбду, внутри неё LocalSectionRequesters.current вызвать нельзя (даже
+    // как побочный эффект): это и было причиной ошибки компиляции "@Composable invocations
+    // can only happen from the context of a @Composable function".
+    SideEffect { requesters[title] = requester }
     val highlighted = LocalHighlightedSection.current == title
     Card(
         Modifier.fillMaxWidth().animateContentSize()
