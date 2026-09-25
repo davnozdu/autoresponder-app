@@ -101,6 +101,12 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val screeningTrigger = ScreeningPolicy.shouldScreen(
             s.screeningEnabled, ScreeningPolicy.isInWindow(this, s), skip) && overlayOk && !alreadyInCall
 
+        // Та же карточка скрининга — и в обычные ОТКРЫТЫЕ часы (не только в своё отдельное
+        // расписание выше): closedReason == null — это и есть «открыто», тот же признак, что
+        // уже определяет финальную ветку "иначе — звонит нормально" ниже.
+        val openHoursTrigger = s.openHoursScreeningEnabled && closedReason == null &&
+            matches && !skip && overlayOk && !alreadyInCall
+
         // Bluetooth-гарнитура подключена и звонящий не избранный → всегда голосовой
         // автоответчик, независимо от открытых/закрытых часов и режима SMS/голос (проверяется
         // раньше «закрытых часов» — при совпадении обоих условий выигрывает гарнитура; но
@@ -108,7 +114,7 @@ class CallScreeningServiceImpl : CallScreeningService() {
         val headsetTrigger = HeadsetPolicy.shouldForceAnswer(
             s.headsetForceAnswer, AudioRouteUtil.isBluetoothHeadsetActive(this), skip) && !alreadyInCall
 
-        if (screeningTrigger) {
+        if (screeningTrigger || openHoursTrigger) {
             respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
             EventLog(this).add("CALL ${number ?: "?"} — скрининг → экран")
             AnswerMachineService.start(this, number, null, "screening", null, null)
