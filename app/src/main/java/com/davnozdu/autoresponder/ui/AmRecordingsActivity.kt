@@ -110,7 +110,12 @@ fun AmRecordingsScreen() {
                             Text(
                                 (r.number ?: "—") + " · " + amFmt.format(Date(r.ts)) +
                                     " · " + fmtDur(r.durationMs) +
-                                    (if (r.reason == "blacklist") " · ЧС" else " · нерабочее"),
+                                    " · " + when (r.reason) {
+                                        "blacklist" -> "ЧС"
+                                        "voicemail" -> "голосовая почта"
+                                        "voicemail_full" -> "полная запись звонка"
+                                        else -> "нерабочее"
+                                    },
                                 style = MaterialTheme.typography.labelSmall
                             )
                             if (!hasFile) Text("файл не найден",

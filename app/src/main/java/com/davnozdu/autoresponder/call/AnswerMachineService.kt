@@ -267,8 +267,13 @@ class AnswerMachineService : Service() {
             val ownRecPath = "/sdcard/AutoResponder/recordings/" +
                 java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", java.util.Locale.US).format(java.util.Date(start)) +
                 "_${safeNum}_own.wav"
-            val maxSec = s.amMaxMessageSec.coerceIn(5, 300)
-            AmBridge.recStart(app, maxSec)
+            // Хвост ожидания (зуммер/hold-музыка) и собственный буфер записи должны покрывать
+            // весь screeningWaitSec, а не отдельный amMaxMessageSec (тот — таймаут ДРУГОГО,
+            // тихого сценария runFlow) — иначе после конца короткого хвоста абонент слышит
+            // мёртвую тишину до самого автопереброса, а recStart останавливает буфер раньше,
+            // чем истекает ожидание. Найдено финальным ревью ветки.
+            val waitSec = s.screeningWaitSec.coerceIn(5, 300)
+            AmBridge.recStart(app, waitSec)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             runCatching { am.isMicrophoneMute = true }
@@ -298,14 +303,14 @@ class AnswerMachineService : Service() {
             }
 
             val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
-                Greeting.prepareScreening(app, s.screeningDefaultLang, maxSec * 1000)
+                Greeting.prepareScreening(app, s.screeningDefaultLang, waitSec * 1000)
             }
             // Пока готовился TTS (до 15с), владелец мог уже нажать «Ответить»/«Отклонить» —
             // тогда играть приветствие незачем, оно тут же оборвётся.
             if (greet != null && !accepted && !declined) AmBridge.play(app, greet, 1)
             else if (greet == null) EventLog(app).add("AM: приветствие для скрининга не готово — молчим")
 
-            waitScreeningDecision(s.screeningWaitSec.coerceIn(5, 300) * 1000L, am)
+            waitScreeningDecision(waitSec * 1000L, am)
 
             if (accepted) {
                 AmBridge.stop(app)
@@ -340,7 +345,12 @@ class AnswerMachineService : Service() {
 
                 val vmMaxSec = s.voicemailMaxSec.coerceIn(5, 300)
                 AmBridge.recStart(app, vmMaxSec)          // запись С НУЛЯ, новый файл
-                waitIdleOr(vmMaxSec * 1000L)
+                // waitIdleOr (однократная установка мьюта) тут не годится — то же самое, что
+                // и в step 2 runFlow: что-то на стороне системы (смена состояния экрана и
+                // т.п.) сбрасывает мьют/громкость в середине ожидания, и без переустановки на
+                // каждом тике владелец начинает слышать голосовую почту клиента, а его комната
+                // — попадать абоненту в трубку и в саму запись. Найдено финальным ревью ветки.
+                waitIdleKeepingSilent(vmMaxSec * 1000L, app, am, s.amSilentToOwner)
                 if (!idle) endCall(app)
                 AmBridge.stop(app)
                 AmBridge.recStop(app)
@@ -359,7 +369,11 @@ class AnswerMachineService : Service() {
                 // НЕ главной записью — своим recId, не переиспользуя recId выше.
                 val oemLink = RecordingLinker.linkLatest(app, number, start)
                 if (oemLink != null) {
-                    val fullId = db.amRecInsert(number, name, start, 0, null, "voicemail_full")
+                    // heard=true сразу: это ДОПОЛНИТЕЛЬНАЯ копия того же звонка (спека, §3) —
+                    // не должна ни попадать в счётчик "новых" записей, ни выглядеть как ещё
+                    // одно непрослушанное сообщение рядом с главной "voicemail"-записью.
+                    // Найдено финальным ревью ветки.
+                    val fullId = db.amRecInsert(number, name, start, 0, null, "voicemail_full", heard = true)
                     db.amRecSetFile(fullId, oemLink.first, oemLink.second)
                 }
                 EventLog(app).add("AM: скрининг — переброшено на автоответчик ${number ?: "?"}")
@@ -415,8 +429,16 @@ class AnswerMachineService : Service() {
         }
         // Время вышло, а владелец так и не отреагировал — автоматический переброс на
         // автоответчик, равнозначно нажатию кнопки (см. спеку: "5 минут" — это именно этот
-        // таймаут). !idle: абонент ещё на линии, есть кого перебрасывать.
-        if (System.currentTimeMillis() >= deadline && !idle && !accepted && !declined) transferred = true
+        // таймаут). !idle: абонент ещё на линии, есть кого перебрасывать. Карточку скрываем
+        // ТУТ ЖЕ, а не после IPC-обмена в вызывающем коде — иначе секунду-две кнопки
+        // Ответить/Отклонить остаются видимыми и нажимаемыми после того, как решение уже
+        // принято автоматически, и владелец либо промахивается мимо уже неактуальной кнопки,
+        // либо думает, что ответил, хотя линия уже уходит на голосовую почту. Найдено
+        // финальным ревью ветки.
+        if (System.currentTimeMillis() >= deadline && !idle && !accepted && !declined) {
+            transferred = true
+            com.davnozdu.autoresponder.notif.CallerOverlay.hide(applicationContext)
+        }
     }
 
     @android.annotation.SuppressLint("MissingPermission")

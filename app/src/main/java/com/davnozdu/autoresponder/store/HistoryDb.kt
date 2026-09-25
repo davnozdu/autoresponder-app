@@ -87,11 +87,11 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     }
 
     fun amRecInsert(number: String?, name: String?, ts: Long, durationMs: Long,
-                    file: String?, reason: String?): Long {
+                    file: String?, reason: String?, heard: Boolean = false): Long {
         val v = ContentValues().apply {
             put("number", number); put("name", name); put("ts", ts)
             put("duration_ms", durationMs); put("file", file); put("reason", reason)
-            put("heard", 0)
+            put("heard", if (heard) 1 else 0)
         }
         return writableDatabase.insert("am_rec", null, v)
     }
@@ -105,8 +105,14 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     fun amRecList(limit: Int = 200): List<AmRec> {
         val out = ArrayList<AmRec>()
         readableDatabase.rawQuery(
+            // _id ASC как вторичный ключ: у "voicemail" (главная запись, своя, вставляется
+            // ПЕРВОЙ) и "voicemail_full" (OEM-дубликат того же звонка, вставляется ВТОРОЙ под
+            // тем же ts) одинаковое время — без вторичного ключа порядок между ними зависел от
+            // физического порядка сканирования индекса по ts, на практике ставя OEM-запись
+            // ВЫШЕ главной. Меньший _id = вставлена раньше = главная — должна идти первой.
+            // Найдено финальным ревью ветки.
             "SELECT _id,number,name,ts,duration_ms,file,reason,heard FROM am_rec " +
-                "ORDER BY ts DESC LIMIT ?", arrayOf(limit.toString())).use { c ->
+                "ORDER BY ts DESC, _id ASC LIMIT ?", arrayOf(limit.toString())).use { c ->
             while (c.moveToNext()) {
                 out.add(AmRec(
                     id = c.getLong(0), number = c.getString(1), name = c.getString(2),
