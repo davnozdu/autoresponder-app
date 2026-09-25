@@ -268,6 +268,52 @@ object Greeting {
         return out.absolutePath
     }
 
+    /** Voicemail-приветствие («мы не можем сейчас связаться, оставьте сообщение») — как
+     *  [prepareScreening], но БЕЗ hold-хвоста: эта фраза проигрывается ОДИН раз, следом сразу
+     *  стартует запись (см. AnswerMachineService.runScreeningFlow, ветка «Перебросить на
+     *  автоответчик»), поэтому зуммер/музыка тут не нужны в принципе. [slot] — "cs"/"ru"/"en". */
+    suspend fun prepareVoicemail(ctx: Context, slot: String): String? {
+        val app = ctx.applicationContext
+        val s = Settings(app)
+        val source: Int; val file: String; val text: String; val ttsLang: String; val defText: String
+        when (slot) {
+            "ru" -> { source = s.voicemailGreetingSourceRu; file = s.voicemailGreetingFileRu; text = s.voicemailGreetingTextRu
+                      ttsLang = s.voicemailGreetingLangRu; defText = Settings.DEF_VOICEMAIL_GREETING_RU }
+            "en" -> { source = s.voicemailGreetingSourceEn; file = s.voicemailGreetingFileEn; text = s.voicemailGreetingTextEn
+                      ttsLang = s.voicemailGreetingLangEn; defText = Settings.DEF_VOICEMAIL_GREETING_EN }
+            else -> { source = s.voicemailGreetingSourceCs; file = s.voicemailGreetingFileCs; text = s.voicemailGreetingTextCs
+                      ttsLang = s.voicemailGreetingLangCs; defText = Settings.DEF_VOICEMAIL_GREETING_CS }
+        }
+        val useFile = source == 1 && file.isNotBlank()
+        val src: File?
+        val key: String
+        if (useFile) {
+            src = File(file)
+            if (!src.exists()) { EventLog(app).add("AM voicemail: файла нет — $file"); return null }
+            key = "$SYNTH_VER:voicemail:file:$slot:${src.absolutePath}:${src.lastModified()}"
+        } else {
+            src = null
+            key = "$SYNTH_VER:voicemail:tts:$slot:$ttsLang:${text.hashCode()}"
+        }
+        val out = cacheFile(app, key)
+        if (out.exists() && out.length() > 0) return out.absolutePath
+
+        if (useFile) {
+            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, out.absolutePath)) {
+                EventLog(app).add("AM voicemail: не сконвертировал файл ${src.name}"); return null
+            }
+        } else {
+            val wav = synthTts(app, text.ifBlank { defText }, ttsLang) ?: run {
+                EventLog(app).add("AM voicemail: TTS недоступен/не ответил вовремя"); return null
+            }
+            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, out.absolutePath)
+            wav.delete()
+            if (!ok) { EventLog(app).add("AM voicemail: не сконвертировал TTS"); return null }
+        }
+        cleanupOldCaches(app, out)
+        return out.absolutePath
+    }
+
     private fun localeFor(lang: String): Locale = when (lang.lowercase()) {
         "ru" -> Locale("ru"); "cs" -> Locale("cs"); "uk" -> Locale("uk")
         "en" -> Locale.ENGLISH; else -> Locale.getDefault()
