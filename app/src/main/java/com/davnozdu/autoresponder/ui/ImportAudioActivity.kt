@@ -22,8 +22,9 @@ import java.io.File
  *
  *   kind: greeting_general (обычное приветствие закрытых часов, Settings.amGreetingFile) |
  *         screen_greeting (приветствие скрининга, требует lang) |
- *         screen_hold (файл «после приветствия» скрининга по кругу, требует lang)
- *   lang: cs|ru|en (только для screen_*)
+ *         screen_hold (файл «после приветствия» скрининга по кругу, требует lang) |
+ *         voicemail_greeting (приветствие после переброса на автоответчик, требует lang)
+ *   lang: cs|ru|en (только для screen_*/voicemail_greeting)
  *   src: абсолютный путь на устройстве (публичное хранилище, НЕ files/ приложения)
  */
 class ImportAudioActivity : Activity() {
@@ -55,6 +56,13 @@ class ImportAudioActivity : Activity() {
                     "cs" -> s.screeningHoldFileCs = it
                     "ru" -> s.screeningHoldFileRu = it
                     "en" -> s.screeningHoldFileEn = it
+                }
+            }
+            "voicemail_greeting" -> AudioImport.importFromFile(this, src, "voicemail_greeting_$lang")?.also {
+                when (lang) {
+                    "cs" -> { s.voicemailGreetingFileCs = it; s.voicemailGreetingSourceCs = 1 }
+                    "ru" -> { s.voicemailGreetingFileRu = it; s.voicemailGreetingSourceRu = 1 }
+                    "en" -> { s.voicemailGreetingFileEn = it; s.voicemailGreetingSourceEn = 1 }
                 }
             }
             else -> { log.add("IMPORT: неизвестный kind=$kind"); null }
