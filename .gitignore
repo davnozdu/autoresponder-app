@@ -14,3 +14,7 @@ keystore-backup/
 *.p12
 *.jks
 keystore.properties
+
+# sherpa-onnx AAR — качается Gradle-задачей downloadSherpaOnnxAar при сборке (см.
+# app/build.gradle.kts), не коммитим 50МБ бинарь в репозиторий.
+app/libs/

@@ -14,6 +14,10 @@ android {
         targetSdk = 35
         versionCode = 103
         versionName = "0.25.0"
+        // Телефон, для которого собирается приложение, — arm64-only. sherpa-onnx AAR (локальная
+        // дешифровка речи, Parakeet) несёт нативные .so под 4 архитектуры разом — без фильтра
+        // APK раздулся бы на лишние ~100+МБ ради архитектур, которых на этом устройстве нет.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     signingConfigs {
@@ -49,7 +53,31 @@ android {
     }
 }
 
+// sherpa-onnx не публикуется в Maven Central — только прямыми .aar-файлами на GitHub
+// Releases. Качаем один раз при сборке (в libs/, .gitignore) вместо коммита 50МБ бинаря
+// в историю репозитория; повторные сборки просто находят уже скачанный файл и не лезут в сеть.
+val sherpaOnnxAarVersion = "1.13.8"
+val sherpaOnnxAarFile = file("libs/sherpa-onnx-$sherpaOnnxAarVersion.aar")
+
+tasks.register("downloadSherpaOnnxAar") {
+    outputs.file(sherpaOnnxAarFile)
+    doLast {
+        if (!sherpaOnnxAarFile.exists()) {
+            sherpaOnnxAarFile.parentFile.mkdirs()
+            val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/" +
+                "v$sherpaOnnxAarVersion/sherpa-onnx-$sherpaOnnxAarVersion.aar"
+            logger.lifecycle("Скачиваю sherpa-onnx AAR: $url")
+            java.net.URI(url).toURL().openStream().use { input ->
+                sherpaOnnxAarFile.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn("downloadSherpaOnnxAar") }
+
 dependencies {
+    implementation(files(sherpaOnnxAarFile))
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-compose:1.9.3")

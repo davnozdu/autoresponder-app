@@ -509,15 +509,76 @@ fun AppScreen() {
                 var trProvider by remember { mutableStateOf(s.transcribeProvider) }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(trProvider == "groq",
-                        { trProvider = "groq"; s.transcribeProvider = "groq" }, { Text("Groq") })
+                        { trProvider = "groq"; s.transcribeProvider = "groq" }, { Text("Groq (облако)") })
+                    FilterChip(trProvider == "local",
+                        { trProvider = "local"; s.transcribeProvider = "local" }, { Text("Локально (Parakeet)") })
                 }
-                var trKey by remember { mutableStateOf(s.transcribeApiKey) }
-                OutlinedTextField(trKey, { trKey = it; s.transcribeApiKey = it },
-                    label = { Text("API key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                var trModel by remember { mutableStateOf(s.transcribeModel) }
-                OutlinedTextField(trModel, { trModel = it; s.transcribeModel = it },
-                    label = { Text("Модель") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    supportingText = { Text("По умолчанию whisper-large-v3-turbo") })
+                Spacer(Modifier.height(8.dp))
+                if (trProvider == "groq") {
+                    var trKey by remember { mutableStateOf(s.transcribeApiKey) }
+                    OutlinedTextField(trKey, { trKey = it; s.transcribeApiKey = it },
+                        label = { Text("API key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    var trModel by remember { mutableStateOf(s.transcribeModel) }
+                    OutlinedTextField(trModel, { trModel = it; s.transcribeModel = it },
+                        label = { Text("Модель") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        supportingText = { Text("По умолчанию whisper-large-v3-turbo") })
+                } else {
+                    val lt = com.davnozdu.autoresponder.llm.LocalTranscriber
+                    var modelReady by remember { mutableStateOf(lt.isModelReady(ctx)) }
+                    var modelSizeMb by remember { mutableStateOf(lt.modelSizeMb(ctx)) }
+                    var downloading by remember { mutableStateOf(false) }
+                    var progressText by remember { mutableStateOf("") }
+                    var downloadError by remember { mutableStateOf<String?>(null) }
+                    Text("NVIDIA Parakeet-TDT-0.6B (~670МБ, скачивается один раз) — дальше "
+                        + "работает без интернета. Понимает ru/cs/en и ещё ~22 языка, язык "
+                        + "определяется сам, как и у облачного варианта.",
+                        style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(6.dp))
+                    when {
+                        modelReady -> {
+                            Text("Модель скачана (${modelSizeMb}МБ)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary)
+                            OutlinedButton(onClick = {
+                                lt.deleteModel(ctx); modelReady = false; modelSizeMb = 0
+                            }) { Text("Удалить модель") }
+                        }
+                        downloading -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                                Text(progressText, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        else -> {
+                            Button(onClick = {
+                                downloading = true; downloadError = null
+                                scope.launch {
+                                    val result = withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            lt.downloadModel(ctx) { name, doneMb, totalMb ->
+                                                // Колбэк дёргается из IO-потока (внутри уже
+                                                // идущего withContext) — на главный поток для
+                                                // безопасной мутации Compose-состояния.
+                                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                    progressText = if (totalMb > 0) "$name: $doneMb / $totalMb МБ"
+                                                                   else "$name: $doneMb МБ"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    downloading = false
+                                    result.onSuccess {
+                                        modelReady = true; modelSizeMb = lt.modelSizeMb(ctx)
+                                    }.onFailure { e -> downloadError = e.message ?: "Ошибка скачивания" }
+                                }
+                            }) { Text("Скачать модель (~670МБ)") }
+                            if (downloadError != null) Text("Ошибка: $downloadError",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
             }
 
             ExpandableSection("Версия приложения") {
@@ -1561,6 +1622,7 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Секунд на сообщение клиента", "Голосовой автоответчик"),
     SettingSearchEntry("Тихий режим", "Голосовой автоответчик"),
     SettingSearchEntry("Дешифровка записей, API key, модель Whisper", "Дешифровка записей (речь → текст)"),
+    SettingSearchEntry("Локально (Parakeet), скачать модель офлайн", "Дешифровка записей (речь → текст)"),
     SettingSearchEntry("Проверить обновления", "Версия приложения"),
     SettingSearchEntry("Включён", "Основное"),
     SettingSearchEntry("Отвечать на звонки", "Основное"),

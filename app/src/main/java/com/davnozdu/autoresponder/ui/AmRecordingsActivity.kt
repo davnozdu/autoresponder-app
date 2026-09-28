@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.davnozdu.autoresponder.data.Settings
+import com.davnozdu.autoresponder.llm.LocalTranscriber
 import com.davnozdu.autoresponder.llm.Transcriber
 import com.davnozdu.autoresponder.store.AmRec
 import com.davnozdu.autoresponder.store.HistoryDb
@@ -83,7 +84,10 @@ fun AmRecordingsScreen() {
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    Transcriber.transcribe(s.transcribeProvider, s.transcribeApiKey, s.transcribeModel, File(path))
+                    if (s.transcribeProvider == "local")
+                        LocalTranscriber.transcribe(ctx, File(path))
+                    else
+                        Transcriber.transcribe(s.transcribeProvider, s.transcribeApiKey, s.transcribeModel, File(path))
                 }
             }
             transcribingId = -1L
