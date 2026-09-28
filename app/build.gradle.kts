@@ -1,4 +1,5 @@
 import java.net.URI
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -78,7 +79,7 @@ tasks.register("downloadSherpaOnnxAar") {
             URI(url).toURL().openStream().use { input ->
                 tmp.outputStream().use { output -> input.copyTo(output) }
             }
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val digest = MessageDigest.getInstance("SHA-256")
             tmp.inputStream().use { input ->
                 val buf = ByteArray(64 * 1024)
                 while (true) {
