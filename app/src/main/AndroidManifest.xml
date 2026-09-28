@@ -30,12 +30,14 @@
 
     <!-- Свой permission под adb-активности ниже (AmTestActivity/ImportAudioActivity/
          SetFlagActivity/SetTextActivity): protectionLevel=signature — сторонние приложения на
-         телефоне его не получат (нет нашего ключа подписи), а `adb shell am start` работает
-         как раньше: shell-uid у системы проверку прав на подобные вызовы не проходит вовсе
-         (стандартное исключение платформы для отладки). Раньше эти 4 activity были exported
-         без вообще какой-либо защиты — любое установленное приложение могло дёргать их
-         напрямую (гасить экран/выключать тач на 2 минуты, выключать автоответчик, подменять
-         API-ключ дешифровки). Найдено аудитом. -->
+         телефоне его не получат (нет нашего ключа подписи). ПРОВЕРЕНО НА УСТРОЙСТВЕ: голый
+         `adb shell am start` (uid=2000, shell) ЭТУ проверку НЕ обходит — падает с
+         SecurityException. Обходит только root (uid 0, спецкейс в Android permission checks) —
+         телефон рутован через KernelSU, поэтому вызывать эти 4 activity нужно через
+         `adb shell su -c "am start -n ..."`. Раньше эти 4 activity были exported без вообще
+         какой-либо защиты — любое установленное приложение могло дёргать их напрямую (гасить
+         экран/выключать тач на 2 минуты, выключать автоответчик, подменять API-ключ
+         дешифровки). Найдено аудитом. -->
     <permission
         android:name="com.davnozdu.autoresponder.permission.ADB_CONTROL"
         android:protectionLevel="signature" />
