@@ -123,6 +123,24 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         return out
     }
 
+    /** Записи автоответчика с [from] — для сводки после DND: голосовые сообщения раньше туда
+     *  не попадали вовсе (сводка считала только текстовые авто-ответы, см. countIncoming),
+     *  хотя это тоже звонок, который робот принял на себя, пока владелец не отвечал. */
+    fun amRecSince(from: Long): List<AmRec> {
+        val out = ArrayList<AmRec>()
+        readableDatabase.rawQuery(
+            "SELECT _id,number,name,ts,duration_ms,file,reason,heard FROM am_rec " +
+                "WHERE ts>=? ORDER BY ts DESC, _id ASC", arrayOf(from.toString())).use { c ->
+            while (c.moveToNext()) {
+                out.add(AmRec(
+                    id = c.getLong(0), number = c.getString(1), name = c.getString(2),
+                    ts = c.getLong(3), durationMs = c.getLong(4), file = c.getString(5),
+                    reason = c.getString(6), heard = c.getInt(7) != 0))
+            }
+        }
+        return out
+    }
+
     fun amRecMarkHeard(id: Long) {
         writableDatabase.execSQL("UPDATE am_rec SET heard=1 WHERE _id=?", arrayOf(id))
     }

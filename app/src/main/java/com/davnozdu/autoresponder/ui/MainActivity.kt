@@ -414,7 +414,22 @@ fun AppScreen() {
             ExpandableSection("Голосовой автоответчик") {
                 val amDb = com.davnozdu.autoresponder.store.HistoryDb.get(ctx)
                 var amNew by remember { mutableStateOf(0) }
-                LaunchedEffect(Unit) { amNew = withContext(Dispatchers.IO) { amDb.amRecNewCount() } }
+                // LaunchedEffect(Unit) считал бы только один раз, при первом входе в композицию
+                // — вернувшись из AmRecordingsActivity (прослушал/отметил всё), счётчик тут
+                // оставался бы старым: MainActivity не пересоздаётся, просто ставится на паузу
+                // и возобновляется. Пересчитываем на каждый ON_RESUME — ровно момент, когда
+                // могли вернуться с экрана записей. Живой баг: «0 новых» в базе, а кнопка
+                // всё равно показывала старое число.
+                val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner) {
+                    val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                        if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                            scope.launch { amNew = withContext(Dispatchers.IO) { amDb.amRecNewCount() } }
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(obs)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+                }
                 Button(onClick = { ctx.startActivity(Intent(ctx, AmRecordingsActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) {
                     Text("Записи автоответчика" + if (amNew > 0) " · $amNew новых" else "")

@@ -35,23 +35,37 @@ object Digest {
     fun show(context: Context, s: Settings = Settings(context), from: Long = 0L) {
         val db = HistoryDb.get(context)
         val since = if (from > 0L) from else System.currentTimeMillis() - FALLBACK_MS
-        // Только то, на что робот сработал: см. HistoryDb.countIncoming(handledOnly).
+        // Только то, на что робот сработал: см. HistoryDb.countIncoming(handledOnly). Это
+        // считает только звонки, закрытые текстовым авто-ответом (SMS) — звонки, ушедшие на
+        // ГОЛОСОВОЙ автоответчик (callClosedMode=1), тут не видны вовсе: они не оставляют
+        // events-строку auto=1, только запись в am_rec. Раньше сводка их полностью пропускала
+        // — «получил сообщения, пока был режим автоответчика/DND» в неё не попадало вообще.
+        // Взаимоисключающе с countIncoming(handledOnly) — callClosedMode либо SMS, либо голос
+        // для конкретного звонка, — поэтому просто складываем, без риска задвоить один звонок.
         val calls = db.countIncoming(since, listOf("call"), handledOnly = true)
         val msgs = db.countIncoming(since, handledOnly = true) - calls
         val answered = db.countAuto(since)
         val pending = db.needsAnswer(since)
-        if (calls == 0 && msgs == 0 && pending.isEmpty()) return   // тихий сеанс — молчим
+        val voiceMsgs = db.amRecSince(since).filter { it.reason != "voicemail_full" }
+        val totalCalls = calls + voiceMsgs.size
+        if (totalCalls == 0 && msgs == 0 && pending.isEmpty()) return   // тихий сеанс — молчим
 
         val who = pending.take(5).joinToString(", ") { it.name ?: it.number }
+        val voiceWho = voiceMsgs.take(5).joinToString(", ") { it.name ?: it.number ?: "?" }
         val head = if (from > 0L) "За «Не беспокоить»" else "За сутки"
         AutoNotifications.showDigest(context,
-            title = "$head: ${DndStats.plural(calls, "звонок", "звонка", "звонков")}, " +
+            title = "$head: ${DndStats.plural(totalCalls, "звонок", "звонка", "звонков")}, " +
                     DndStats.plural(msgs, "сообщение", "сообщения", "сообщений"),
-            text = if (pending.isEmpty()) "Автоответов: $answered. Все ответы даны."
-                   else "Автоответов: $answered. Требуют ответа: ${pending.size} — $who",
+            text = buildString {
+                append(if (pending.isEmpty()) "Автоответов: $answered. Все ответы даны."
+                       else "Автоответов: $answered. Требуют ответа: ${pending.size} — $who")
+                if (voiceMsgs.isNotEmpty())
+                    append("\nГолосовых сообщений: ${voiceMsgs.size} — $voiceWho")
+            },
             pending = pending.size)
         EventLog(context).add(
-            "Сводка: звонков=$calls, сообщений=$msgs, авто=$answered, требуют ответа=${pending.size}")
+            "Сводка: звонков=$totalCalls (голосом=${voiceMsgs.size}), сообщений=$msgs, " +
+            "авто=$answered, требуют ответа=${pending.size}")
     }
 
     /**
