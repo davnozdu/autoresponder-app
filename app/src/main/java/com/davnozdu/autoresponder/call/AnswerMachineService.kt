@@ -20,6 +20,7 @@ import com.davnozdu.autoresponder.store.HistoryDb
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -664,7 +665,33 @@ class AnswerMachineService : Service() {
         // ищет получателя в СВОЁМ трекинге и молча ничего не находит — runCatching это глотал,
         // и applicationContext оставался с висящей регистрацией. Найдено аудитом.
         unregisterWatcher(applicationContext)
-        if (active === this) active = null
+        // Если Android уничтожает сервис ИЗВНЕ посреди сценария (не наш собственный
+        // stopSelfSafe() в finally у onStartCommand), scope раньше не отменялся — runFlow/
+        // runScreeningFlow и дочерняя CRM-корутина (все launch'аются в этот же scope, значит
+        // уже дочерние одного SupervisorJob) продолжали работать без foreground-статуса, а
+        // busy оставался true до их естественного завершения — до 5 минут, в течение которых
+        // следующий входящий звонок попадал в ветку «параллельный вызов пропущен». Найдено
+        // повторным аудитом. cancel() не прерывает мгновенно код, зависший в блокирующем (не
+        // suspend) вызове типа AmBridge.write() (до 16с на recStop/recSave) — тем не менее
+        // резко сокращает худший случай с 5 минут до этого IPC-таймаута, и корутина всё равно
+        // сама выполнит свой finally (обычные блокирующие вызовы, не suspend — cancel их не
+        // прерывает on the way, поэтому очистка там доходит до конца).
+        if (active === this) {
+            active = null
+            busy = false
+        }
+        scope.cancel()
+        // Дублируем самые чувствительные сбросы прямо здесь — идемпотентно (см. AmBridge.kt),
+        // чтобы окно «сервис уже не foreground, а мьют/блокировка экрана ещё не снялись» было
+        // как можно короче, а не ждало, пока отменённая корутина дойдёт до своего finally.
+        runCatching {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.isMicrophoneMute = false
+            am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0)
+        }
+        AmBridge.muteOut(applicationContext, false)
+        AmBlockOverlay.hide(applicationContext)
+        AmBridge.blockOff(applicationContext)
     }
 
     companion object {

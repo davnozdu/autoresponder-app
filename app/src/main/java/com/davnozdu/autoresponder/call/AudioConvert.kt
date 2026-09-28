@@ -52,6 +52,66 @@ object AudioConvert {
         return mono to pcm.rate
     }
 
+    /** Оценивает длительность файла по одному заголовку/метаданным контейнера, БЕЗ полного
+     *  декодирования — decodeWav16 читает файл целиком (File.readBytes()), а decodeCompressed
+     *  копит весь поток в ByteArrayOutputStream, поэтому лимит длительности, проверенный
+     *  ПОСЛЕ decodeToMono(), уже бесполезен против OOM на самом декодировании битого/очень
+     *  длинного файла — сначала выделяется вся память, потом проверяется допустимость.
+     *  Найдено повторным аудитом. @return секунды, или null, если оценить не удалось (тогда
+     *  вызывающий код сам решает политику для неизвестной длительности). */
+    fun probeDurationSec(path: String): Double? = try {
+        if (isWav(path)) probeWavDurationSec(path) else probeCompressedDurationSec(path)
+    } catch (e: Exception) { null }
+
+    private fun probeWavDurationSec(path: String): Double? {
+        RandomAccessFile(path, "r").use { f ->
+            val len = f.length()
+            if (len < 44) return null
+            // 1МБ с запасом покрывает любой реалистичный заголовок (fmt+доп. чанки метаданных
+            // до data) — не читаем файл целиком ради одной оценки длительности.
+            val head = ByteArray(minOf(len, 1_048_576L).toInt())
+            f.readFully(head)
+            val bb = ByteBuffer.wrap(head).order(ByteOrder.LITTLE_ENDIAN)
+            var pos = 12
+            var rate = 0; var channels = 0; var bits = 0; var dataLen = -1L
+            while (pos + 8 <= head.size) {
+                val id = String(head, pos, 4)
+                val sz = bb.getInt(pos + 4).toLong() and 0xFFFFFFFFL
+                val body = pos + 8
+                if (sz > head.size - body && id != "data") break // чанк обрезан нашим окном — дальше не парсим
+                when (id) {
+                    "fmt " -> if (body + 16 <= head.size) {
+                        channels = bb.getShort(body + 2).toInt()
+                        rate = bb.getInt(body + 4)
+                        bits = bb.getShort(body + 14).toInt()
+                    }
+                    // sz у "data" иногда 0/недостоверен на потоковой записи — реальный размер
+                    // тогда оцениваем по факту файла (len - body), не по заявленному в чанке.
+                    "data" -> dataLen = if (sz in 1..(len - body)) sz else (len - body)
+                }
+                if (dataLen >= 0 && rate > 0) break
+                pos = body + sz.toInt() + (sz.toInt() and 1)
+            }
+            if (rate <= 0 || channels <= 0 || bits != 16 || dataLen < 0) return null
+            val bytesPerSec = rate.toLong() * channels * (bits / 8)
+            if (bytesPerSec <= 0) return null
+            return dataLen.toDouble() / bytesPerSec
+        }
+    }
+
+    private fun probeCompressedDurationSec(path: String): Double? {
+        val ex = MediaExtractor()
+        return try {
+            ex.setDataSource(path)
+            for (i in 0 until ex.trackCount) {
+                val f = ex.getTrackFormat(i)
+                if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") != true) continue
+                return if (f.containsKey(MediaFormat.KEY_DURATION)) f.getLong(MediaFormat.KEY_DURATION) / 1_000_000.0 else null
+            }
+            null
+        } catch (e: Exception) { null } finally { runCatching { ex.release() } }
+    }
+
     private class Pcm(val samples: ShortArray, val rate: Int, val channels: Int)
 
     private fun isWav(path: String): Boolean = try {
