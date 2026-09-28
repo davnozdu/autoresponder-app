@@ -57,7 +57,11 @@ class AnswerMachineService : Service() {
         // onStartCommand всегда на главном потоке — проверка-и-установка без гонки.
         if (busy) {
             EventLog(applicationContext).add("AM: параллельный вызов ${number ?: "?"} пропущен — уже идёт другая сессия")
-            stopSelfSafe()
+            // БЕЗ stopSelfSafe(): это тот же экземпляр сервиса, что ведёт ПЕРВУЮ, ещё живую
+            // сессию — stopForeground+stopSelf убивали foreground-статус и сам процесс прямо
+            // из-под работающей корутины первого звонка (карточка скрининга переставала
+            // на что-либо реагировать, а второй звонок при этом уже получил setSilenceCall и
+            // пропадал молча, без SMS и без автоответчика). Найдено аудитом.
             return START_NOT_STICKY
         }
         busy = true
@@ -339,6 +343,13 @@ class AnswerMachineService : Service() {
                 AmBridge.stop(app)
                 runCatching { am.isMicrophoneMute = false }
                 runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
+                // Реальный (не только Android-side) размьют — СРАЗУ, а не ждать recStop/
+                // recDiscard ниже: та теперь честно ждёт демона до 16с (см. AmBridge), и
+                // раньше muteOut(false) срабатывал только в finally, ПОСЛЕ этого ожидания —
+                // владелец не слышал принятого абонента несколько секунд после «Ответить».
+                // Повторный вызов в finally ниже безопасен (идемпотентно) и остаётся как
+                // страховка на случай исключения между этой строкой и концом функции.
+                AmBridge.muteOut(app, false)
                 EventLog(app).add("AM: скрининг — владелец принял ${number ?: "?"}")
                 com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
                 // Дальше это обычный разговор — штатная запись звонилки (если включена)
@@ -478,6 +489,7 @@ class AnswerMachineService : Service() {
     @android.annotation.SuppressLint("MissingPermission")
     private suspend fun answerCall(ctx: Context) {
         val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+        val telephony = ctx.getSystemService(TelephonyManager::class.java)
         val deadline = System.currentTimeMillis() + 6_000L
         // Тоже выходим по idle: если клиент положил трубку раньше, чем мы успели ответить,
         // не стоит долбить acceptRingingCall() ещё несколько секунд впустую.
@@ -486,9 +498,16 @@ class AnswerMachineService : Service() {
             // Резервный путь, независимый от broadcast: Android документирует, что системный
             // OFFHOOK-broadcast от привилегированного отправителя может не дойти до
             // RECEIVER_NOT_EXPORTED-ресивера на части OEM-прошивок (см. registerWatcher).
-            // TelecomManager.isInCall() ничего не ждёт от системы вещания — если он уже
-            // видит активный вызов, считаем «ответили», не дожидаясь broadcast вовсе.
-            if (runCatching { tm.isInCall() }.getOrDefault(false)) { offhook = true; break }
+            // ВАЖНО: раньше здесь стоял tm.isInCall() — по документации TelecomManager он
+            // возвращает true уже для ЗВОНЯЩЕГО (ringing) вызова, не только для отвеченного.
+            // На первой же итерации, ещё ДО того, как acceptRingingCall() успел сработать,
+            // цикл считал звонок "отвеченным" — если реальный ответ не удался с первого раза
+            // (гонка/особенность прошивки), приложение всё равно гасило экран, глушило звук и
+            // играло приветствие в звонящую, а не принятую линию. TelephonyManager.callState
+            // различает RINGING и OFFHOOK — проверяем именно его. Найдено аудитом.
+            if (runCatching { telephony?.callState == TelephonyManager.CALL_STATE_OFFHOOK }.getOrDefault(false)) {
+                offhook = true; break
+            }
             delay(400)
         }
     }
@@ -619,7 +638,11 @@ class AnswerMachineService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        watcher?.let { runCatching { unregisterReceiver(it) } }
+        // applicationContext, не this: registerWatcher(app) регистрирует ресивер именно через
+        // него (см. вызовы ниже), а unregisterReceiver на ДРУГОМ Context-объекте (сервисе)
+        // ищет получателя в СВОЁМ трекинге и молча ничего не находит — runCatching это глотал,
+        // и applicationContext оставался с висящей регистрацией. Найдено аудитом.
+        unregisterWatcher(applicationContext)
         if (active === this) active = null
     }
 

@@ -46,16 +46,26 @@ object AmBridge {
      *  ПРЕДЫДУЩЕЙ команды мог быть принят за ACK следующей, если демон не успел его
      *  перезаписать. Сверка по id исключает оба случая. */
     private const val ACK_TIMEOUT_MS = 400L
+    // recstop в демоне ждёт выхода pal_record до 15с (sleep 1 в цикле, чтобы WAV-заголовок
+    // дописался корректно, а не убивать процесс сигналом), recsave копирует буфер на диск —
+    // тоже не мгновенно на большом файле. С общим ACK_TIMEOUT_MS=400мс приложение почти
+    // всегда не дожидалось ответа и слало СЛЕДУЮЩУЮ команду раньше, чем демон освобождался —
+    // req держит только ОДНУ команду за раз (см. коммент у write ниже), поэтому следующая
+    // команда просто терялась (recsave "нет буфера" — самый частый случай: recStop/recDiscard/
+    // muteOut(false)/stop шли почти одновременно в ветке "Ответить", и muteOut(false) мог не
+    // дойти вовсе — владелец переставал слышать принятые звонки до перезахода в приложение).
+    // Найдено аудитом.
+    private const val REC_ACK_TIMEOUT_MS = 16_000L
     private const val ACK_POLL_MS = 15L
 
-    private fun write(ctx: Context, line: String) {
+    private fun write(ctx: Context, line: String, timeoutMs: Long = ACK_TIMEOUT_MS) {
         val app = ctx.applicationContext
         try {
             val d = dir(app); if (!d.isDirectory) d.mkdirs()
             val respFile = resp(app)
             val id = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
             req(app).writeText("$id $line")
-            val deadline = System.currentTimeMillis() + ACK_TIMEOUT_MS
+            val deadline = System.currentTimeMillis() + timeoutMs
             while (System.currentTimeMillis() < deadline) {
                 val now = runCatching { respFile.readText() }.getOrDefault("")
                 // resp: "<epoch> <id> ok|err <detail>" — ack засчитываем, только если id
@@ -98,10 +108,10 @@ object AmBridge {
     fun recStart(ctx: Context, maxSeconds: Int) =
         write(ctx, "recstart ${maxSeconds.coerceAtLeast(5)}")
 
-    fun recStop(ctx: Context) = write(ctx, "recstop")
+    fun recStop(ctx: Context) = write(ctx, "recstop", REC_ACK_TIMEOUT_MS)
 
     /** Штатный рекордер не сработал — перенести буфер на диск по [dstPath]. */
-    fun recSave(ctx: Context, dstPath: String) = write(ctx, "recsave $dstPath")
+    fun recSave(ctx: Context, dstPath: String) = write(ctx, "recsave $dstPath", REC_ACK_TIMEOUT_MS)
 
     /** Штатный рекордер сработал — свой буфер не нужен, стереть без записи на диск. */
     fun recDiscard(ctx: Context) = write(ctx, "recdiscard")

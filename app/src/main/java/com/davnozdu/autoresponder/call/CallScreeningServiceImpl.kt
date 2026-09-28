@@ -55,8 +55,15 @@ class CallScreeningServiceImpl : CallScreeningService() {
         // его переходам, а отдельное окно поверх этого только молча гасило скрининг вне своих
         // часов, даже когда DND выключен и screeningEnabled=true. Отсюда и баг.
         val inScreeningWindow = s.autoScreeningByDnd || ScreeningPolicy.isInWindow(this, s)
+        // vacationModeEnabled гасит скрининг целиком, а не только своё окно: autoScreeningByDnd
+        // делает inScreeningWindow всегда true (см. комментарий выше), поэтому раньше отпуск с
+        // включённой DND-автоматикой не отключал карточку скрининга вовсе — она шла 24/7, и
+        // приветствие отпуска не звучало никогда. "Отпуск" — по дизайну высший приоритет
+        // (ClosedState.reason() проверяет его первым), карточке Принять/Отклонить тут не место:
+        // владелец недоступен, должна играть только голосовая почта отпуска. Найдено аудитом.
         val screeningWindowTrigger = ScreeningPolicy.shouldScreen(
-            s.screeningEnabled, inScreeningWindow, skipEarly) && overlayOkEarly && !alreadyInCallEarly
+            s.screeningEnabled, inScreeningWindow, skipEarly) &&
+            overlayOkEarly && !alreadyInCallEarly && !s.vacationModeEnabled
         val likelyScreening = screeningWindowTrigger
         // История и диагностика — в фон: onScreenCall выполняется на главном потоке и должен
         // ответить системе быстро, а запись в SQLite + поиск имени в книге контактов небыстрые.
@@ -80,7 +87,12 @@ class CallScreeningServiceImpl : CallScreeningService() {
         // Чёрный список: онCalls=да -> пропускаем; нет -> отклоняем + SMS.
         val bl = HistoryDb.get(this).blacklistMatch(number, null)
         if (bl != null) {
-            if (bl.onCalls) { respondAllow(callDetails); return }
+            // alreadyInCallEarly — та же причина, что и у screening/headset ниже: голосовой
+            // автоответчик отвечает НА ВТОРУЮ линию (acceptRingingCall), а значит поставил бы
+            // текущий разговор владельца на удержание, погасил экран и выключил тач ПОСРЕДИ
+            // звонка. Раньше эта проверка была только у screening/headset — ЧС её не видела
+            // вовсе. Найдено аудитом ветки.
+            if (bl.onCalls || alreadyInCallEarly) { respondAllow(callDetails); return }
             // ЧС и «звонки: отклонять» → голосовой автоответчик (в любом режиме, приоритет №1).
             // Рингтон глушим (setSilenceCall) и отвечаем сами; callPrompt — приветствие клиента.
             respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
@@ -127,7 +139,13 @@ class CallScreeningServiceImpl : CallScreeningService() {
             EventLog(this).add("CALL ${number ?: "?"} — гарнитура → автоответчик")
             AnswerMachineService.start(this, number, null, "headset", s.amGreetingLang.ifBlank { null }, null)
         } else if (closedReason != null && matches && !skip) {
-            if (s.callClosedMode == 1) {
+            if (s.callClosedMode == 1 && alreadyInCall) {
+                // Та же причина, что у ЧС выше и у screening/headset: голосовой автоответчик
+                // ответил бы НА ВТОРУЮ линию поверх текущего разговора владельца. Тумблер
+                // «SMS» (ветка else ниже) в эту проверку НЕ упирается — он не трогает
+                // аудио/линию вообще, безопасен и во время звонка, — блокируем только голос.
+                respondAllow(callDetails)
+            } else if (s.callClosedMode == 1) {
                 // Тумблер = голосовой автоответчик: глушим рингтон, отвечаем и обрабатываем сами.
                 // "отпуск" — отдельный reason для AnswerMachineService, чтобы runFlow подставил
                 // приветствие режима отпуска (Greeting.prepareVacation), а не обычное закрытое.
