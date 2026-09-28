@@ -26,7 +26,6 @@ import android.media.MediaRecorder
 import android.os.Looper
 import java.io.File
 import java.io.RandomAccessFile
-import kotlin.concurrent.thread
 import kotlin.math.abs
 
 object MsgrCaptureProbe {
@@ -95,7 +94,7 @@ object MsgrCaptureProbe {
     }
 
     /** A reader thread that writes 16-bit mono PCM into a WAV and tracks peak amplitude + bytes. */
-    private class Stat(val name: String) : Thread() {
+    private class Stat(val label: String) : Thread("msgrec-$label") {
         @Volatile var bytes = 0L
         @Volatile var maxAbs = 0
         lateinit var body: () -> Unit
