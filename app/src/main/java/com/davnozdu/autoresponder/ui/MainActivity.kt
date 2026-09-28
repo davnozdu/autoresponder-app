@@ -500,6 +500,26 @@ fun AppScreen() {
                 }
             }
 
+            ExpandableSection("Дешифровка записей (речь → текст)") {
+                Text("Кнопка рядом с ▶ на экране записей автоответчика прогоняет аудио через "
+                    + "распознавание речи и показывает текст под записью. Язык клиента "
+                    + "определяется автоматически (не привязан к языку приветствия).",
+                    style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                var trProvider by remember { mutableStateOf(s.transcribeProvider) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(trProvider == "groq",
+                        { trProvider = "groq"; s.transcribeProvider = "groq" }, { Text("Groq") })
+                }
+                var trKey by remember { mutableStateOf(s.transcribeApiKey) }
+                OutlinedTextField(trKey, { trKey = it; s.transcribeApiKey = it },
+                    label = { Text("API key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                var trModel by remember { mutableStateOf(s.transcribeModel) }
+                OutlinedTextField(trModel, { trModel = it; s.transcribeModel = it },
+                    label = { Text("Модель") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    supportingText = { Text("По умолчанию whisper-large-v3-turbo") })
+            }
+
             ExpandableSection("Версия приложения") {
                 Text(com.davnozdu.autoresponder.update.Updater.currentVersion,
                     style = MaterialTheme.typography.headlineSmall)
@@ -1540,6 +1560,7 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Приветствие: текст или файл", "Голосовой автоответчик"),
     SettingSearchEntry("Секунд на сообщение клиента", "Голосовой автоответчик"),
     SettingSearchEntry("Тихий режим", "Голосовой автоответчик"),
+    SettingSearchEntry("Дешифровка записей, API key, модель Whisper", "Дешифровка записей (речь → текст)"),
     SettingSearchEntry("Проверить обновления", "Версия приложения"),
     SettingSearchEntry("Включён", "Основное"),
     SettingSearchEntry("Отвечать на звонки", "Основное"),

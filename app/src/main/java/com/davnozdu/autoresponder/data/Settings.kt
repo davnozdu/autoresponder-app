@@ -795,6 +795,20 @@ class Settings(context: Context) {
         get() = sp.getString(K_LLM_MODEL, "") ?: ""
         set(v) = sp.edit().putString(K_LLM_MODEL, v).apply()
 
+    // --- Дешифровка записей автоответчика (речь → текст) ---
+    /** Пока только "groq" (OpenAI-совместимый /audio/transcriptions, Whisper). */
+    var transcribeProvider: String
+        get() = sp.getString(K_TR_PROV, "groq") ?: "groq"
+        set(v) = sp.edit().putString(K_TR_PROV, v).apply()
+
+    var transcribeApiKey: String
+        get() = sp.getString(K_TR_KEY, "") ?: ""
+        set(v) = sp.edit().putString(K_TR_KEY, v).apply()
+
+    var transcribeModel: String
+        get() = sp.getString(K_TR_MODEL, "whisper-large-v3-turbo") ?: "whisper-large-v3-turbo"
+        set(v) = sp.edit().putString(K_TR_MODEL, v).apply()
+
     // --- Импорт/экспорт всех настроек (с сохранением типов) ---
     /**
      * @param withKeys включать ли API-ключи LLM. По умолчанию НЕТ: выгрузка уходит в буфер обмена
@@ -983,6 +997,9 @@ class Settings(context: Context) {
         private const val K_LLM_URL = "llm_url"
         private const val K_LLM_KEY = "llm_key"
         private const val K_LLM_MODEL = "llm_model"
+        private const val K_TR_PROV = "tr_provider"
+        private const val K_TR_KEY = "tr_key"
+        private const val K_TR_MODEL = "tr_model"
         private const val K_LLM2_ON = "llm2_on"
         private const val K_LLM2_PROV = "llm2_prov"
         private const val K_LLM2_URL = "llm2_url"
@@ -997,7 +1014,7 @@ class Settings(context: Context) {
         private const val K_BIZ = "business_info"
 
         /** Ключи, которые не попадают в экспорт настроек без явного согласия. */
-        private val SECRET_KEYS = setOf(K_LLM_KEY, K_LLM2_KEY, K_CRM_TOKEN)
+        private val SECRET_KEYS = setOf(K_LLM_KEY, K_LLM2_KEY, K_CRM_TOKEN, K_TR_KEY)
 
         const val DEF_AI_PREFIX = "Ответ от AI:"
         const val DEF_AM_GREETING =

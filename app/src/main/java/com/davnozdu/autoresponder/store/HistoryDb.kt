@@ -36,7 +36,7 @@ data class HistItem(
 data class AmRec(
     val id: Long, val number: String?, val name: String?,
     val ts: Long, val durationMs: Long, val file: String?,
-    val reason: String?, val heard: Boolean
+    val reason: String?, val heard: Boolean, val transcript: String? = null
 )
 
 /** Локальная история сообщений/SMS/звонков по номеру (+имя из книги). */
@@ -81,7 +81,8 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
                 "duration_ms INTEGER NOT NULL DEFAULT 0," +
                 "file TEXT," +                    // путь к скопированной записи
                 "reason TEXT," +                  // blacklist|closed
-                "heard INTEGER NOT NULL DEFAULT 0)"
+                "heard INTEGER NOT NULL DEFAULT 0," +
+                "transcript TEXT)"                 // расшифровка речи (LLM), null — не запрошена
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_amrec_ts ON am_rec(ts)")
     }
@@ -111,13 +112,13 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
             // физического порядка сканирования индекса по ts, на практике ставя OEM-запись
             // ВЫШЕ главной. Меньший _id = вставлена раньше = главная — должна идти первой.
             // Найдено финальным ревью ветки.
-            "SELECT _id,number,name,ts,duration_ms,file,reason,heard FROM am_rec " +
+            "SELECT _id,number,name,ts,duration_ms,file,reason,heard,transcript FROM am_rec " +
                 "ORDER BY ts DESC, _id ASC LIMIT ?", arrayOf(limit.toString())).use { c ->
             while (c.moveToNext()) {
                 out.add(AmRec(
                     id = c.getLong(0), number = c.getString(1), name = c.getString(2),
                     ts = c.getLong(3), durationMs = c.getLong(4), file = c.getString(5),
-                    reason = c.getString(6), heard = c.getInt(7) != 0))
+                    reason = c.getString(6), heard = c.getInt(7) != 0, transcript = c.getString(8)))
             }
         }
         return out
@@ -129,13 +130,13 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     fun amRecSince(from: Long): List<AmRec> {
         val out = ArrayList<AmRec>()
         readableDatabase.rawQuery(
-            "SELECT _id,number,name,ts,duration_ms,file,reason,heard FROM am_rec " +
+            "SELECT _id,number,name,ts,duration_ms,file,reason,heard,transcript FROM am_rec " +
                 "WHERE ts>=? ORDER BY ts DESC, _id ASC", arrayOf(from.toString())).use { c ->
             while (c.moveToNext()) {
                 out.add(AmRec(
                     id = c.getLong(0), number = c.getString(1), name = c.getString(2),
                     ts = c.getLong(3), durationMs = c.getLong(4), file = c.getString(5),
-                    reason = c.getString(6), heard = c.getInt(7) != 0))
+                    reason = c.getString(6), heard = c.getInt(7) != 0, transcript = c.getString(8)))
             }
         }
         return out
@@ -147,6 +148,12 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
 
     fun amRecMarkAllHeard() {
         writableDatabase.execSQL("UPDATE am_rec SET heard=1 WHERE heard=0")
+    }
+
+    /** Сохранить расшифровку речи — запрашивается один раз по кнопке в UI, дальше читается
+     *  из кэша (сама расшифровка через LLM/API платная и не мгновенная). */
+    fun amRecSetTranscript(id: Long, transcript: String) {
+        writableDatabase.execSQL("UPDATE am_rec SET transcript=? WHERE _id=?", arrayOf(transcript, id.toString()))
     }
 
     /** Привязать файл записи к строке (запись копируется после отбоя, позже вставки). */
@@ -209,6 +216,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         if (oldV < 9) createInboxDone(db)
         if (oldV < 10) createAmRec(db)
         if (oldV < 11) addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt_lang TEXT")
+        if (oldV < 12) addColumn(db, "ALTER TABLE am_rec ADD COLUMN transcript TEXT")
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
@@ -628,7 +636,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     companion object {
         /** Версия схемы — сверяется в [com.davnozdu.autoresponder.store.Backup.validate], чтобы
          *  не разойтись с магическим числом там при следующем изменении схемы. */
-        const val DB_VERSION = 11
+        const val DB_VERSION = 12
 
         /**
          * Окно сверки дублей для мессенджеров. Отметка времени у мессенджера серверная, а

@@ -117,6 +117,13 @@
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
+        <!-- adb-установка строковых настроек (API-ключи и т.п.) в обход UI (см. SetTextActivity) -->
+        <activity
+            android:name=".ui.SetTextActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
         <!-- Ежедневный бэкап БД истории (+ перепланирование после перезагрузки) -->
         <receiver android:name=".store.BackupReceiver" android:exported="false">
             <intent-filter>
