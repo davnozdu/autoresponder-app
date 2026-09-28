@@ -113,6 +113,17 @@ object LocalTranscriber {
     private var pendingRelease: OfflineRecognizer? = null
     private var activeDecodes = 0
     private const val IDLE_UNLOAD_MS = 60_000L
+    // activeDecodes защищает только от release() во время decode, но НЕ сериализует сам
+    // rec.createStream()/decode() — при двух одновременных вызовах transcribe() оба потока
+    // дёргали бы один и тот же нативный OfflineRecognizer параллельно (не гарантированно
+    // потокобезопасно в JNI-обвязке sherpa-onnx). Найдено внешним аудитом. Отдельный лок
+    // именно на сам декод, не на acquireRecognizer/finishDecode — та синхронизация короткая
+    // и не должна блокироваться на время самой расшифровки (секунды).
+    private val decodeLock = Any()
+    // Настройки уже ограничивают длину исходной записи (voicemailMaxSec/amMaxMessageSec ≤ 300с
+    // — см. Settings), так что это скорее защита в глубину на случай будущего пути, который
+    // почему-то обойдёт эти лимиты, чем реальный сценарий на сегодня.
+    private const val MAX_DECODE_SEC = 600
     private val idleHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val idleUnload = Runnable { release() }
 
@@ -184,16 +195,21 @@ object LocalTranscriber {
             // тем же образом, что и штатный WaveReader на стерео. Найдено живым тестом.
             val (shorts, sampleRate) = com.davnozdu.autoresponder.call.AudioConvert.decodeToMono(audioFile.absolutePath)
                 ?: error("Не удалось разобрать аудиофайл")
+            if (sampleRate > 0 && shorts.size / sampleRate > MAX_DECODE_SEC) {
+                error("Запись слишком длинная для локальной дешифровки (> ${MAX_DECODE_SEC / 60} мин)")
+            }
             val samples = FloatArray(shorts.size) { shorts[it] / 32768f }
-            val stream = rec.createStream()
-            try {
-                stream.acceptWaveform(samples, sampleRate)
-                rec.decode(stream)
-                val text = rec.getResult(stream).text.trim()
-                if (text.isBlank()) error("Пустой ответ дешифровки")
-                return text
-            } finally {
-                stream.release()
+            synchronized(decodeLock) {
+                val stream = rec.createStream()
+                try {
+                    stream.acceptWaveform(samples, sampleRate)
+                    rec.decode(stream)
+                    val text = rec.getResult(stream).text.trim()
+                    if (text.isBlank()) error("Пустой ответ дешифровки")
+                    return text
+                } finally {
+                    stream.release()
+                }
             }
         } finally {
             finishDecode()

@@ -60,6 +60,11 @@ android {
 // в историю репозитория; повторные сборки просто находят уже скачанный файл и не лезут в сеть.
 val sherpaOnnxAarVersion = "1.13.8"
 val sherpaOnnxAarFile = file("libs/sherpa-onnx-$sherpaOnnxAarVersion.aar")
+// Зафиксировано вручную (shasum -a 256) с фактически скачанного файла релиза v1.13.8.
+// Найдено внешним аудитом: без проверки хэша подмена/обрыв ответа на этом URL превращается
+// в труднодиагностируемую ошибку сборки либо падение при инициализации модели, а не в чёткую
+// ошибку прямо на этапе скачивания.
+val sherpaOnnxAarSha256 = "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96"
 
 tasks.register("downloadSherpaOnnxAar") {
     outputs.file(sherpaOnnxAarFile)
@@ -69,8 +74,29 @@ tasks.register("downloadSherpaOnnxAar") {
             val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/" +
                 "v$sherpaOnnxAarVersion/sherpa-onnx-$sherpaOnnxAarVersion.aar"
             logger.lifecycle("Скачиваю sherpa-onnx AAR: $url")
+            val tmp = file("${sherpaOnnxAarFile.path}.tmp")
             URI(url).toURL().openStream().use { input ->
-                sherpaOnnxAarFile.outputStream().use { output -> input.copyTo(output) }
+                tmp.outputStream().use { output -> input.copyTo(output) }
+            }
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            tmp.inputStream().use { input ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            if (actual != sherpaOnnxAarSha256) {
+                tmp.delete()
+                throw GradleException(
+                    "sherpa-onnx AAR: SHA-256 не совпал (ожидали $sherpaOnnxAarSha256, получили $actual) — " +
+                        "скачанный файл повреждён или подменён, сборка остановлена"
+                )
+            }
+            if (!tmp.renameTo(sherpaOnnxAarFile)) {
+                throw GradleException("sherpa-onnx AAR: не удалось переименовать временный файл")
             }
         }
     }

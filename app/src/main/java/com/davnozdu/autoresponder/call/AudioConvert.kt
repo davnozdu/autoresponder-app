@@ -96,60 +96,78 @@ object AudioConvert {
         return Pcm(out, rate, channels)
     }
 
-    /** Декод сжатого аудио (mp3/aac/...) через MediaCodec в PCM16. */
+    /** Декод сжатого аудио (mp3/aac/...) через MediaCodec в PCM16.
+     *  @return null при ошибке формата ИЛИ если не успели дойти до EOS за дедлайн — частичный
+     *  декод битого/подвисшего файла не должен маскироваться под валидное приветствие/дешифровку. */
     private fun decodeCompressed(path: String): Pcm? {
         val ex = MediaExtractor()
-        ex.setDataSource(path)
-        var track = -1
-        var fmt: MediaFormat? = null
-        for (i in 0 until ex.trackCount) {
-            val f = ex.getTrackFormat(i)
-            if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) { track = i; fmt = f; break }
-        }
-        if (track < 0 || fmt == null) { ex.release(); return null }
-        ex.selectTrack(track)
-        val mime = fmt.getString(MediaFormat.KEY_MIME)!!
-        val rate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-        val channels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-        val codec = MediaCodec.createDecoderByType(mime)
-        codec.configure(fmt, null, null, 0)
-        codec.start()
-        val out = java.io.ByteArrayOutputStream()
-        val info = MediaCodec.BufferInfo()
-        var sawInputEos = false; var sawOutputEos = false
-        // Защитный дедлайн: приветствие — секунды звука, а не минуты. Без него кривой/битый
-        // файл мог бы держать декодер в цикле неопределённо долго прямо во время звонка.
-        val deadline = System.currentTimeMillis() + 20_000L
-        while (!sawOutputEos && System.currentTimeMillis() < deadline) {
-            if (!sawInputEos) {
-                val inIdx = codec.dequeueInputBuffer(10_000)
-                if (inIdx >= 0) {
-                    val buf = codec.getInputBuffer(inIdx)!!
-                    val sz = ex.readSampleData(buf, 0)
-                    if (sz < 0) {
-                        codec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        sawInputEos = true
-                    } else {
-                        codec.queueInputBuffer(inIdx, 0, sz, ex.sampleTime, 0)
-                        ex.advance()
+        var codec: MediaCodec? = null
+        try {
+            ex.setDataSource(path)
+            var track = -1
+            var fmt: MediaFormat? = null
+            for (i in 0 until ex.trackCount) {
+                val f = ex.getTrackFormat(i)
+                if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) { track = i; fmt = f; break }
+            }
+            if (track < 0 || fmt == null) return null
+            ex.selectTrack(track)
+            val mime = fmt.getString(MediaFormat.KEY_MIME)!!
+            val rate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val channels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            if (rate <= 0 || channels <= 0) return null
+            val c = MediaCodec.createDecoderByType(mime)
+            codec = c
+            c.configure(fmt, null, null, 0)
+            c.start()
+            val out = java.io.ByteArrayOutputStream()
+            val info = MediaCodec.BufferInfo()
+            var sawInputEos = false; var sawOutputEos = false
+            // Защитный дедлайн: приветствие — секунды звука, а не минуты. Без него кривой/битый
+            // файл мог бы держать декодер в цикле неопределённо долго прямо во время звонка.
+            val deadline = System.currentTimeMillis() + 20_000L
+            while (!sawOutputEos && System.currentTimeMillis() < deadline) {
+                if (!sawInputEos) {
+                    val inIdx = c.dequeueInputBuffer(10_000)
+                    if (inIdx >= 0) {
+                        val buf = c.getInputBuffer(inIdx)!!
+                        val sz = ex.readSampleData(buf, 0)
+                        if (sz < 0) {
+                            c.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            sawInputEos = true
+                        } else {
+                            c.queueInputBuffer(inIdx, 0, sz, ex.sampleTime, 0)
+                            ex.advance()
+                        }
                     }
                 }
+                val outIdx = c.dequeueOutputBuffer(info, 10_000)
+                if (outIdx >= 0) {
+                    val buf = c.getOutputBuffer(outIdx)!!
+                    val chunk = ByteArray(info.size)
+                    buf.position(info.offset); buf.get(chunk)
+                    out.write(chunk)
+                    c.releaseOutputBuffer(outIdx, false)
+                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) sawOutputEos = true
+                }
             }
-            val outIdx = codec.dequeueOutputBuffer(info, 10_000)
-            if (outIdx >= 0) {
-                val buf = codec.getOutputBuffer(outIdx)!!
-                val chunk = ByteArray(info.size)
-                buf.position(info.offset); buf.get(chunk)
-                out.write(chunk)
-                codec.releaseOutputBuffer(outIdx, false)
-                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) sawOutputEos = true
-            }
+            // Найдено аудитом: раньше таймаут по дедлайну молча возвращал накопленный кусок
+            // как успешный результат — битый/подвисший файл превращался в урезанное
+            // приветствие или неполную расшифровку без явной ошибки.
+            if (!sawOutputEos) return null
+            val bytes = out.toByteArray()
+            val shorts = ShortArray(bytes.size / 2)
+            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
+            return Pcm(shorts, rate, channels)
+        } finally {
+            // Найдено аудитом: исключение в setDataSource/configure/start/чтении буфера раньше
+            // пропускало освобождение нативных объектов целиком (release вызывался только в
+            // конце функции при успехе) — накопление кодек-дескрипторов при повторных попытках
+            // импортировать неподдерживаемый файл.
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
+            runCatching { ex.release() }
         }
-        codec.stop(); codec.release(); ex.release()
-        val bytes = out.toByteArray()
-        val shorts = ShortArray(bytes.size / 2)
-        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
-        return Pcm(shorts, rate, channels)
     }
 
     /** Линейный ресемпл до 48к + приведение к stereo. Для речи линейной интерполяции хватает. */
