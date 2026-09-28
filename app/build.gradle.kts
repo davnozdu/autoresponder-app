@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -67,7 +69,7 @@ tasks.register("downloadSherpaOnnxAar") {
             val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/" +
                 "v$sherpaOnnxAarVersion/sherpa-onnx-$sherpaOnnxAarVersion.aar"
             logger.lifecycle("Скачиваю sherpa-onnx AAR: $url")
-            java.net.URI(url).toURL().openStream().use { input ->
+            URI(url).toURL().openStream().use { input ->
                 sherpaOnnxAarFile.outputStream().use { output -> input.copyTo(output) }
             }
         }
