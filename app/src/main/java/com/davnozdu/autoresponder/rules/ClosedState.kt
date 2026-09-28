@@ -8,8 +8,10 @@ import java.util.Calendar
 /** Определяет, «закрыто» ли сейчас и ПОЧЕМУ: системный DND или собственное расписание. */
 object ClosedState {
 
-    /** Причина закрытия или null, если открыто. */
+    /** Причина закрытия или null, если открыто. Отпуск/болезнь — одна ручная кнопка,
+     *  проверяется первой: пока она включена, неважно, что говорят DND и расписание. */
     fun reason(context: Context, s: Settings): String? {
+        if (s.vacationModeEnabled) return "отпуск"
         if (s.triggerOnDnd && isDndOn(context)) return "DND"
         if (s.triggerOnSchedule && inSchedule(s)) return "расписание"
         return null

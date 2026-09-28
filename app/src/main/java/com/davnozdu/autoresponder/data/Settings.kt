@@ -436,6 +436,56 @@ class Settings(context: Context) {
         get() = sp.getString(K_VM_LANG_EN, "en") ?: "en"
         set(v) = sp.edit().putString(K_VM_LANG_EN, v).apply()
 
+    // --- режим отпуска/болезни: одна кнопка, ведёт себя как обычное «закрыто» (избранные
+    // звонят как обычно, ЧС и скрининг работают как всегда), но со своим приветствием ---
+    var vacationModeEnabled: Boolean
+        get() = sp.getBoolean(K_VACATION_ON, false)
+        set(v) = sp.edit().putBoolean(K_VACATION_ON, v).apply()
+
+    /** Язык приветствия отпуска по умолчанию для ВСЕХ звонков — как screeningDefaultLang. */
+    var vacationDefaultLang: String
+        get() = sp.getString(K_VACATION_LANG, "cs") ?: "cs"
+        set(v) = sp.edit().putString(K_VACATION_LANG, v).apply()
+
+    var vacationGreetingSourceCs: Int
+        get() = sp.getInt(K_VAC_SRC_CS, 0)
+        set(v) = sp.edit().putInt(K_VAC_SRC_CS, v).apply()
+    var vacationGreetingFileCs: String
+        get() = sp.getString(K_VAC_FILE_CS, "") ?: ""
+        set(v) = sp.edit().putString(K_VAC_FILE_CS, v).apply()
+    var vacationGreetingTextCs: String
+        get() = sp.getString(K_VAC_TEXT_CS, DEF_VACATION_GREETING_CS) ?: DEF_VACATION_GREETING_CS
+        set(v) = sp.edit().putString(K_VAC_TEXT_CS, v).apply()
+    var vacationGreetingLangCs: String
+        get() = sp.getString(K_VAC_LANG_CS, "cs") ?: "cs"
+        set(v) = sp.edit().putString(K_VAC_LANG_CS, v).apply()
+
+    var vacationGreetingSourceRu: Int
+        get() = sp.getInt(K_VAC_SRC_RU, 0)
+        set(v) = sp.edit().putInt(K_VAC_SRC_RU, v).apply()
+    var vacationGreetingFileRu: String
+        get() = sp.getString(K_VAC_FILE_RU, "") ?: ""
+        set(v) = sp.edit().putString(K_VAC_FILE_RU, v).apply()
+    var vacationGreetingTextRu: String
+        get() = sp.getString(K_VAC_TEXT_RU, DEF_VACATION_GREETING_RU) ?: DEF_VACATION_GREETING_RU
+        set(v) = sp.edit().putString(K_VAC_TEXT_RU, v).apply()
+    var vacationGreetingLangRu: String
+        get() = sp.getString(K_VAC_LANG_RU, "ru") ?: "ru"
+        set(v) = sp.edit().putString(K_VAC_LANG_RU, v).apply()
+
+    var vacationGreetingSourceEn: Int
+        get() = sp.getInt(K_VAC_SRC_EN, 0)
+        set(v) = sp.edit().putInt(K_VAC_SRC_EN, v).apply()
+    var vacationGreetingFileEn: String
+        get() = sp.getString(K_VAC_FILE_EN, "") ?: ""
+        set(v) = sp.edit().putString(K_VAC_FILE_EN, v).apply()
+    var vacationGreetingTextEn: String
+        get() = sp.getString(K_VAC_TEXT_EN, DEF_VACATION_GREETING_EN) ?: DEF_VACATION_GREETING_EN
+        set(v) = sp.edit().putString(K_VAC_TEXT_EN, v).apply()
+    var vacationGreetingLangEn: String
+        get() = sp.getString(K_VAC_LANG_EN, "en") ?: "en"
+        set(v) = sp.edit().putString(K_VAC_LANG_EN, v).apply()
+
     /** Сколько секунд держим линию под сообщение клиента, затем отбой. */
     var amMaxMessageSec: Int
         get() = sp.getInt(K_AM_MSG_SEC, 45)
@@ -867,6 +917,20 @@ class Settings(context: Context) {
         private const val K_VM_FILE_EN = "vm_file_en"
         private const val K_VM_TEXT_EN = "vm_text_en"
         private const val K_VM_LANG_EN = "vm_lang_en"
+        private const val K_VACATION_ON = "vacation_on"
+        private const val K_VACATION_LANG = "vacation_lang"
+        private const val K_VAC_SRC_CS = "vac_src_cs"
+        private const val K_VAC_FILE_CS = "vac_file_cs"
+        private const val K_VAC_TEXT_CS = "vac_text_cs"
+        private const val K_VAC_LANG_CS = "vac_lang_cs"
+        private const val K_VAC_SRC_RU = "vac_src_ru"
+        private const val K_VAC_FILE_RU = "vac_file_ru"
+        private const val K_VAC_TEXT_RU = "vac_text_ru"
+        private const val K_VAC_LANG_RU = "vac_lang_ru"
+        private const val K_VAC_SRC_EN = "vac_src_en"
+        private const val K_VAC_FILE_EN = "vac_file_en"
+        private const val K_VAC_TEXT_EN = "vac_text_en"
+        private const val K_VAC_LANG_EN = "vac_lang_en"
         private const val K_MAX_REPLIES = "max_replies"
         private const val K_TIMEOUT = "timeout_h"
         private const val K_MAX_SEG = "max_seg"
@@ -948,6 +1012,9 @@ class Settings(context: Context) {
         const val DEF_VOICEMAIL_GREETING_CS = "Momentálně se s vámi nemůžeme spojit. Prosím, zanechte zprávu."
         const val DEF_VOICEMAIL_GREETING_RU = "Сейчас мы не можем с вами связаться. Пожалуйста, оставьте сообщение."
         const val DEF_VOICEMAIL_GREETING_EN = "We're unable to take your call right now. Please leave a message."
+        const val DEF_VACATION_GREETING_CS = "Momentálně jsme na dovolené / nemocní a nemůžeme odpovědět. Zanechte prosím zprávu po signálu, ozveme se vám co nejdříve."
+        const val DEF_VACATION_GREETING_RU = "Сейчас мы в отпуске или на больничном и не можем ответить. Пожалуйста, оставьте сообщение после сигнала — мы свяжемся с вами при первой возможности."
+        const val DEF_VACATION_GREETING_EN = "We're currently on vacation or unwell and unable to answer. Please leave a message after the tone and we'll get back to you as soon as we can."
         const val DEF_PROMPT_CALL =
             "Ты — вежливый автоответчик компании (сейчас нерабочее время). " +
             "Клиент звонил, но мы не можем ответить сейчас. Кратко, в рамках лимита символов, " +

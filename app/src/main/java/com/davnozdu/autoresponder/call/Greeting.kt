@@ -314,6 +314,62 @@ object Greeting {
         return out.absolutePath
     }
 
+    /** Приветствие режима отпуска/болезни («мы сейчас недоступны, оставьте сообщение») — своя
+     *  тройка настроек на [slot] ("cs"/"ru"/"en"), как у [prepareVoicemail], но, в отличие от
+     *  него, С бипом после речи (только для TTS, как в [prepare]): играет через ОБЩИЙ runFlow
+     *  (та же ветка, что обычное закрытое приветствие) — там своя запись уже стартовала ДО
+     *  начала проигрывания, а не после, и бип нужен как сигнал клиенту, когда говорить. */
+    suspend fun prepareVacation(ctx: Context, slot: String): String? {
+        val app = ctx.applicationContext
+        val s = Settings(app)
+        val source: Int; val file: String; val text: String; val ttsLang: String; val defText: String
+        when (slot) {
+            "ru" -> { source = s.vacationGreetingSourceRu; file = s.vacationGreetingFileRu; text = s.vacationGreetingTextRu
+                      ttsLang = s.vacationGreetingLangRu; defText = Settings.DEF_VACATION_GREETING_RU }
+            "en" -> { source = s.vacationGreetingSourceEn; file = s.vacationGreetingFileEn; text = s.vacationGreetingTextEn
+                      ttsLang = s.vacationGreetingLangEn; defText = Settings.DEF_VACATION_GREETING_EN }
+            else -> { source = s.vacationGreetingSourceCs; file = s.vacationGreetingFileCs; text = s.vacationGreetingTextCs
+                      ttsLang = s.vacationGreetingLangCs; defText = Settings.DEF_VACATION_GREETING_CS }
+        }
+        val useFile = source == 1 && file.isNotBlank()
+        val src: File?
+        val key: String
+        if (useFile) {
+            src = File(file)
+            if (!src.exists()) { EventLog(app).add("AM отпуск: файла нет — $file"); return null }
+            key = "$SYNTH_VER:vacation:file:$slot:${src.absolutePath}:${src.lastModified()}"
+        } else {
+            src = null
+            key = "$SYNTH_VER:vacation:tts:$slot:$ttsLang:${text.hashCode()}"
+        }
+        val out = cacheFile(app, key)
+        if (out.exists() && out.length() > 0) return out.absolutePath
+
+        val tmp = File(dir(app), "${out.name}.${System.nanoTime()}.tmp")
+        if (useFile) {
+            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, tmp.absolutePath)) {
+                EventLog(app).add("AM отпуск: не сконвертировал файл ${src.name}"); tmp.delete(); return null
+            }
+        } else {
+            val wav = synthTts(app, text.ifBlank { defText }, ttsLang) ?: run {
+                EventLog(app).add("AM отпуск: TTS недоступен/не ответил вовремя"); return null
+            }
+            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, tmp.absolutePath)
+            wav.delete()
+            if (!ok) { EventLog(app).add("AM отпуск: не сконвертировал TTS"); tmp.delete(); return null }
+        }
+        // Бип только для TTS — загруженный файл пользователь мог уже свести со своим бипом сам.
+        if (!useFile) {
+            try { FileOutputStream(tmp, true).use { it.write(beepTailPcm()) } }
+            catch (e: Exception) { EventLog(app).add("AM отпуск: не добавил бип (${e.message})") }
+        }
+        if (!tmp.renameTo(out)) {
+            EventLog(app).add("AM отпуск: не завершил запись кэша"); tmp.delete(); return null
+        }
+        cleanupOldCaches(app, out)
+        return out.absolutePath
+    }
+
     private fun localeFor(lang: String): Locale = when (lang.lowercase()) {
         "ru" -> Locale("ru"); "cs" -> Locale("cs"); "uk" -> Locale("uk")
         "en" -> Locale.ENGLISH; else -> Locale.getDefault()

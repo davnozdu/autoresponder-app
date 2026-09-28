@@ -164,7 +164,12 @@ class AnswerMachineService : Service() {
             // 3) Приветствие + длинный бип в линию (один файл — без щелчка между проигрываниями).
             // Доп. пояс безопасности поверх таймаутов внутри Greeting: звонок не должен
             // зависнуть целиком, если где-то в цепочке TTS/конвертации что-то пойдёт не так.
-            val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) { Greeting.prepare(app, lang, greetingText) }
+            // reason=="vacation" — отдельное приветствие режима отпуска/болезни (своя тройка
+            // языковых настроек), тот же runFlow, что и обычное «закрыто».
+            val greet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                if (reason == "vacation") Greeting.prepareVacation(app, s.vacationDefaultLang)
+                else Greeting.prepare(app, lang, greetingText)
+            }
             if (greet != null) {
                 AmBridge.play(app, greet, 1)
                 // Штатная автозапись звонилки иногда (на глаз ~1 звонок из 4) не подхватывает

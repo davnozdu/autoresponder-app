@@ -589,6 +589,49 @@ fun AppScreen() {
                 }
             }
 
+            ExpandableSection("Режим отпуска/болезни") {
+                var vacationOn by remember { mutableStateOf(s.vacationModeEnabled) }
+                SwitchRow("Включить режим отпуска/болезни", vacationOn) {
+                    vacationOn = it; s.vacationModeEnabled = it
+                }
+                Text("Пока включено — работает как обычное «закрыто» (избранные звонят как "
+                    + "обычно, чёрный список и скрининг — как всегда), но со своим приветствием "
+                    + "ниже, независимо от расписания и режима «Не беспокоить». Одна кнопка на "
+                    + "весь отпуск/больничный — не нужно трогать расписание или DND отдельно.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Требует тумблер «Использовать автоответчик: ДА» в секции «Голосовой "
+                    + "автоответчик» — иначе закрытые звонки по-прежнему уходят SMS-ответом, "
+                    + "без голосового приветствия.", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                var vacLang by remember { mutableStateOf(s.vacationDefaultLang) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    LangChip("CS", "cs", vacLang) { vacLang = it; s.vacationDefaultLang = it }
+                    LangChip("RU", "ru", vacLang) { vacLang = it; s.vacationDefaultLang = it }
+                    LangChip("EN", "en", vacLang) { vacLang = it; s.vacationDefaultLang = it }
+                }
+                Spacer(Modifier.height(8.dp))
+                GreetingLangSlot(ctx, scope, "Чешский", "cs",
+                    s.vacationGreetingSourceCs, { s.vacationGreetingSourceCs = it },
+                    s.vacationGreetingFileCs, { s.vacationGreetingFileCs = it },
+                    s.vacationGreetingTextCs, { s.vacationGreetingTextCs = it },
+                    s.vacationGreetingLangCs, { s.vacationGreetingLangCs = it },
+                    slotPrefix = "vacation")
+                Spacer(Modifier.height(12.dp))
+                GreetingLangSlot(ctx, scope, "Русский", "ru",
+                    s.vacationGreetingSourceRu, { s.vacationGreetingSourceRu = it },
+                    s.vacationGreetingFileRu, { s.vacationGreetingFileRu = it },
+                    s.vacationGreetingTextRu, { s.vacationGreetingTextRu = it },
+                    s.vacationGreetingLangRu, { s.vacationGreetingLangRu = it },
+                    slotPrefix = "vacation")
+                Spacer(Modifier.height(12.dp))
+                GreetingLangSlot(ctx, scope, "English", "en",
+                    s.vacationGreetingSourceEn, { s.vacationGreetingSourceEn = it },
+                    s.vacationGreetingFileEn, { s.vacationGreetingFileEn = it },
+                    s.vacationGreetingTextEn, { s.vacationGreetingTextEn = it },
+                    s.vacationGreetingLangEn, { s.vacationGreetingLangEn = it },
+                    slotPrefix = "vacation")
+            }
+
             ExpandableSection("Когда «закрыто» (расписание)") {
                 SwitchRow("По системному режиму «Не беспокоить»", trigDnd) { trigDnd = it; s.triggerOnDnd = it }
                 SwitchRow("По расписанию", trigSched) { trigSched = it; s.triggerOnSchedule = it }
@@ -1505,6 +1548,8 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Язык по умолчанию", "Основное"),
     SettingSearchEntry("Уведомления о чёрном списке", "Уведомления о чёрном списке"),
     SettingSearchEntry("Время сводки", "Уведомления о чёрном списке"),
+    SettingSearchEntry("Включить режим отпуска/болезни", "Режим отпуска/болезни"),
+    SettingSearchEntry("Приветствие отпуска/болезни (CS/RU/EN)", "Режим отпуска/болезни"),
     SettingSearchEntry("По системному режиму «Не беспокоить»", "Когда «закрыто» (расписание)"),
     SettingSearchEntry("По расписанию", "Когда «закрыто» (расписание)"),
     SettingSearchEntry("Рабочие часы и дни", "Когда «закрыто» (расписание)"),

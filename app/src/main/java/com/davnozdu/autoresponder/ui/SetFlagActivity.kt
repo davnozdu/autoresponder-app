@@ -13,7 +13,7 @@ import com.davnozdu.autoresponder.data.Settings
  *   adb shell am start -n com.davnozdu.autoresponder/.ui.SetFlagActivity \
  *     --es key screen_enabled --ez value true
  *
- * Ключи: enabled, screen_enabled, respond_sms, respond_calls.
+ * Ключи: enabled, screen_enabled, respond_sms, respond_calls, vacation_mode.
  */
 class SetFlagActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,6 +27,7 @@ class SetFlagActivity : Activity() {
             "screen_enabled" -> { s.screeningEnabled = value; true }
             "respond_sms" -> { s.respondSms = value; true }
             "respond_calls" -> { s.respondCalls = value; true }
+            "vacation_mode" -> { s.vacationModeEnabled = value; true }
             else -> false
         }
         log.add(if (ok) "SETFLAG: $key = $value" else "SETFLAG: неизвестный ключ '$key'")

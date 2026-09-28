@@ -129,9 +129,12 @@ class CallScreeningServiceImpl : CallScreeningService() {
         } else if (closedReason != null && matches && !skip) {
             if (s.callClosedMode == 1) {
                 // Тумблер = голосовой автоответчик: глушим рингтон, отвечаем и обрабатываем сами.
+                // "отпуск" — отдельный reason для AnswerMachineService, чтобы runFlow подставил
+                // приветствие режима отпуска (Greeting.prepareVacation), а не обычное закрытое.
                 respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
-                EventLog(this).add("CALL ${number ?: "?"} — закрыто → автоответчик")
-                AnswerMachineService.start(this, number, null, "closed", s.amGreetingLang.ifBlank { null }, null)
+                val amReason = if (closedReason == "отпуск") "vacation" else "closed"
+                EventLog(this).add("CALL ${number ?: "?"} — закрыто ($closedReason) → автоответчик")
+                AnswerMachineService.start(this, number, null, amReason, s.amGreetingLang.ifBlank { null }, null)
             } else {
                 // Тумблер = SMS (как раньше): отклоняем без записи в пропущенные + авто-SMS.
                 val response = CallResponse.Builder()
