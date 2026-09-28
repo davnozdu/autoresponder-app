@@ -5,10 +5,11 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
-import com.k2fsa.sherpa.onnx.WaveReader
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
 
 /**
@@ -82,8 +83,14 @@ object LocalTranscriber {
     }
 
     // Загрузка модели в память (десятки-сотни МБ, инициализация ONNX-сессий) стоит недёшево —
-    // держим один экземпляр, а не пересоздаём на каждую дешифровку.
+    // держим один экземпляр, а не пересоздаём на каждую дешифровку. Но и не держим его вечно:
+    // "функция не должна грузить ресурсы телефона" — если дешифровкой не пользовались
+    // IDLE_UNLOAD_MS, recognizer сам освобождается фоновым таймером ниже, а не висит в памяти
+    // до самой смерти процесса приложения.
     @Volatile private var recognizer: OfflineRecognizer? = null
+    private const val IDLE_UNLOAD_MS = 60_000L
+    private val idleHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val idleUnload = Runnable { release() }
 
     private fun getRecognizer(ctx: Context): OfflineRecognizer {
         recognizer?.let { return it }
@@ -108,8 +115,10 @@ object LocalTranscriber {
         }
     }
 
-    /** Освободить нативный recognizer (например, после смены/удаления модели). */
+    /** Освободить нативный recognizer — вызывается автоматически по простою, а также вручную
+     *  (смена/удаление модели, переключение провайдера обратно на облако). */
     fun release() {
+        idleHandler.removeCallbacks(idleUnload)
         synchronized(this) {
             recognizer?.release()
             recognizer = null
@@ -121,17 +130,67 @@ object LocalTranscriber {
     fun transcribe(ctx: Context, audioFile: File): String {
         if (!isModelReady(ctx)) error("Локальная модель ещё не скачана (Настройки → Дешифровка записей)")
         if (!audioFile.exists() || audioFile.length() == 0L) error("Файл записи не найден")
-        val rec = getRecognizer(ctx)
-        val wave = WaveReader.readWave(audioFile.absolutePath)
-        val stream = rec.createStream()
+        idleHandler.removeCallbacks(idleUnload)
         try {
-            stream.acceptWaveform(wave.samples, wave.sampleRate)
-            rec.decode(stream)
-            val text = rec.getResult(stream).text.trim()
-            if (text.isBlank()) error("Пустой ответ дешифровки")
-            return text
+            val rec = getRecognizer(ctx)
+            val (samples, sampleRate) = readWavMonoFloat(audioFile.absolutePath)
+            val stream = rec.createStream()
+            try {
+                stream.acceptWaveform(samples, sampleRate)
+                rec.decode(stream)
+                val text = rec.getResult(stream).text.trim()
+                if (text.isBlank()) error("Пустой ответ дешифровки")
+                return text
+            } finally {
+                stream.release()
+            }
         } finally {
-            stream.release()
+            idleHandler.postDelayed(idleUnload, IDLE_UNLOAD_MS)
         }
+    }
+
+    /** Свой мини-парсер WAV PCM16 → моно float [-1,1] + sample rate — вместо
+     *  com.k2fsa.sherpa.onnx.WaveReader.readWave(): тот падает "Failed to read wave file" на
+     *  СТЕРЕО (проверено живым файлом: заголовок наших записей — 48кГц, 2 канала, 16 бит —
+     *  WaveReader принимает только моно, а это готовый JNI-бинарь, поправить нельзя). Тот же
+     *  chunk-walk, что у AudioConvert.decodeWav16 (соседний пакет, заточен под другую задачу —
+     *  подготовку приветствий, не расшифровку) — здесь своя копия, чтобы не тянуть межпакетную
+     *  связь ради 20 строк парсинга. */
+    private fun readWavMonoFloat(path: String): Pair<FloatArray, Int> {
+        val bytes = File(path).readBytes()
+        require(bytes.size >= 44) { "Файл записи слишком короткий" }
+        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        var pos = 12
+        var rate = 0; var channels = 0; var bits = 0; var dataOff = -1; var dataLen = 0
+        while (pos + 8 <= bytes.size) {
+            val id = String(bytes, pos, 4)
+            val sz = bb.getInt(pos + 4).toLong() and 0xFFFFFFFFL
+            val body = pos + 8
+            if (sz > bytes.size - body) break
+            when (id) {
+                "fmt " -> if (body + 16 <= bytes.size) {
+                    channels = bb.getShort(body + 2).toInt()
+                    rate = bb.getInt(body + 4)
+                    bits = bb.getShort(body + 14).toInt()
+                }
+                "data" -> { dataOff = body; dataLen = sz.toInt() }
+            }
+            if (dataOff >= 0 && rate > 0) break
+            pos = body + sz.toInt() + (sz.toInt() and 1)
+        }
+        require(dataOff >= 0 && rate > 0 && channels > 0 && bits == 16) { "Не удалось разобрать WAV" }
+        val frameBytes = channels * 2
+        val frames = minOf(dataLen, bytes.size - dataOff) / frameBytes
+        val sb = ByteBuffer.wrap(bytes, dataOff, frames * frameBytes)
+            .order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+        val mono = FloatArray(frames)
+        val frame = ShortArray(channels)
+        for (i in 0 until frames) {
+            sb.get(frame)
+            var acc = 0
+            for (c in frame) acc += c
+            mono[i] = (acc / channels) / 32768f
+        }
+        return mono to rate
     }
 }

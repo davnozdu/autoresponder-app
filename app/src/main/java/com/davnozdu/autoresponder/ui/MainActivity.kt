@@ -509,7 +509,13 @@ fun AppScreen() {
                 var trProvider by remember { mutableStateOf(s.transcribeProvider) }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(trProvider == "groq",
-                        { trProvider = "groq"; s.transcribeProvider = "groq" }, { Text("Groq (облако)") })
+                        {
+                            trProvider = "groq"; s.transcribeProvider = "groq"
+                            // Ушли с локального провайдера — recognizer (сотни МБ в памяти)
+                            // больше не нужен прямо сейчас, отпускаем сразу, не дожидаясь
+                            // таймера простоя в LocalTranscriber.
+                            com.davnozdu.autoresponder.llm.LocalTranscriber.release()
+                        }, { Text("Groq (облако)") })
                     FilterChip(trProvider == "local",
                         { trProvider = "local"; s.transcribeProvider = "local" }, { Text("Локально (Parakeet)") })
                 }
