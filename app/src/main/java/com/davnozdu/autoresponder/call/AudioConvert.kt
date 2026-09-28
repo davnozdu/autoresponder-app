@@ -31,6 +31,27 @@ object AudioConvert {
         } catch (e: Exception) { false }
     }
 
+    /** Декодирует ЛЮБОЙ формат записи (wav/mp3/aac/...) в моно PCM16, без ресемпла в 48к —
+     *  для дешифровки речи, а не для инъекции в линию. Записи автоответчика бывают и .wav
+     *  (свой pal_record fallback), и .mp3 (штатный рекордер OxygenOS, через RecordingLinker) —
+     *  локальный распознаватель (LocalTranscriber) понимает только сырые сэмплы, не контейнеры,
+     *  поэтому оба пути должны сюда попадать одинаково, как уже умеет toRawPcm48kStereo выше.
+     *  @return (сэмплы, частота) или null, если декодировать не удалось. */
+    fun decodeToMono(path: String): Pair<ShortArray, Int>? {
+        val pcm = try {
+            if (isWav(path)) decodeWav16(path) else decodeCompressed(path)
+        } catch (e: Exception) { null } ?: return null
+        if (pcm.channels <= 1) return pcm.samples to pcm.rate
+        val frames = pcm.samples.size / pcm.channels
+        val mono = ShortArray(frames)
+        for (i in 0 until frames) {
+            var acc = 0
+            for (c in 0 until pcm.channels) acc += pcm.samples[i * pcm.channels + c]
+            mono[i] = (acc / pcm.channels).toShort()
+        }
+        return mono to pcm.rate
+    }
+
     private class Pcm(val samples: ShortArray, val rate: Int, val channels: Int)
 
     private fun isWav(path: String): Boolean = try {

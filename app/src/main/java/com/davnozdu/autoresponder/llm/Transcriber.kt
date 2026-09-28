@@ -37,7 +37,13 @@ object Transcriber {
     fun transcribe(provider: String, apiKey: String, model: String, audioFile: File): String {
         if (apiKey.isBlank()) error("Не задан API-ключ дешифровки (Настройки → Дешифровка записей)")
         if (!audioFile.exists() || audioFile.length() == 0L) error("Файл записи не найден")
-        val mediaType = "audio/wav".toMediaType()
+        // Записи бывают и .wav (свой pal_record fallback), и .mp3 (штатный рекордер OxygenOS) —
+        // раньше здесь всегда стоял audio/wav независимо от реального формата файла.
+        val mediaType = when (audioFile.extension.lowercase()) {
+            "mp3" -> "audio/mpeg"
+            "m4a", "aac" -> "audio/aac"
+            else -> "audio/wav"
+        }.toMediaType()
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("file", audioFile.name, audioFile.asRequestBody(mediaType))
             .addFormDataPart("model", model.ifBlank { "whisper-large-v3-turbo" })

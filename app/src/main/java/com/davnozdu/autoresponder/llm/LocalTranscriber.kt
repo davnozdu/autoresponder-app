@@ -8,8 +8,6 @@ import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
 
 /**
@@ -133,7 +131,14 @@ object LocalTranscriber {
         idleHandler.removeCallbacks(idleUnload)
         try {
             val rec = getRecognizer(ctx)
-            val (samples, sampleRate) = readWavMonoFloat(audioFile.absolutePath)
+            // Записи автоответчика бывают и .wav (свой pal_record fallback), и .mp3 (штатный
+            // рекордер OxygenOS через RecordingLinker) — sherpa-onnx понимает только сырые
+            // сэмплы, не контейнеры. decodeToMono уже умеет оба формата (тот же декодер, что
+            // готовит приветствия) — раньше здесь был свой WAV-only парсер, падавший на .mp3
+            // тем же образом, что и штатный WaveReader на стерео. Найдено живым тестом.
+            val (shorts, sampleRate) = com.davnozdu.autoresponder.call.AudioConvert.decodeToMono(audioFile.absolutePath)
+                ?: error("Не удалось разобрать аудиофайл")
+            val samples = FloatArray(shorts.size) { shorts[it] / 32768f }
             val stream = rec.createStream()
             try {
                 stream.acceptWaveform(samples, sampleRate)
@@ -147,50 +152,5 @@ object LocalTranscriber {
         } finally {
             idleHandler.postDelayed(idleUnload, IDLE_UNLOAD_MS)
         }
-    }
-
-    /** Свой мини-парсер WAV PCM16 → моно float [-1,1] + sample rate — вместо
-     *  com.k2fsa.sherpa.onnx.WaveReader.readWave(): тот падает "Failed to read wave file" на
-     *  СТЕРЕО (проверено живым файлом: заголовок наших записей — 48кГц, 2 канала, 16 бит —
-     *  WaveReader принимает только моно, а это готовый JNI-бинарь, поправить нельзя). Тот же
-     *  chunk-walk, что у AudioConvert.decodeWav16 (соседний пакет, заточен под другую задачу —
-     *  подготовку приветствий, не расшифровку) — здесь своя копия, чтобы не тянуть межпакетную
-     *  связь ради 20 строк парсинга. */
-    private fun readWavMonoFloat(path: String): Pair<FloatArray, Int> {
-        val bytes = File(path).readBytes()
-        require(bytes.size >= 44) { "Файл записи слишком короткий" }
-        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-        var pos = 12
-        var rate = 0; var channels = 0; var bits = 0; var dataOff = -1; var dataLen = 0
-        while (pos + 8 <= bytes.size) {
-            val id = String(bytes, pos, 4)
-            val sz = bb.getInt(pos + 4).toLong() and 0xFFFFFFFFL
-            val body = pos + 8
-            if (sz > bytes.size - body) break
-            when (id) {
-                "fmt " -> if (body + 16 <= bytes.size) {
-                    channels = bb.getShort(body + 2).toInt()
-                    rate = bb.getInt(body + 4)
-                    bits = bb.getShort(body + 14).toInt()
-                }
-                "data" -> { dataOff = body; dataLen = sz.toInt() }
-            }
-            if (dataOff >= 0 && rate > 0) break
-            pos = body + sz.toInt() + (sz.toInt() and 1)
-        }
-        require(dataOff >= 0 && rate > 0 && channels > 0 && bits == 16) { "Не удалось разобрать WAV" }
-        val frameBytes = channels * 2
-        val frames = minOf(dataLen, bytes.size - dataOff) / frameBytes
-        val sb = ByteBuffer.wrap(bytes, dataOff, frames * frameBytes)
-            .order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-        val mono = FloatArray(frames)
-        val frame = ShortArray(channels)
-        for (i in 0 until frames) {
-            sb.get(frame)
-            var acc = 0
-            for (c in frame) acc += c
-            mono[i] = (acc / channels) / 32768f
-        }
-        return mono to rate
     }
 }
