@@ -30,8 +30,17 @@ object GreetingTrim {
     private const val MIN_CORRELATION = 0.5
     private const val GREET_RATE = 48000 // формат всех Greeting.prepare*() — см. AudioConvert.toRawPcm48kStereo
     // Меньше — не пытаемся оценивать: на паре кадров нормализованная корреляция ненадёжна
-    // (слишком легко случайно "совпасть"). 10 кадров по 20мс = 200мс.
-    private const val MIN_PREFIX_FRAMES = 10
+    // (слишком легко случайно "совпасть", особенно если оба отрезка попадают на "плоский"
+    // участок ровной громкости — короткое окно почти не несёт различающей информации).
+    // 25 кадров по 20мс = 500мс — абсолютный пол независимо от длины записи.
+    private const val MIN_PREFIX_FRAMES = 25
+    // isGreetingOnlyFragment не должна иметь права "подобрать" короткое удобное окно совпадения
+    // где-то внутри записи — сравнивать нужно СУЩЕСТВЕННУЮ долю всей записи (не меньше этой
+    // доли), иначе даже НЕ похожий на приветствие сигнал может случайно совпасть коротким
+    // куском на общем "ровном" участке громкости. Найдено юнит-тестом (CI): короткое
+    // непохожее сообщение ложно распозналось как обрывок приветствия именно на 10-кадровом
+    // (200мс) окне внутри протяжённого ровного участка.
+    private const val MIN_MATCH_FRACTION = 0.7
     // Сколько тишины/паузы перед началом приветствия готовы искать (ответ+IPC-задержка play()
     // редко больше пары секунд) — см. isGreetingOnlyFragment.
     private const val MAX_LEAD_SILENCE_MS = 5000
@@ -162,12 +171,12 @@ object GreetingTrim {
         val greetEnv = envelope(greetAtRecRate, frameLen)
         if (recEnv.isEmpty() || greetEnv.isEmpty() || recEnv.size > greetEnv.size) return false
 
-        val maxLeadFrames = (recEnv.size - MIN_PREFIX_FRAMES).coerceAtMost(MAX_LEAD_SILENCE_MS / FRAME_MS)
+        val minMatchLen = (recEnv.size * MIN_MATCH_FRACTION).toInt().coerceAtLeast(MIN_PREFIX_FRAMES)
+        val maxLeadFrames = (recEnv.size - minMatchLen).coerceAtMost(MAX_LEAD_SILENCE_MS / FRAME_MS)
         if (maxLeadFrames < 0) return false
         var bestScore = Double.NEGATIVE_INFINITY
         for (offset in 0..maxLeadFrames) {
             val matchLen = recEnv.size - offset
-            if (matchLen < MIN_PREFIX_FRAMES) break
             val segment = recEnv.copyOfRange(offset, offset + matchLen)
             val prefix = greetEnv.copyOfRange(0, matchLen)
             val score = normalizedCorrelation(normalize(segment), normalize(prefix))
