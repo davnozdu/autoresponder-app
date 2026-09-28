@@ -74,7 +74,16 @@ object EventQueue {
     fun defer(context: Context, id: Long) { RuntimeDb.get(context).defer(id,10_000) }
     fun beforeSend(context: Context, job: Long): Boolean {
         val db = RuntimeDb.get(context)
-        if (!db.valid(job)) { db.state(job, "expired", "Ответ устарел во время подготовки"); return false }
+        if (!db.valid(job)) {
+            db.state(job, "expired", "Ответ устарел во время подготовки")
+            // Раньше это состояние оседало только в RuntimeDb (видно лишь через прямой SQL-
+            // запрос к БД) — снаружи неотличимо от "уведомление вовсе не пришло". Найдено при
+            // разборе реального пропущенного ответа клиенту: подготовка (историческая
+            // MsgrBridge.sync внутри Responder.historyBlock) заняла в разы дольше своего
+            // короткого бюджета и съела весь TTL задания — EventLog. молчал.
+            EventLog(context).add("QUEUE #$job: ответ устарел во время подготовки, не отправлен")
+            return false
+        }
         db.state(job, "sending")
         return true
     }

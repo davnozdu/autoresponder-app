@@ -172,7 +172,18 @@ object MsgrBridge {
      */
     fun sync(context: Context, force: Boolean = false, wait: Boolean = true,
              waitMs: Long = WAIT_MS): Int {
-        if (wait) lock.lock() else if (!lock.tryLock()) return 0
+        // Раньше здесь был безусловный lock.lock() — если этот вызов застаёт занятой
+        // блокировку (например, тот же mетод уже идёт в другом потоке — фоновый форс-синк
+        // после ре-бинда слушателя, реакция на смену DND и т.п.), он ждал БЕЗ ограничения по
+        // времени, полностью игнорируя собственный [waitMs]. На пути ответа клиенту это и
+        // есть свой короткий REPLY_WAIT_MS=4с — а реальный пропущенный ответ клиенту в
+        // проде ждал так ~10 МИНУТ и съел весь TTL задания в очереди, пока не сорвался как
+        // "устарел во время подготовки". Найдено разбором реального инцидента. tryLock с
+        // тем же бюджетом восстанавливает документированный контракт: "не успели — отвечаем
+        // по тому, что есть" должен относиться и к ожиданию самой блокировки, не только к
+        // waitForResponse() внутри неё.
+        val locked = if (wait) lock.tryLock(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) else lock.tryLock()
+        if (!locked) return 0
         try {
             return syncLocked(context, force, wait, waitMs)
         } finally { lock.unlock() }
