@@ -37,27 +37,39 @@ object Transcriber {
     fun transcribe(provider: String, apiKey: String, model: String, audioFile: File): String {
         if (apiKey.isBlank()) error("Не задан API-ключ дешифровки (Настройки → Дешифровка записей)")
         if (!audioFile.exists() || audioFile.length() == 0L) error("Файл записи не найден")
-        // Записи бывают и .wav (свой pal_record fallback), и .mp3 (штатный рекордер OxygenOS) —
-        // раньше здесь всегда стоял audio/wav независимо от реального формата файла.
-        val mediaType = when (audioFile.extension.lowercase()) {
-            "mp3" -> "audio/mpeg"
-            "m4a", "aac" -> "audio/aac"
-            else -> "audio/wav"
-        }.toMediaType()
-        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("file", audioFile.name, audioFile.asRequestBody(mediaType))
-            .addFormDataPart("model", model.ifBlank { "whisper-large-v3-turbo" })
-            .addFormDataPart("response_format", "json")
-            .build()
-        val req = Request.Builder().url("${baseUrl(provider)}/audio/transcriptions")
-            .header("Authorization", "Bearer $apiKey")
-            .post(body).build()
-        client.newCall(req).execute().use { r ->
-            val raw = r.body?.string()
-            if (!r.isSuccessful) error("HTTP ${r.code}: ${raw?.take(300)?.replace('\n', ' ')}")
-            val text = JSONObject(raw ?: "{}").optString("text").trim()
-            if (text.isBlank()) error("Пустой ответ дешифровки")
-            return text
+        // Обрезка приветствия ПЕРЕД загрузкой — сам файл записи не меняется (см. GreetingTrim).
+        // trimmedCopyForUpload сама бросает понятную ошибку, если после обрезки реального
+        // сообщения не осталось (клиент положил трубку во время приветствия) — короткое
+        // замыкание до платного запроса в облако. null — обрезать нечего/сайдкара нет, грузим
+        // audioFile как раньше.
+        val trimmed = com.davnozdu.autoresponder.call.GreetingTrim.trimmedCopyForUpload(audioFile)
+        val uploadFile = trimmed ?: audioFile
+        try {
+            // Записи бывают и .wav (свой pal_record fallback), и .mp3 (штатный рекордер
+            // OxygenOS) — раньше здесь всегда стоял audio/wav независимо от реального формата
+            // файла. Обрезанная копия всегда WAV (см. GreetingTrim.trimmedCopyForUpload).
+            val mediaType = if (trimmed != null) "audio/wav" else when (audioFile.extension.lowercase()) {
+                "mp3" -> "audio/mpeg"
+                "m4a", "aac" -> "audio/aac"
+                else -> "audio/wav"
+            }
+            val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+                .addFormDataPart("file", uploadFile.name, uploadFile.asRequestBody(mediaType.toMediaType()))
+                .addFormDataPart("model", model.ifBlank { "whisper-large-v3-turbo" })
+                .addFormDataPart("response_format", "json")
+                .build()
+            val req = Request.Builder().url("${baseUrl(provider)}/audio/transcriptions")
+                .header("Authorization", "Bearer $apiKey")
+                .post(body).build()
+            client.newCall(req).execute().use { r ->
+                val raw = r.body?.string()
+                if (!r.isSuccessful) error("HTTP ${r.code}: ${raw?.take(300)?.replace('\n', ' ')}")
+                val text = JSONObject(raw ?: "{}").optString("text").trim()
+                if (text.isBlank()) error("Пустой ответ дешифровки")
+                return text
+            }
+        } finally {
+            if (trimmed != null) trimmed.delete()
         }
     }
 }

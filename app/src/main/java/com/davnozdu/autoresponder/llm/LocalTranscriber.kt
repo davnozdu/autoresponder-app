@@ -244,22 +244,34 @@ object LocalTranscriber {
         if (probedSec != null && probedSec > MAX_DECODE_SEC) {
             error("Запись слишком длинная для локальной дешифровки (> ${MAX_DECODE_SEC / 60} мин)")
         }
+        // Записи автоответчика бывают и .wav (свой pal_record fallback), и .mp3 (штатный
+        // рекордер OxygenOS через RecordingLinker) — sherpa-onnx понимает только сырые
+        // сэмплы, не контейнеры. decodeToMono уже умеет оба формата (тот же декодер, что
+        // готовит приветствия) — раньше здесь был свой WAV-only парсер, падавший на .mp3
+        // тем же образом, что и штатный WaveReader на стерео. Найдено живым тестом.
+        val (shorts, sampleRate) = com.davnozdu.autoresponder.call.AudioConvert.decodeToMono(audioFile.absolutePath)
+            ?: error("Не удалось разобрать аудиофайл")
+        // Страховка на случай, если probeDurationSec выше вернул null (не смог оценить),
+        // а фактическая длительность всё равно оказалась чрезмерной — уже после аллокации,
+        // но хотя бы не даём скормить такой файл recognizer'у.
+        if (sampleRate > 0 && shorts.size / sampleRate > MAX_DECODE_SEC) {
+            error("Запись слишком длинная для локальной дешифровки (> ${MAX_DECODE_SEC / 60} мин)")
+        }
+        // Обрезка приветствия ПЕРЕД распознаванием — сам файл записи не меняется (см.
+        // GreetingTrim), только то, что уходит в recognizer. Проверяем именно ФАКТ обрезки
+        // (trimmed.size < shorts.size), а не просто "получилось коротко": короткая запись БЕЗ
+        // найденного приветствия (сайдкара нет, или это правда короткое "алло") — не тот же
+        // случай, что "нашли приветствие, а после него почти ничего" — только во втором
+        // сообщаем именно "сообщения нет", в первом ведём себя как раньше (пробуем
+        // распознать, что есть).
+        val trimmed = com.davnozdu.autoresponder.call.GreetingTrim.trimForTranscription(
+            audioFile.absolutePath, shorts, sampleRate)
+        if (trimmed.size < shorts.size && com.davnozdu.autoresponder.call.GreetingTrim.isNegligible(trimmed, sampleRate)) {
+            error("Сообщение не записано — похоже, звонивший положил трубку во время приветствия")
+        }
         val rec = acquireRecognizer(ctx)
         try {
-            // Записи автоответчика бывают и .wav (свой pal_record fallback), и .mp3 (штатный
-            // рекордер OxygenOS через RecordingLinker) — sherpa-onnx понимает только сырые
-            // сэмплы, не контейнеры. decodeToMono уже умеет оба формата (тот же декодер, что
-            // готовит приветствия) — раньше здесь был свой WAV-only парсер, падавший на .mp3
-            // тем же образом, что и штатный WaveReader на стерео. Найдено живым тестом.
-            val (shorts, sampleRate) = com.davnozdu.autoresponder.call.AudioConvert.decodeToMono(audioFile.absolutePath)
-                ?: error("Не удалось разобрать аудиофайл")
-            // Страховка на случай, если probeDurationSec выше вернул null (не смог оценить),
-            // а фактическая длительность всё равно оказалась чрезмерной — уже после аллокации,
-            // но хотя бы не даём скормить такой файл recognizer'у.
-            if (sampleRate > 0 && shorts.size / sampleRate > MAX_DECODE_SEC) {
-                error("Запись слишком длинная для локальной дешифровки (> ${MAX_DECODE_SEC / 60} мин)")
-            }
-            val samples = FloatArray(shorts.size) { shorts[it] / 32768f }
+            val samples = FloatArray(trimmed.size) { trimmed[it] / 32768f }
             synchronized(decodeLock) {
                 val stream = rec.createStream()
                 try {

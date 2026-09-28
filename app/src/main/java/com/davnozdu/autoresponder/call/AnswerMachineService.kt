@@ -242,8 +242,10 @@ class AnswerMachineService : Service() {
             // Клиент реально что-то оставил (файл есть) — всплывающее уведомление, а не только
             // счётчик внутри приложения: иначе легко пропустить, что кто-то звонил в закрытое
             // время, пока телефон лежит экраном вниз.
-            if (savedFile.isNotBlank())
+            if (savedFile.isNotBlank()) {
                 com.davnozdu.autoresponder.notif.AutoNotifications.showAmRec(app, name, number, savedDur)
+                saveGreetingSidecar(savedFile, greet)
+            }
 
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
@@ -420,6 +422,7 @@ class AnswerMachineService : Service() {
                     val dur = RecordingLinker.durationMs(ownFile.absolutePath)
                     db.amRecSetFile(recId, ownFile.absolutePath, dur)
                     com.davnozdu.autoresponder.notif.AutoNotifications.showAmRec(app, name, number, dur)
+                    saveGreetingSidecar(ownFile.absolutePath, vmGreet)
                 } else {
                     db.amRecSetFile(recId, "", System.currentTimeMillis() - start)
                 }
@@ -433,6 +436,12 @@ class AnswerMachineService : Service() {
                     // Найдено финальным ревью ветки.
                     val fullId = db.amRecInsert(number, name, start, 0, null, "voicemail_full", heard = true)
                     db.amRecSetFile(fullId, oemLink.first, oemLink.second)
+                    // Ограничение: OEM-запись непрерывна с начала звонка и может содержать ОБА
+                    // приветствия (скрининговое, потом это) — сайдкар знает только про vmGreet,
+                    // GreetingTrim найдёт и обрежет только его. Скрининговое приветствие в
+                    // начале этой конкретной копии обрезано не будет. Осознанно: "_full" —
+                    // второстепенная копия (heard=true сразу), не основной путь транскрипции.
+                    saveGreetingSidecar(oemLink.first, vmGreet)
                 }
                 EventLog(app).add("AM: скрининг — переброшено на автоответчик ${number ?: "?"}")
                 return
@@ -470,8 +479,10 @@ class AnswerMachineService : Service() {
             // Клиент реально что-то оставил (файл есть) — всплывающее уведомление, а не только
             // счётчик внутри приложения: иначе легко пропустить, что кто-то звонил в закрытое
             // время, пока телефон лежит экраном вниз.
-            if (savedFile.isNotBlank())
+            if (savedFile.isNotBlank()) {
                 com.davnozdu.autoresponder.notif.AutoNotifications.showAmRec(app, name, number, savedDur)
+                saveGreetingSidecar(savedFile, greet)
+            }
             EventLog(app).add("AM: завершено ${number ?: "?"}")
         } finally {
             // Как и в runFlow — гарантированно снимаем мьют/запись даже при исключении
@@ -613,6 +624,19 @@ class AnswerMachineService : Service() {
     private fun unregisterWatcher(ctx: Context) {
         watcher?.let { runCatching { ctx.unregisterReceiver(it) } }
         watcher = null
+    }
+
+    /** Копирует PCM приветствия, РЕАЛЬНО прозвучавшего в линию для этой записи, рядом с
+     *  сохранённым файлом — сайдкар для GreetingTrim при транскрипции: кросс-корреляция по
+     *  фактически сыгранному звуку, а не пересозданному заново по текущим настройкам (которые
+     *  могли с тех пор поменяться — язык/текст приветствия). Best-effort: неудача копирования
+     *  не должна ломать сохранение самой записи, поэтому runCatching и никакого return-значения. */
+    private fun saveGreetingSidecar(savedFile: String, greetPcmPath: String?) {
+        if (savedFile.isBlank() || greetPcmPath.isNullOrBlank()) return
+        runCatching {
+            val src = java.io.File(greetPcmPath)
+            if (src.exists()) src.copyTo(java.io.File(GreetingTrim.sidecarPath(savedFile)), overwrite = true)
+        }
     }
 
     private fun contactName(ctx: Context, number: String?): String? {

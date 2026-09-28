@@ -244,22 +244,28 @@ object AudioConvert {
                 mono[i] = (acc / srcCh).toShort()
             }
         }
-        val outFrames = if (srcRate == OUT_RATE) frames
-                        else ((frames.toLong() * OUT_RATE) / srcRate).toInt()
-        val out = ShortArray(outFrames * 2)
-        if (srcRate == OUT_RATE) {
-            for (i in 0 until frames) { out[i * 2] = mono[i]; out[i * 2 + 1] = mono[i] }
-        } else {
-            val step = frames.toDouble() / outFrames
-            for (i in 0 until outFrames) {
-                val pos = i * step
-                val i0 = pos.toInt()
-                val frac = pos - i0
-                val a = mono[i0]
-                val b = if (i0 + 1 < frames) mono[i0 + 1] else a
-                val v = (a + (b - a) * frac).toInt().coerceIn(-32768, 32767).toShort()
-                out[i * 2] = v; out[i * 2 + 1] = v
-            }
+        val monoOut = resampleMono(mono, srcRate, OUT_RATE)
+        val out = ShortArray(monoOut.size * 2)
+        for (i in monoOut.indices) { out[i * 2] = monoOut[i]; out[i * 2 + 1] = monoOut[i] }
+        return out
+    }
+
+    /** Линейный ресемпл моно-сигнала на произвольную целевую частоту. Публичный — переиспользуется
+     *  GreetingTrim, чтобы выровнять частоту записи и эталонного PCM приветствия перед
+     *  кросс-корреляцией (они не обязаны совпадать: приветствие всегда 48к, а запись — как её
+     *  отдал decodeToMono, частота источника). */
+    fun resampleMono(src: ShortArray, srcRate: Int, dstRate: Int): ShortArray {
+        if (srcRate == dstRate || src.isEmpty()) return src
+        val outFrames = ((src.size.toLong() * dstRate) / srcRate).toInt().coerceAtLeast(1)
+        val out = ShortArray(outFrames)
+        val step = src.size.toDouble() / outFrames
+        for (i in 0 until outFrames) {
+            val pos = i * step
+            val i0 = pos.toInt().coerceIn(0, src.size - 1)
+            val frac = pos - i0
+            val a = src[i0]
+            val b = if (i0 + 1 < src.size) src[i0 + 1] else a
+            out[i] = (a + (b - a) * frac).toInt().coerceIn(-32768, 32767).toShort()
         }
         return out
     }
@@ -267,6 +273,21 @@ object AudioConvert {
     private fun writeLe16(outPath: String, samples: ShortArray) {
         val bytes = ByteArray(samples.size * 2)
         val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        for (s in samples) bb.putShort(s)
+        File(outPath).apply { parentFile?.mkdirs() }.writeBytes(bytes)
+    }
+
+    /** Записывает PCM16 моно как обычный WAV (44-байтный заголовок) — нужен там, где на выходе
+     *  должен быть настоящий контейнер, а не headerless raw (в отличие от [writeLe16]),
+     *  например для загрузки обрезанного под транскрипцию аудио в облачный API. */
+    fun writeWavMono16(outPath: String, samples: ShortArray, rate: Int) {
+        val dataLen = samples.size * 2
+        val bytes = ByteArray(44 + dataLen)
+        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        bb.put("RIFF".toByteArray()); bb.putInt(36 + dataLen); bb.put("WAVE".toByteArray())
+        bb.put("fmt ".toByteArray()); bb.putInt(16); bb.putShort(1); bb.putShort(1)
+        bb.putInt(rate); bb.putInt(rate * 2); bb.putShort(2); bb.putShort(16)
+        bb.put("data".toByteArray()); bb.putInt(dataLen)
         for (s in samples) bb.putShort(s)
         File(outPath).apply { parentFile?.mkdirs() }.writeBytes(bytes)
     }
