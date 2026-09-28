@@ -43,6 +43,11 @@ object AmBlockOverlay {
     private const val TIMEOUT_MS = 6 * 60_000L
     private val main = Handler(Looper.getMainLooper())
     private var shown: View? = null
+    // Именной Runnable для авто-hide, а НЕ removeCallbacksAndMessages(null): тот стирал ЛЮБЫЕ
+    // отложенные post() на этом Handler'е — включая параллельный ещё не выполнившийся show()/
+    // hide() (тот, чей post() выполнится первым, стирал post второго). Тот же класс гонки уже
+    // чинили в CallerOverlay тем же способом. Найдено аудитом.
+    private var autoHide: Runnable? = null
 
     fun show(context: Context) {
         val app = context.applicationContext
@@ -53,7 +58,9 @@ object AmBlockOverlay {
                 val view = build(app)
                 wm(app).addView(view, params())
                 shown = view
-                main.postDelayed({ hide(app) }, TIMEOUT_MS)
+                val r = Runnable { hide(app) }
+                autoHide = r
+                main.postDelayed(r, TIMEOUT_MS)
             }.onFailure { EventLog(app).add("AM оверлей: не показать — ${it.javaClass.simpleName}: ${it.message}") }
         }
     }
@@ -66,7 +73,8 @@ object AmBlockOverlay {
     private fun hideNow(app: Context) {
         shown?.let { runCatching { wm(app).removeView(it) } }
         shown = null
-        main.removeCallbacksAndMessages(null)
+        autoHide?.let { main.removeCallbacks(it) }
+        autoHide = null
     }
 
     private fun wm(c: Context) = c.getSystemService(WindowManager::class.java)

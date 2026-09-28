@@ -248,22 +248,31 @@ object Greeting {
         val out = cacheFile(app, key)
         if (out.exists() && out.length() > 0) return out.absolutePath
 
+        // tmp+rename, а не писать сразу в out: если конвертация/хвост оборвутся посередине
+        // (например процесс убьют во время звонка), в кэше остался бы НЕПУСТОЙ битый файл —
+        // проверка out.exists()&&out.length()>0 выше подсовывала бы его как готовый навсегда,
+        // пока кто-нибудь не поменяет текст/язык. Тот же паттерн, что уже был в prepare() и
+        // prepareVacation, тут отсутствовал. Найдено аудитом.
+        val tmp = File(dir(app), "${out.name}.${System.nanoTime()}.tmp")
         if (useFile) {
-            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, out.absolutePath)) {
-                EventLog(app).add("AM скрининг: не сконвертировал файл ${src.name}"); return null
+            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, tmp.absolutePath)) {
+                EventLog(app).add("AM скрининг: не сконвертировал файл ${src.name}"); tmp.delete(); return null
             }
         } else {
             val wav = synthTts(app, text.ifBlank { defText }, ttsLang) ?: run {
                 EventLog(app).add("AM скрининг: TTS недоступен/не ответил вовремя"); return null
             }
-            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, out.absolutePath)
+            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, tmp.absolutePath)
             wav.delete()
-            if (!ok) { EventLog(app).add("AM скрининг: не сконвертировал TTS"); return null }
+            if (!ok) { EventLog(app).add("AM скрининг: не сконвертировал TTS"); tmp.delete(); return null }
         }
         val tail = preparedHoldUnit(app, holdFile)?.let { tileToLength(it, maxTotalMs) }
             ?: repeatingBeepPcm(maxTotalMs)
-        try { FileOutputStream(out, true).use { it.write(tail) } }
+        try { FileOutputStream(tmp, true).use { it.write(tail) } }
         catch (e: Exception) { EventLog(app).add("AM скрининг: не добавил хвост (${e.message})") }
+        if (!tmp.renameTo(out)) {
+            EventLog(app).add("AM скрининг: не завершил запись кэша"); tmp.delete(); return null
+        }
         cleanupOldCaches(app, out)
         return out.absolutePath
     }
@@ -298,17 +307,22 @@ object Greeting {
         val out = cacheFile(app, key)
         if (out.exists() && out.length() > 0) return out.absolutePath
 
+        // tmp+rename — см. тот же комментарий в prepareScreening выше. Найдено аудитом.
+        val tmp = File(dir(app), "${out.name}.${System.nanoTime()}.tmp")
         if (useFile) {
-            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, out.absolutePath)) {
-                EventLog(app).add("AM voicemail: не сконвертировал файл ${src.name}"); return null
+            if (!AudioConvert.toRawPcm48kStereo(src!!.absolutePath, tmp.absolutePath)) {
+                EventLog(app).add("AM voicemail: не сконвертировал файл ${src.name}"); tmp.delete(); return null
             }
         } else {
             val wav = synthTts(app, text.ifBlank { defText }, ttsLang) ?: run {
                 EventLog(app).add("AM voicemail: TTS недоступен/не ответил вовремя"); return null
             }
-            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, out.absolutePath)
+            val ok = AudioConvert.toRawPcm48kStereo(wav.absolutePath, tmp.absolutePath)
             wav.delete()
-            if (!ok) { EventLog(app).add("AM voicemail: не сконвертировал TTS"); return null }
+            if (!ok) { EventLog(app).add("AM voicemail: не сконвертировал TTS"); tmp.delete(); return null }
+        }
+        if (!tmp.renameTo(out)) {
+            EventLog(app).add("AM voicemail: не завершил запись кэша"); tmp.delete(); return null
         }
         cleanupOldCaches(app, out)
         return out.absolutePath

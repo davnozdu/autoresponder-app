@@ -765,6 +765,21 @@ fun AppScreen() {
 
             ExpandableSection("Скрининг звонков") {
                 var screenOn by remember { mutableStateOf(s.screeningEnabled) }
+                // Тумблер «выключать скрининг при DND» меняет screeningEnabled В ФОНЕ
+                // (AutoNotifications.onDndChanged), пока приложение свёрнуто — без обновления
+                // на возврате экран показывал бы устаревшее положение переключателя (снял DND
+                // утром, скрининг реально включился, а UI, открытый с вечера, всё ещё "выкл").
+                // Тот же паттерн, что уже чинили для счётчика новых записей. Найдено аудитом.
+                val screenLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                DisposableEffect(screenLifecycleOwner) {
+                    val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                        if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                            screenOn = s.screeningEnabled
+                        }
+                    }
+                    screenLifecycleOwner.lifecycle.addObserver(obs)
+                    onDispose { screenLifecycleOwner.lifecycle.removeObserver(obs) }
+                }
                 SwitchRow("Интерактивный скрининг (Ответить/Отклонить)", screenOn) {
                     screenOn = it; s.screeningEnabled = it
                 }
@@ -785,9 +800,12 @@ fun AppScreen() {
                     }
                 }
                 Text("Пока включён режим «Не беспокоить» — личное время, карточка скрининга не "
-                    + "показывается, все звонки молча уходят на голосовой автоответчик, как в "
-                    + "любые другие закрытые часы. Как только «Не беспокоить» выключаете — "
-                    + "скрининг возвращается сам.",
+                    + "показывается. Как только «Не беспокоить» выключаете — скрининг "
+                    + "возвращается сам. Что именно происходит со звонком в это время, решают "
+                    + "настройки выше и в разделе «Голосовой автоответчик»: «По системному "
+                    + "режиму «Не беспокоить»» должен быть включён (иначе DND вообще не "
+                    + "считается «закрыто»), а «Использовать автоответчик: ДА» — включать "
+                    + "голос вместо SMS-ответа.",
                     style = MaterialTheme.typography.bodySmall)
 
                 if (autoScreenDnd) Text("Пока включён тумблер выше — окно и дни ниже " +

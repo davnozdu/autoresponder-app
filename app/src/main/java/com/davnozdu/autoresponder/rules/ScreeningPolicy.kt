@@ -26,7 +26,11 @@ object ScreeningPolicy {
     fun activeBySchedule(nowMin: Int, dayOfWeek: Int, workDaysMask: Int,
                           workStart: Int, workEnd: Int): Boolean {
         val isWorkDay = (workDaysMask and (1 shl dayOfWeek)) != 0
-        val inHours = nowMin in workStart until workEnd
+        // TimeWindow.contains, а не «nowMin in workStart until workEnd»: тот на окне через
+        // полночь (например 20:00–02:00, start > end) даёт пустой диапазон — никогда не true.
+        // UI такое окно выставить позволяет, а скрининг в нём не срабатывал вовсе. Найдено
+        // аудитом; тот же переход через полночь уже учтён в ClosedState/тихом часе.
+        val inHours = TimeWindow.contains(nowMin, workStart, workEnd)
         return isWorkDay && inHours
     }
 }

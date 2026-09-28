@@ -111,6 +111,12 @@ class AnswerMachineService : Service() {
         val start = System.currentTimeMillis()
         val name = nameIn ?: contactName(app, number)
         EventLog(app).add("AM: старт ${number ?: "?"} (${reason})")
+        // Звонки, которые взял на себя голосовой автоответчик, раньше не попадали в
+        // статистику сеанса DND вовсе — onIncoming вызывался только из Responder/NotifResponder
+        // (текстовые авто-ответы). Постоянное уведомление "Автоответ работает" писало "ни
+        // звонков, ни сообщений", даже когда автоответчик реально отработал несколько звонков
+        // за вечер. Найдено аудитом.
+        com.davnozdu.autoresponder.notif.DndStats.onIncoming(app, isCall = true)
 
         registerWatcher(app)
         try {
@@ -276,6 +282,9 @@ class AnswerMachineService : Service() {
         val normNumber = com.davnozdu.autoresponder.rules.PhoneMask.normalize(number) ?: (number ?: "")
         EventLog(app).add("AM: старт ${number ?: "?"} (screening)")
         accepted = false; declined = false; transferred = false
+        // См. комментарий в runFlow — та же статистика сеанса DND, для скрининга отдельно
+        // (та не проходит через runFlow вовсе). Найдено аудитом.
+        com.davnozdu.autoresponder.notif.DndStats.onIncoming(app, isCall = true)
 
         registerWatcher(app)
         try {
@@ -324,7 +333,12 @@ class AnswerMachineService : Service() {
                 val lookup = runCatching {
                     com.davnozdu.autoresponder.crm.CrmFlow.lookup(app, listOf(normNumber))
                 }.getOrNull()
-                if (lookup != null) {
+                // CRM-запрос (сеть + CrmRoster.sync) может занять до нескольких секунд — за это
+                // время владелец уже мог нажать «Ответить»/«Отклонить», либо абонент сам положил
+                // трубку. show() тут не знает об этом и рисует обычную карточку БЕЗ рабочих
+                // кнопок (решение уже принято) поверх всего на неопределённое время — живой баг,
+                // найденный аудитом. Перепроверяем, что сессия ещё правда ждёт решения.
+                if (lookup != null && !idle && !accepted && !declined && !transferred) {
                     com.davnozdu.autoresponder.notif.CallerOverlay.show(app, normNumber, lookup)
                 }
             }
@@ -370,6 +384,13 @@ class AnswerMachineService : Service() {
                 AmBridge.recDiscard(app)
                 AmBridge.stop(app)
                 com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
+                // Реальный (демон-side) мьют был поставлен один раз в начале скрининга и с тех
+                // пор не трогался — ниже waitIdleKeepingSilent честно учитывает amSilentToOwner
+                // для AudioManager-мьюта (который на этом железе всё равно не эффективен сам по
+                // себе), а вот muteOut(true) молча оставался включён независимо от настройки:
+                // владелец не мог дослушать голосовую почту вживую, даже явно попросив об этом
+                // тумблером «Тихий режим» = выключен. Найдено аудитом.
+                if (!s.amSilentToOwner) AmBridge.muteOut(app, false)
 
                 val vmGreet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
                     Greeting.prepareVoicemail(app, s.screeningDefaultLang)

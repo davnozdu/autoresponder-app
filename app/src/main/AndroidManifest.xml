@@ -28,6 +28,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!-- Свой permission под adb-активности ниже (AmTestActivity/ImportAudioActivity/
+         SetFlagActivity/SetTextActivity): protectionLevel=signature — сторонние приложения на
+         телефоне его не получат (нет нашего ключа подписи), а `adb shell am start` работает
+         как раньше: shell-uid у системы проверку прав на подобные вызовы не проходит вовсе
+         (стандартное исключение платформы для отладки). Раньше эти 4 activity были exported
+         без вообще какой-либо защиты — любое установленное приложение могло дёргать их
+         напрямую (гасить экран/выключать тач на 2 минуты, выключать автоответчик, подменять
+         API-ключ дешифровки). Найдено аудитом. -->
+    <permission
+        android:name="com.davnozdu.autoresponder.permission.ADB_CONTROL"
+        android:protectionLevel="signature" />
+
     <application
         android:name=".App"
         android:allowBackup="false"
@@ -100,6 +112,7 @@
         <activity
             android:name=".call.AmTestActivity"
             android:exported="true"
+            android:permission="com.davnozdu.autoresponder.permission.ADB_CONTROL"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
@@ -107,6 +120,7 @@
         <activity
             android:name=".ui.ImportAudioActivity"
             android:exported="true"
+            android:permission="com.davnozdu.autoresponder.permission.ADB_CONTROL"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
@@ -114,6 +128,7 @@
         <activity
             android:name=".ui.SetFlagActivity"
             android:exported="true"
+            android:permission="com.davnozdu.autoresponder.permission.ADB_CONTROL"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
@@ -121,6 +136,7 @@
         <activity
             android:name=".ui.SetTextActivity"
             android:exported="true"
+            android:permission="com.davnozdu.autoresponder.permission.ADB_CONTROL"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.NoDisplay" />
 
