@@ -680,6 +680,15 @@ class Settings(context: Context) {
         get() = sp.getStringSet(K_MON_APPS, DEFAULT_APPS)!!.toSet()
         set(v) = sp.edit().putStringSet(K_MON_APPS, v).apply()
 
+    // --- запись звонков в мессенджерах (свой захват через loopback-render, см. msgrec/) ---
+    var msgrRecEnabled: Boolean
+        get() = sp.getBoolean(K_MSGR_REC_ON, false)
+        set(v) = sp.edit().putBoolean(K_MSGR_REC_ON, v).apply()
+    // Пакеты, звонки которых записывать (выбор галочками из установленных).
+    var msgrRecApps: Set<String>
+        get() = sp.getStringSet(K_MSGR_REC_APPS, DEFAULT_APPS)!!.toSet()
+        set(v) = sp.edit().putStringSet(K_MSGR_REC_APPS, v).apply()
+
     // --- SIM по умолчанию: 0=SIM1, 1=SIM2. «Системная» убрана: она отдавала отправку
     // системному выбору по умолчанию, и ответ уходил не с той карты. ---
     var smsSlot: Int
@@ -959,6 +968,8 @@ class Settings(context: Context) {
         private const val K_AM_SILENT = "am_silent"
         private const val K_SMS_SLOT = "sms_slot"
         private const val K_MON_APPS = "monitored_apps"
+        private const val K_MSGR_REC_ON = "msgr_rec_on"
+        private const val K_MSGR_REC_APPS = "msgr_rec_apps"
         private const val K_NOTIF_AGE = "notif_age_min"
         private const val K_UPD_CHECK = "last_upd_check"
         private const val K_SMSCMD_ON = "smscmd_on"

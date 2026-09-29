@@ -10,10 +10,12 @@
  * The capture mechanism ([VoipAudioPolicy], [BypassedAudioRecord]) is derived from CallVault
  * (GPL-3.0 + §7); see LICENSE and NOTICE.md.
  *
- * Run (as root, package installed):
+ * Run from a plain `adb shell` (uid 2000 = com.android.shell holds
+ * CAPTURE_VOICE_COMMUNICATION_OUTPUT; running under su/uid 0 may fail the check):
  *   CLASSPATH=$(pm path com.davnozdu.autoresponder | sed 's/package://') \
  *     app_process /system/bin com.davnozdu.autoresponder.msgrec.MsgrCaptureProbe [recSec] [armWaitSec] [outDir]
- * Then place a WhatsApp/Telegram call within armWaitSec seconds.
+ * START THE PROBE FIRST, then place a WhatsApp/Telegram call within armWaitSec seconds
+ * (the policy must be armed before the call's audio track is created).
  *
  *  Copyright (C) 2026-present davnozdu — GPL-3.0-or-later with §7 additional terms.
  */

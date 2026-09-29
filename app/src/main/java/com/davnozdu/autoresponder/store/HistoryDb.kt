@@ -162,6 +162,10 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         writableDatabase.update("am_rec", v, "_id=?", arrayOf(id.toString()))
     }
 
+    /** Уже есть строка с этим файлом? Дедуп при приёме мессенджер-записей из папки. */
+    fun amRecHasFile(file: String): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM am_rec WHERE file=? LIMIT 1", arrayOf(file)).use { it.moveToFirst() }
+
     /** Ночные авто-SMS, придержанные до утра (тихий час). */
     private fun createSmsHold(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS sms_hold(_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, ts INTEGER)")

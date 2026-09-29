@@ -1482,6 +1482,8 @@ fun AppScreen() {
                     modifier = Modifier.fillMaxWidth()) { Text("🚫 Чёрный список") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, AppPickerActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("📱 Приложения для автоответа") }
+                Button(onClick = { ctx.startActivity(Intent(ctx, MsgrAppsActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()) { Text("🎙️ Запись звонков в мессенджерах") }
             }
 
             ExpandableSection("Импорт / экспорт настроек") {

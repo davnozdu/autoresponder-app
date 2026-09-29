@@ -27,6 +27,10 @@ class NotifListenerService : NotificationListenerService() {
         AutoNotifications.onDndChanged(this)  // синхронизировать текущее состояние
         com.davnozdu.autoresponder.store.Backup.schedule(this)  // ежедневный бэкап БД
         com.davnozdu.autoresponder.store.Heartbeat.tick(this)   // признак жизни для модуля
+        // Запись звонков в мессенджерах: армит политику захвата и слушает VoIP-потоки событийно
+        // (без фоновых сервисов и polling). Тот же живой слушатель держит процесс — отдельного
+        // сервиса не заводим. На ре-бинде переармится сам.
+        com.davnozdu.autoresponder.msgrec.MsgrCaptureManager.refresh(this)
         // Журнал переписки ведётся постоянно, а не только по тому, что показали уведомления:
         // исходящие SMS владельца ловим через провайдер, переписку мессенджеров — через
         // root-мост модуля. Процесс держится живым этим же слушателем, поэтому и заводим здесь.

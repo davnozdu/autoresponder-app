@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -25,6 +26,12 @@
          и foreground-сервис на время обработки звонка. ANSWER_PHONE_CALLS грантит модуль. -->
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Запись звонков в мессенджерах (свой захват, см. msgrec/). RECORD_AUDIO — runtime (grant модулем);
+         три привилегированных (signature|privileged) выдаются priv-app через privapp-permissions в модуле. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAPTURE_AUDIO_OUTPUT" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.CAPTURE_VOICE_COMMUNICATION_OUTPUT" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_ROUTING" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
@@ -55,6 +62,7 @@
         <activity android:name=".ui.BlacklistActivity" android:exported="false" />
         <activity android:name=".ui.HistoryChatActivity" android:exported="false" />
         <activity android:name=".ui.AppPickerActivity" android:exported="false" />
+        <activity android:name=".ui.MsgrAppsActivity" android:exported="false" />
         <activity android:name=".ui.StatsActivity" android:exported="false" />
         <activity android:name=".ui.StatusActivity" android:exported="false" />
         <activity android:name=".ui.InboxActivity" android:exported="false" />
