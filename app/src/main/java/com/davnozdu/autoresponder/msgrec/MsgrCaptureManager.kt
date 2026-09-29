@@ -20,6 +20,7 @@
 package com.davnozdu.autoresponder.msgrec
 
 import android.content.Context
+import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -55,6 +56,7 @@ object MsgrCaptureManager {
     @Volatile private var recordingPkg: String? = null
     @Volatile private var recordingPeer: String? = null
     @Volatile private var stopFlag = false
+    private var foregroundPending = false
     private var worker: Thread? = null
 
     /** Apply the current setting: turn capture on or off. Idempotent; safe to call from any state. */
@@ -117,9 +119,9 @@ object MsgrCaptureManager {
             val pkg = ctx.packageManager.getPackagesForUid(uid)?.firstOrNull { it in whitelist } ?: continue
             hitUid = uid; hitPkg = pkg; break
         }
-        if (hitPkg != null && worker == null) {
+        if (hitPkg != null && worker == null && !foregroundPending) {
             startCurrent(ctx, hitUid, hitPkg)
-        } else if (hitPkg == null && worker != null) {
+        } else if (hitPkg == null && (worker != null || foregroundPending)) {
             stopCurrent()
         }
     }
@@ -135,19 +137,42 @@ object MsgrCaptureManager {
         recordingPkg = pkg
         recordingPeer = NotifListenerService.activeCallPeer(pkg)
         stopFlag = false
+        foregroundPending = true
+        runCatching { ctx.startForegroundService(Intent(ctx, MsgrRecordingService::class.java)) }
+            .onFailure {
+                foregroundPending = false
+                recordingPkg = null
+                LogFile.append("$TAG: не удалось запустить службу микрофона: ${it.message}")
+            }
+    }
+
+    /** Called by the foreground service only after Android has granted its microphone type. */
+    @Synchronized
+    fun onForegroundReady() {
+        val ctx = appCtx ?: return
+        val pkg = recordingPkg ?: return
+        if (!enabled || !foregroundPending) return
+        foregroundPending = false
         val label = appLabel(ctx, pkg)
         val startedAt = System.currentTimeMillis()
         worker = Thread({ recordSession(ctx, label, startedAt) }, "msgr-rec").apply { start() }
-        LogFile.append("$TAG: старт записи — $label (uid=$uid)")
+        LogFile.append("$TAG: старт записи — $label (uid=$recordingUid, микрофон в foreground)")
+    }
+
+    @Synchronized
+    fun onForegroundFailed() {
+        foregroundPending = false
+        recordingPkg = null
     }
 
     private fun stopCurrent() {
-        val w = worker ?: return
+        foregroundPending = false
         stopFlag = true
-        runCatching { w.join(4000) }
+        worker?.let { runCatching { it.join(4000) } }
         worker = null
         recordingUid = -1
         recordingPkg = null
+        appCtx?.let { it.stopService(Intent(it, MsgrRecordingService::class.java)) }
     }
 
     /** Far (peer, loopback sink) + near (MIC) summed to a mono 48 kHz WAV, then filed in the journal. */
@@ -164,7 +189,13 @@ object MsgrCaptureManager {
         val file = File(OUT_DIR, fileName(label, null, stamp))
         val raf = RandomAccessFile(file, "rw"); raf.setLength(0); writeWavHeader(raf, 0)
         var dataLen = 0L
-        runCatching { far?.startRecording() }; runCatching { near?.startRecording() }
+        var nearNonzero = 0L
+        var farNonzero = 0L
+        runCatching { far?.startRecording() }
+            .onFailure { LogFile.append("$TAG: far startRecording: ${it.message}") }
+        runCatching { near?.startRecording() }
+            .onFailure { LogFile.append("$TAG: mic startRecording: ${it.message}") }
+        LogFile.append("$TAG: захват начат: mic=${near?.state}/${near?.recordingState}, far=${far?.state}/${far?.recordingState}")
 
         val n = 1024
         val nbuf = ShortArray(n); val fbuf = ShortArray(n); val out = ByteArray(n * 2)
@@ -177,6 +208,8 @@ object MsgrCaptureManager {
             for (i in 0 until frames) {
                 val a = if (i < rn) nbuf[i].toInt() else 0
                 val b = if (i < rf) fbuf[i].toInt() else 0
+                if (a != 0) nearNonzero++
+                if (b != 0) farNonzero++
                 val mix = (a + b).coerceIn(-32768, 32767)
                 out[bi++] = (mix and 0xff).toByte(); out[bi++] = ((mix shr 8) and 0xff).toByte()
             }
@@ -185,6 +218,7 @@ object MsgrCaptureManager {
         runCatching { near?.stop() }; runCatching { far?.stop() }
         runCatching { near?.release() }; runCatching { far?.release() }
         patchWavSizes(raf, dataLen); raf.close()
+        LogFile.append("$TAG: уровни каналов: mic_nonzero=$nearNonzero far_nonzero=$farNonzero")
 
         val durMs = dataLen / (RATE.toLong() * 2) * 1000
         if (dataLen > RATE) { // at least ~0.5s of audio — ignore blips
