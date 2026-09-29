@@ -24,12 +24,20 @@ object MsgrCaptureManager {
     private var appCtx: Context? = null
     private var am: AudioManager? = null
     private var cbThread: HandlerThread? = null
+    private var cbHandler: Handler? = null
     private var callback: AudioManager.AudioPlaybackCallback? = null
     private var modeListener: AudioManager.OnModeChangedListener? = null
+    private var pendingStop: Runnable? = null
 
     @Volatile private var enabled = false
     @Volatile private var activeJob: CaptureJob? = null
     @Volatile private var anonymizedLogged = false
+
+    // Messenger call setup briefly bounces MODE_IN_COMMUNICATION (ring -> connect); observed ~1.5 s
+    // for Telegram. Tearing the session down and restarting it inside that gap spawns a second
+    // submix sink that steals the far-party route, so the far side goes silent to the user. Wait
+    // this long for the mode to stay out of a call before actually stopping.
+    private const val STOP_DEBOUNCE_MS = 2500L
 
     // AudioPlaybackConfiguration.PLAYER_STATE_STARTED (@SystemApi constant). An idle SoundPool
     // (WhatsApp's call tones) reports a different state and must not be taken for the call.
@@ -61,6 +69,7 @@ object MsgrCaptureManager {
         }
         callback = cb
         val handler = Handler(t.looper)
+        cbHandler = handler
         manager.registerAudioPlaybackCallback(cb, handler)
         // The call itself is MODE_IN_COMMUNICATION. Players alone are unreliable: WhatsApp keeps a
         // USAGE_VOICE_COMMUNICATION SoundPool alive ~15 s after hang-up (confirmed live), which used
@@ -89,12 +98,14 @@ object MsgrCaptureManager {
     @Synchronized
     private fun disable() {
         if (!enabled && activeJob == null) return
+        cancelStop()
         stopCurrent()
         callback?.let { cb -> runCatching { am?.unregisterAudioPlaybackCallback(cb) } }
         callback = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
             modeListener?.let { ml -> runCatching { am?.removeOnModeChangedListener(ml) } }
         modeListener = null
+        cbHandler = null
         cbThread?.quitSafely(); cbThread = null
         enabled = false
         LogFile.append("$TAG: выключено")
@@ -104,13 +115,15 @@ object MsgrCaptureManager {
     private fun evaluate(configs: List<AudioPlaybackConfiguration>) {
         val ctx = appCtx ?: return
         // A messenger call is exactly the window in which the device is in MODE_IN_COMMUNICATION.
-        // Outside it there is no call, whatever residual players linger, so end any recording.
+        // Outside it there is no call, but stop only after a debounce so the setup-time bounce does
+        // not tear the session down and restart it (which breaks the far-party route, see above).
         if (am?.mode != AudioManager.MODE_IN_COMMUNICATION) {
-            if (activeJob != null) stopCurrent()
+            scheduleStop()
             return
         }
-        // Mid-call the messenger may briefly drop or recreate its track (route change, hold). The
-        // recording follows the call mode, not a single player, so once armed we leave it running.
+        // Back in a call: cancel any pending stop from a transient drop. Once a session is armed we
+        // leave it running for the whole call, so a mid-call track drop cannot spawn a second one.
+        cancelStop()
         if (activeJob != null) return
         val whitelist = Settings(ctx).msgrRecApps
         for (c in configs) {
@@ -151,6 +164,24 @@ object MsgrCaptureManager {
         activeJob = job
         job.worker = Thread({ captureSession(ctx, job, startedAt) }, "msgr-ipc").apply { start() }
         LogFile.append("$TAG: старт — $label, shell-хост")
+    }
+
+    /** Schedule the real stop after a debounce; a call that resumes within the window cancels it. */
+    private fun scheduleStop() {
+        if (activeJob == null || pendingStop != null) return
+        val h = cbHandler ?: run { stopCurrent(); return }
+        val r = Runnable {
+            synchronized(this) {
+                pendingStop = null
+                if (am?.mode != AudioManager.MODE_IN_COMMUNICATION) stopCurrent()
+            }
+        }
+        pendingStop = r
+        h.postDelayed(r, STOP_DEBOUNCE_MS)
+    }
+
+    private fun cancelStop() {
+        pendingStop?.let { cbHandler?.removeCallbacks(it); pendingStop = null }
     }
 
     private fun stopCurrent() {
