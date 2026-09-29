@@ -30,7 +30,9 @@ import android.os.Handler
 import android.os.HandlerThread
 import com.davnozdu.autoresponder.data.LogFile
 import com.davnozdu.autoresponder.data.Settings
+import com.davnozdu.autoresponder.notif.NotifListenerService
 import com.davnozdu.autoresponder.store.HistoryDb
+import android.service.notification.StatusBarNotification
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -50,6 +52,8 @@ object MsgrCaptureManager {
 
     @Volatile private var enabled = false
     @Volatile private var recordingUid = -1
+    @Volatile private var recordingPkg: String? = null
+    @Volatile private var recordingPeer: String? = null
     @Volatile private var stopFlag = false
     private var worker: Thread? = null
 
@@ -114,15 +118,24 @@ object MsgrCaptureManager {
             hitUid = uid; hitPkg = pkg; break
         }
         if (hitPkg != null && worker == null) {
-            startCurrent(ctx, hitUid, appLabel(ctx, hitPkg))
+            startCurrent(ctx, hitUid, hitPkg)
         } else if (hitPkg == null && worker != null) {
             stopCurrent()
         }
     }
 
-    private fun startCurrent(ctx: Context, uid: Int, label: String) {
+    /** NotificationListener delivers caller details without querying messenger private data. */
+    fun onCallNotification(sbn: StatusBarNotification) {
+        if (sbn.packageName != recordingPkg) return
+        NotifListenerService.callPeer(sbn)?.let { recordingPeer = it }
+    }
+
+    private fun startCurrent(ctx: Context, uid: Int, pkg: String) {
         recordingUid = uid
+        recordingPkg = pkg
+        recordingPeer = NotifListenerService.activeCallPeer(pkg)
         stopFlag = false
+        val label = appLabel(ctx, pkg)
         val startedAt = System.currentTimeMillis()
         worker = Thread({ recordSession(ctx, label, startedAt) }, "msgr-rec").apply { start() }
         LogFile.append("$TAG: старт записи — $label (uid=$uid)")
@@ -134,6 +147,7 @@ object MsgrCaptureManager {
         runCatching { w.join(4000) }
         worker = null
         recordingUid = -1
+        recordingPkg = null
     }
 
     /** Far (peer, loopback sink) + near (MIC) summed to a mono 48 kHz WAV, then filed in the journal. */
@@ -147,7 +161,7 @@ object MsgrCaptureManager {
 
         File(OUT_DIR).mkdirs()
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(startedAt))
-        val file = File(OUT_DIR, "${safe(label)}_$stamp.wav")
+        val file = File(OUT_DIR, fileName(label, null, stamp))
         val raf = RandomAccessFile(file, "rw"); raf.setLength(0); writeWavHeader(raf, 0)
         var dataLen = 0L
         runCatching { far?.startRecording() }; runCatching { near?.startRecording() }
@@ -174,13 +188,17 @@ object MsgrCaptureManager {
 
         val durMs = dataLen / (RATE.toLong() * 2) * 1000
         if (dataLen > RATE) { // at least ~0.5s of audio — ignore blips
+            val peer = recordingPeer
+            val named = if (peer != null) File(OUT_DIR, fileName(label, peer, stamp)) else file
+            val saved = if (named == file || file.renameTo(named)) named else file
             runCatching {
                 HistoryDb.get(ctx).amRecInsert(
-                    number = null, name = label, ts = startedAt, durationMs = durMs,
-                    file = file.absolutePath, reason = "messenger", heard = false,
+                    number = null, name = "$label · ${peer ?: "Неизвестный абонент"}",
+                    ts = startedAt, durationMs = durMs,
+                    file = saved.absolutePath, reason = "messenger", heard = false,
                 )
             }
-            LogFile.append("$TAG: сохранено ${file.name} (${durMs / 1000}s) → журнал")
+            LogFile.append("$TAG: сохранено ${saved.name} (${durMs / 1000}s) → журнал")
         } else { runCatching { file.delete() } }
     }.onFailure { LogFile.append("$TAG: recordSession: ${it.message}") }
 
@@ -194,7 +212,11 @@ object MsgrCaptureManager {
         pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
     }.getOrDefault(pkg.substringAfterLast('.'))
 
-    private fun safe(s: String) = s.replace(Regex("[^A-Za-z0-9._-]"), "_").take(40).ifEmpty { "Messenger" }
+    private fun fileName(label: String, peer: String?, stamp: String) =
+        "Мессенджер_${safe(label)}_${safe(peer ?: "Неизвестный_абонент")}_$stamp.wav"
+
+    private fun safe(s: String) = s.replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
+        .trim('_', '.').take(48).ifEmpty { "Неизвестный" }
 
     private fun writeWavHeader(raf: RandomAccessFile, dataLen: Int) {
         val ch = 1; val bits = 16; val byteRate = RATE * ch * bits / 8

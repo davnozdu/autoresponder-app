@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +29,7 @@ import com.davnozdu.autoresponder.llm.Transcriber
 import com.davnozdu.autoresponder.store.AmRec
 import com.davnozdu.autoresponder.store.HistoryDb
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -44,10 +46,23 @@ class AmRecordingsActivity : ComponentActivity() {
 }
 
 private val amFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+private val amSearchFmt = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
+private val amIsoFmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
 
 private fun fmtDur(ms: Long): String {
     if (ms <= 0) return "—"
     val s = ms / 1000; return "%d:%02d".format(s / 60, s % 60)
+}
+private fun fmtPosition(ms: Long): String {
+    val s = ms.coerceAtLeast(0) / 1000
+    return "%d:%02d".format(s / 60, s % 60)
+}
+private fun reasonLabel(reason: String?): String = when (reason) {
+    "blacklist" -> "ЧС"
+    "voicemail" -> "голосовая почта"
+    "voicemail_full" -> "полная запись звонка"
+    "messenger" -> "мессенджер"
+    else -> "нерабочее"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,7 +74,12 @@ fun AmRecordingsScreen() {
     val scope = rememberCoroutineScope()
 
     var recs by remember { mutableStateOf(listOf<AmRec>()) }
-    var playingId by remember { mutableStateOf(-1L) }
+    var selectedId by remember { mutableStateOf(-1L) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var positionMs by remember { mutableIntStateOf(0) }
+    var durationMs by remember { mutableIntStateOf(0) }
+    var seeking by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     val player = remember { MediaPlayer() }
     // Дешифровка: какая запись раскрыта (показывает текст) и какая сейчас в процессе запроса
     // к API — раздельно, чтобы можно было развернуть УЖЕ закэшированный текст мгновенно, не
@@ -68,9 +88,25 @@ fun AmRecordingsScreen() {
     var transcribingId by remember { mutableStateOf(-1L) }
     var transcribeError by remember { mutableStateOf<Pair<Long, String>?>(null) }
 
-    fun reload() { scope.launch { recs = withContext(Dispatchers.IO) { db.amRecList() } } }
+    fun reload() { scope.launch { recs = withContext(Dispatchers.IO) { db.amRecList(limit = 5000) } } }
     LaunchedEffect(Unit) { reload() }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
+    LaunchedEffect(selectedId, isPlaying) {
+        while (isPlaying) {
+            if (!seeking) positionMs = runCatching { player.currentPosition }.getOrDefault(positionMs)
+            delay(250)
+        }
+    }
+
+    val shown = remember(recs, query) {
+        val terms = query.trim().lowercase(Locale.getDefault()).split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (terms.isEmpty()) recs else recs.filter { r ->
+            val haystack = listOfNotNull(r.name, r.number, r.file?.substringAfterLast('/'),
+                amSearchFmt.format(Date(r.ts)), amIsoFmt.format(Date(r.ts)),
+                reasonLabel(r.reason)).joinToString(" ").lowercase(Locale.getDefault())
+            terms.all { it in haystack }
+        }
+    }
 
     fun transcribeOrToggle(rec: AmRec) {
         if (rec.transcript != null) {
@@ -103,18 +139,30 @@ fun AmRecordingsScreen() {
 
     fun toggle(rec: AmRec) {
         val path = rec.file
-        if (playingId == rec.id) {
-            runCatching { player.stop() }; runCatching { player.reset() }; playingId = -1
+        if (selectedId == rec.id) {
+            if (isPlaying) {
+                runCatching { player.pause() }
+                isPlaying = false
+            } else {
+                runCatching {
+                    if (positionMs >= durationMs - 200) player.seekTo(0)
+                    player.start()
+                    isPlaying = true
+                }
+            }
             return
         }
         if (path.isNullOrBlank() || !File(path).exists()) return
         runCatching {
             player.reset()
             player.setDataSource(path)
-            player.setOnCompletionListener { playingId = -1 }
+            player.setOnCompletionListener { isPlaying = false; positionMs = durationMs }
             player.prepare()
+            durationMs = player.duration.coerceAtLeast(0)
+            positionMs = 0
+            selectedId = rec.id
             player.start()
-            playingId = rec.id
+            isPlaying = true
         }.onSuccess {
             if (!rec.heard) { scope.launch { withContext(Dispatchers.IO) { db.amRecMarkHeard(rec.id) }; reload() } }
         }
@@ -131,8 +179,14 @@ fun AmRecordingsScreen() {
     }) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
             if (recs.isEmpty()) Text("Записей пока нет", Modifier.padding(16.dp))
+            OutlinedTextField(
+                value = query, onValueChange = { query = it },
+                label = { Text("Поиск по абоненту, мессенджеру или дате") },
+                singleLine = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)
+            )
+            if (shown.isEmpty() && recs.isNotEmpty()) Text("Ничего не найдено", Modifier.padding(16.dp))
             LazyColumn(Modifier.fillMaxSize()) {
-                items(recs) { r ->
+                items(shown, key = { it.id }) { r ->
                     val hasFile = !r.file.isNullOrBlank() && File(r.file).exists()
                     Column(Modifier.fillMaxWidth()) {
                         Row(
@@ -140,8 +194,8 @@ fun AmRecordingsScreen() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             FilledIconButton(onClick = { toggle(r) }, enabled = hasFile) {
-                                Icon(Icons.Filled.PlayArrow,
-                                    contentDescription = if (playingId == r.id) "Стоп" else "Играть")
+                                Icon(if (selectedId == r.id && isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    contentDescription = if (selectedId == r.id && isPlaying) "Пауза" else "Играть")
                             }
                             Spacer(Modifier.width(8.dp))
                             // Рядом с Play — маленькая кнопка дешифровки: та же запись, что уже
@@ -172,13 +226,7 @@ fun AmRecordingsScreen() {
                                 }
                                 Text(
                                     (r.number ?: "—") + " · " + amFmt.format(Date(r.ts)) +
-                                        " · " + fmtDur(r.durationMs) +
-                                        " · " + when (r.reason) {
-                                            "blacklist" -> "ЧС"
-                                            "voicemail" -> "голосовая почта"
-                                            "voicemail_full" -> "полная запись звонка"
-                                            else -> "нерабочее"
-                                        },
+                                        " · " + fmtDur(r.durationMs) + " · " + reasonLabel(r.reason),
                                     style = MaterialTheme.typography.labelSmall
                                 )
                                 if (!hasFile) Text("файл не найден",
@@ -189,6 +237,21 @@ fun AmRecordingsScreen() {
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.error)
                             }
+                        }
+                        if (selectedId == r.id && hasFile) {
+                            Slider(
+                                value = positionMs.toFloat().coerceIn(0f, durationMs.coerceAtLeast(1).toFloat()),
+                                onValueChange = { seeking = true; positionMs = it.toInt() },
+                                onValueChangeFinished = {
+                                    runCatching { player.seekTo(positionMs) }
+                                    seeking = false
+                                },
+                                valueRange = 0f..durationMs.coerceAtLeast(1).toFloat(),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
+                            )
+                            Text("${fmtPosition(positionMs.toLong())} / ${fmtPosition(durationMs.toLong())}",
+                                modifier = Modifier.padding(start = 20.dp, bottom = 8.dp),
+                                style = MaterialTheme.typography.labelSmall)
                         }
                         if (expandedId == r.id && r.transcript != null) {
                             Row(

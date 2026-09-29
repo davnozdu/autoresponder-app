@@ -63,6 +63,32 @@ class NotifListenerService : NotificationListenerService() {
         fun current(key: String): StatusBarNotification? = try {
             instance?.activeNotifications?.firstOrNull { it.key == key }
         } catch (_: Exception) { null }
+        /** Имя собеседника из уведомления активного звонка. Может отсутствовать из-за настроек приватности. */
+        fun activeCallPeer(pkg: String): String? = try {
+            instance?.activeNotifications?.asSequence()
+                ?.filter { it.packageName == pkg }
+                ?.mapNotNull { callPeer(it) }
+                ?.firstOrNull()
+        } catch (_: Exception) { null }
+
+        fun callPeer(sbn: StatusBarNotification): String? {
+            val n = sbn.notification ?: return null
+            val text = n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+            val marker = "${n.channelId.orEmpty()} $text".lowercase()
+            val callCategory = n.category == Notification.CATEGORY_CALL
+            val ongoingCall = n.flags and Notification.FLAG_ONGOING_EVENT != 0 &&
+                listOf("call", "звон", "вызов", "hovor").any { it in marker }
+            if (!callCategory && !ongoingCall) return null
+            val generic = setOf("whatsapp", "whatsapp business", "telegram", "звонок", "вызов", "call")
+            return listOf(Notification.EXTRA_TITLE, Notification.EXTRA_SUB_TEXT, Notification.EXTRA_TEXT)
+                .asSequence().mapNotNull { n.extras.getCharSequence(it)?.toString()?.trim() }
+                .firstOrNull { candidate ->
+                    val c = candidate.lowercase()
+                    candidate.isNotBlank() && c !in generic &&
+                        !listOf("incoming call", "ongoing call", "входящий звонок", "текущий вызов")
+                            .any { it in c }
+                }?.take(80)
+        }
         /** Снять уведомление после ответа, чтобы не обрабатывать повторно. */
         fun dismiss(key: String?) {
             if (key == null) return
@@ -95,7 +121,10 @@ class NotifListenerService : NotificationListenerService() {
         return type !in setOf("groups", "group", "channel", "channels", "stories", "reactions")
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) = handlePosted(sbn)
+    override fun onNotificationPosted(sbn: StatusBarNotification) {
+        com.davnozdu.autoresponder.msgrec.MsgrCaptureManager.onCallNotification(sbn)
+        handlePosted(sbn)
+    }
 
     private fun handlePosted(sbn: StatusBarNotification) {
         try {
