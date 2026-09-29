@@ -5,6 +5,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import android.media.MediaPlayer
 import android.os.Bundle
 import android.widget.Toast
@@ -68,6 +74,26 @@ private fun reasonLabel(reason: String?): String = when (reason) {
     "messenger" -> "мессенджер"
     "call" -> "звонок"
     else -> "нерабочее"
+}
+
+// Источник записи — для цветовой пометки и группировки. Порядок = порядок групп в списке.
+private fun sourceKey(rec: AmRec): Int = when {
+    rec.reason == "call" -> 3
+    rec.reason == "messenger" -> {
+        val n = (rec.name ?: "").lowercase(Locale.getDefault())
+        when { "whatsapp" in n -> 0; "telegram" in n -> 1; else -> 2 }
+    }
+    else -> 4
+}
+private fun sourceTitle(key: Int): String = when (key) {
+    0 -> "WhatsApp"; 1 -> "Telegram"; 2 -> "Мессенджер"; 3 -> "Телефон"; else -> "Автоответчик"
+}
+private fun sourceColor(key: Int): Color = when (key) {
+    0 -> Color(0xFF25D366)   // WhatsApp — зелёный
+    1 -> Color(0xFF229ED9)   // Telegram — синий
+    2 -> Color(0xFF00897B)   // прочие мессенджеры — бирюзовый
+    3 -> Color(0xFFF57C00)   // телефон — оранжевый
+    else -> Color(0xFF9E9E9E) // автоответчик — серый
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -196,10 +222,27 @@ fun AmRecordingsScreen() {
                 singleLine = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)
             )
             if (shown.isEmpty() && recs.isNotEmpty()) Text("Ничего не найдено", Modifier.padding(16.dp))
+            val grouped = remember(shown) {
+                shown.groupBy { sourceKey(it) }.entries.sortedBy { it.key }.map { it.key to it.value }
+            }
             LazyColumn(Modifier.fillMaxSize()) {
-                items(shown, key = { it.id }) { r ->
+                grouped.forEach { (key, rows) ->
+                    item(key = "hdr-$key") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(Modifier.size(10.dp).clip(CircleShape).background(sourceColor(key)))
+                            Spacer(Modifier.width(8.dp))
+                            Text("${sourceTitle(key)} · ${rows.size}",
+                                style = MaterialTheme.typography.titleSmall, color = sourceColor(key))
+                        }
+                    }
+                items(rows, key = { it.id }) { r ->
                     val hasFile = !r.file.isNullOrBlank() && File(r.file).exists()
-                    Column(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                      Box(Modifier.width(4.dp).fillMaxHeight().background(sourceColor(key)))
+                      Column(Modifier.weight(1f)) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -291,8 +334,10 @@ fun AmRecordingsScreen() {
                                 }
                             }
                         }
+                      }
                     }
                     HorizontalDivider()
+                }
                 }
             }
         }

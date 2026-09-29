@@ -152,7 +152,11 @@ object MsgrCaptureManager {
     fun onCallNotification(sbn: StatusBarNotification) {
         val job = activeJob ?: return
         if (sbn.packageName != job.pkg) return
-        NotifListenerService.callPeer(sbn)?.let { job.peer = it }
+        val peer = NotifListenerService.callPeer(sbn) ?: return
+        if (job.peer != peer) {
+            job.peer = peer
+            LogFile.append("$TAG: имя собеседника из уведомления: $peer")
+        }
     }
 
     private fun startCurrent(ctx: Context, pkg: String) {
@@ -211,6 +215,10 @@ object MsgrCaptureManager {
                     synchronized(job.monitor) {
                         while (!job.stopped) job.monitor.wait()
                     }
+                    // Last chance to name the caller if the call notification posted late or was
+                    // missed at start (we now start on the mode change, before it appears).
+                    if (job.peer.isNullOrBlank())
+                        runCatching { NotifListenerService.activeCallPeer(job.pkg) }.getOrNull()?.let { job.peer = it }
                     out.writeUTF("STOP")
                     out.writeUTF(job.peer.orEmpty())
                     out.flush()

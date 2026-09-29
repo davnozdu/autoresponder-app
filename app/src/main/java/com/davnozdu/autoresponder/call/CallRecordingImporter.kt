@@ -28,8 +28,13 @@ object CallRecordingImporter {
         "/sdcard/MIUI/sound_recorder/call_rec",
     )
     private val AUDIO_EXT = setOf("mp3", "m4a", "amr", "aac", "wav", "ogg")
-    // trailing "-2609291314" (yyMMddHHmm) before the extension
-    private val stampPattern = Regex("^(.*)-(\\d{10})$")
+    // Two dialer name shapes seen on this device:
+    //   OxygenOS:  "<caller>-2609291314"          (hyphen, yyMMddHHmm)
+    //   MIUI:      "<caller>_20260127090751"       (underscore, yyyyMMddHHmmss)
+    private val stampUnder = Regex("^(.*)_(\\d{14})$")
+    private val stampHyphen = Regex("^(.*)-(\\d{10})$")
+    // The caller may embed the number in parentheses: "Мама Чехия(00420704419226)".
+    private val nameWithNumber = Regex("^(.*?)\\s*\\((\\+?\\d{5,})\\)\\s*$")
 
     @Synchronized
     fun run(context: Context) {
@@ -46,8 +51,7 @@ object CallRecordingImporter {
                 if (db.amRecHasFile(file.absolutePath)) continue    // already imported
                 val (caller, ts) = parse(file)
                 val duration = RecordingLinker.durationMs(file.absolutePath)
-                val number = if (caller.startsWith("+") || caller.all { it.isDigit() }) caller else null
-                val name = if (number == null) caller else null
+                val (name, number) = splitCaller(caller)
                 if (db.amRecInsert(number, name, ts, duration, file.absolutePath, "call", heard = true) > 0)
                     added++
             }
@@ -57,14 +61,27 @@ object CallRecordingImporter {
 
     private fun parse(file: File): Pair<String, Long> {
         val base = file.nameWithoutExtension
-        val m = stampPattern.matchEntire(base)
-        if (m != null) {
-            val ts = runCatching {
-                SimpleDateFormat("yyMMddHHmm", Locale.US).apply { isLenient = false }
-                    .parse(m.groupValues[2])?.time
-            }.getOrNull()
-            if (ts != null) return m.groupValues[1].trim().ifEmpty { "Unknown" } to ts
+        stampUnder.matchEntire(base)?.let { m ->
+            tsOf(m.groupValues[2], "yyyyMMddHHmmss")?.let { return m.groupValues[1].trim() to it }
         }
-        return base.trim().ifEmpty { "Unknown" } to file.lastModified()
+        stampHyphen.matchEntire(base)?.let { m ->
+            tsOf(m.groupValues[2], "yyMMddHHmm")?.let { return m.groupValues[1].trim() to it }
+        }
+        return base.trim() to file.lastModified()
+    }
+
+    private fun tsOf(digits: String, pattern: String): Long? = runCatching {
+        SimpleDateFormat(pattern, Locale.US).apply { isLenient = false }.parse(digits)?.time
+    }.getOrNull()
+
+    /** Split "Мама Чехия(00420704419226)" / "+420…" into (contact name?, number?) for the journal. */
+    private fun splitCaller(caller: String): Pair<String?, String?> {
+        nameWithNumber.matchEntire(caller)?.let { m ->
+            val nm = m.groupValues[1].trim()
+            return (nm.ifEmpty { null }) to m.groupValues[2]
+        }
+        val digits = caller.trim()
+        val isNumber = digits.isNotEmpty() && digits.all { it.isDigit() || it == '+' } && digits.any { it.isDigit() }
+        return if (isNumber) null to digits else (digits.ifEmpty { null } to null)
     }
 }

@@ -235,6 +235,10 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         if (oldV < 11) addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt_lang TEXT")
         if (oldV < 12) addColumn(db, "ALTER TABLE am_rec ADD COLUMN transcript TEXT")
         if (oldV < 13) createRecLinked(db)
+        // Первый импорт записей звонилки складывал в name сырое имя файла (для MIUI-формата
+        // "Имя(номер)_дата"). Убираем ещё не расшифрованные "call"-строки, чтобы они
+        // переимпортировались с чистым именем контакта и номером. Расшифрованные сохраняем.
+        if (oldV < 14) runCatching { db.execSQL("DELETE FROM am_rec WHERE reason='call' AND transcript IS NULL") }
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
@@ -654,7 +658,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     companion object {
         /** Версия схемы — сверяется в [com.davnozdu.autoresponder.store.Backup.validate], чтобы
          *  не разойтись с магическим числом там при следующем изменении схемы. */
-        const val DB_VERSION = 13
+        const val DB_VERSION = 14
 
         /**
          * Окно сверки дублей для мессенджеров. Отметка времени у мессенджера серверная, а
