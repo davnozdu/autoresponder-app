@@ -11,7 +11,9 @@ import java.util.Locale
 /** Reattach completed recordings if the app died after the shell host saved the WAV. */
 object MsgrRecordingRecovery {
     private val dir = File("/sdcard/Music/Recordings/Messenger")
-    private val namePattern = Regex("^Мессенджер_(.+)_(\\d{8}-\\d{6}-\\d{3})\\.wav$")
+    // Current names are English ("Messenger_…"); the old Cyrillic prefix is still matched so
+    // recordings made before this update are not stranded outside the journal.
+    private val namePattern = Regex("^(?:Messenger|Мессенджер)_(.+)_(\\d{8}-\\d{6}-\\d{3})\\.wav$")
 
     @Synchronized
     fun run(context: Context) {

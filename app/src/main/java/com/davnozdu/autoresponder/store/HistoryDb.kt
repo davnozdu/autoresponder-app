@@ -63,6 +63,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         createSmsHold(db)
         createInboxDone(db)
         createAmRec(db)
+        createRecLinked(db)
     }
 
     /** Отметки «этой веткой я занялся» — чтобы разобранное не висело в списке вечно. */
@@ -166,6 +167,18 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     fun amRecHasFile(file: String): Boolean =
         readableDatabase.rawQuery("SELECT 1 FROM am_rec WHERE file=? LIMIT 1", arrayOf(file)).use { it.moveToFirst() }
 
+    /** Оригиналы записей звонилки, уже присвоенные автоответчиком (RecordingLinker их копирует).
+     *  Импортёр всех звонков по этой отметке НЕ добавляет их второй раз как «call». */
+    private fun createRecLinked(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS rec_linked(src TEXT PRIMARY KEY, ts INTEGER NOT NULL)")
+    }
+    fun recLinkedAdd(srcName: String) {
+        val v = ContentValues().apply { put("src", srcName); put("ts", System.currentTimeMillis()) }
+        writableDatabase.insertWithOnConflict("rec_linked", null, v, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+    fun recLinkedHas(srcName: String): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM rec_linked WHERE src=? LIMIT 1", arrayOf(srcName)).use { it.moveToFirst() }
+
     /** Ночные авто-SMS, придержанные до утра (тихий час). */
     private fun createSmsHold(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS sms_hold(_id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, ts INTEGER)")
@@ -221,6 +234,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         if (oldV < 10) createAmRec(db)
         if (oldV < 11) addColumn(db, "ALTER TABLE blacklist ADD COLUMN call_prompt_lang TEXT")
         if (oldV < 12) addColumn(db, "ALTER TABLE am_rec ADD COLUMN transcript TEXT")
+        if (oldV < 13) createRecLinked(db)
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
@@ -640,7 +654,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     companion object {
         /** Версия схемы — сверяется в [com.davnozdu.autoresponder.store.Backup.validate], чтобы
          *  не разойтись с магическим числом там при следующем изменении схемы. */
-        const val DB_VERSION = 12
+        const val DB_VERSION = 13
 
         /**
          * Окно сверки дублей для мессенджеров. Отметка времени у мессенджера серверная, а

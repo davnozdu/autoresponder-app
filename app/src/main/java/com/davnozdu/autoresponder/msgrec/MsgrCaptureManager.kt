@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.net.LocalSocket
@@ -24,9 +25,15 @@ object MsgrCaptureManager {
     private var am: AudioManager? = null
     private var cbThread: HandlerThread? = null
     private var callback: AudioManager.AudioPlaybackCallback? = null
+    private var modeListener: AudioManager.OnModeChangedListener? = null
 
     @Volatile private var enabled = false
     @Volatile private var activeJob: CaptureJob? = null
+    @Volatile private var anonymizedLogged = false
+
+    // AudioPlaybackConfiguration.PLAYER_STATE_STARTED (@SystemApi constant). An idle SoundPool
+    // (WhatsApp's call tones) reports a different state and must not be taken for the call.
+    private const val PLAYER_STATE_STARTED = 2
 
     private class CaptureJob(val pkg: String, val label: String, @Volatile var peer: String?) {
         val monitor = Object()
@@ -53,10 +60,29 @@ object MsgrCaptureManager {
             }
         }
         callback = cb
-        manager.registerAudioPlaybackCallback(cb, Handler(t.looper))
+        val handler = Handler(t.looper)
+        manager.registerAudioPlaybackCallback(cb, handler)
+        // The call itself is MODE_IN_COMMUNICATION. Players alone are unreliable: WhatsApp keeps a
+        // USAGE_VOICE_COMMUNICATION SoundPool alive ~15 s after hang-up (confirmed live), which used
+        // to keep the microphone recording after the call had already ended. A mode change is the
+        // authoritative call boundary; it is a public event API, so no polling.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val ml = AudioManager.OnModeChangedListener {
+                runCatching { evaluate(manager.activePlaybackConfigurations) }
+                    .onFailure { LogFile.append("$TAG: evaluate(mode): ${it.message}") }
+            }
+            modeListener = ml
+            manager.addOnModeChangedListener({ handler.post(it) }, ml)
+        }
         enabled = true
         LogFile.append("$TAG: детект звонка включён (захват — shell-процесс модуля)")
-        Thread({ runCatching { MsgrRecordingRecovery.run(appCtx!!) } }, "msgr-recover").start()
+        val ctx = appCtx!!
+        Thread({
+            runCatching { MsgrRecordingRecovery.run(ctx) }
+            // After an app update the module's shell host still runs the OLD apk. A version
+            // handshake now makes a stale host exit so the module restarts it before the next call.
+            runCatching { pingHost(ctx) }
+        }, "msgr-recover").start()
         runCatching { evaluate(manager.activePlaybackConfigurations) }
     }
 
@@ -66,6 +92,9 @@ object MsgrCaptureManager {
         stopCurrent()
         callback?.let { cb -> runCatching { am?.unregisterAudioPlaybackCallback(cb) } }
         callback = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            modeListener?.let { ml -> runCatching { am?.removeOnModeChangedListener(ml) } }
+        modeListener = null
         cbThread?.quitSafely(); cbThread = null
         enabled = false
         LogFile.append("$TAG: выключено")
@@ -74,20 +103,38 @@ object MsgrCaptureManager {
     @Synchronized
     private fun evaluate(configs: List<AudioPlaybackConfiguration>) {
         val ctx = appCtx ?: return
+        // A messenger call is exactly the window in which the device is in MODE_IN_COMMUNICATION.
+        // Outside it there is no call, whatever residual players linger, so end any recording.
+        if (am?.mode != AudioManager.MODE_IN_COMMUNICATION) {
+            if (activeJob != null) stopCurrent()
+            return
+        }
+        // Mid-call the messenger may briefly drop or recreate its track (route change, hold). The
+        // recording follows the call mode, not a single player, so once armed we leave it running.
+        if (activeJob != null) return
         val whitelist = Settings(ctx).msgrRecApps
-        var hitPkg: String? = null
         for (c in configs) {
             if (c.audioAttributes?.usage != AudioAttributes.USAGE_VOICE_COMMUNICATION) continue
-            val uid = runCatching {
-                AudioPlaybackConfiguration::class.java.getMethod("getClientUid").invoke(c) as Int
-            }.getOrDefault(-1)
+            val uid = hidden<Int>(c, "getClientUid") ?: -1
+            if (uid < 0 && !anonymizedLogged) {
+                anonymizedLogged = true
+                LogFile.append("$TAG: uid плеера скрыт (нет MODIFY_AUDIO_ROUTING — priv-app не смонтирован?), запись не запустится")
+            }
             if (uid < 10000) continue
-            hitPkg = ctx.packageManager.getPackagesForUid(uid)?.firstOrNull { it in whitelist }
-            if (hitPkg != null) break
+            // An idle SoundPool (call tones) is not the live voice track — prefer STARTED players.
+            // Fail open: if the hidden state getter is unavailable we still proceed, since the
+            // MODE_IN_COMMUNICATION gate above already confines this to a real call.
+            val state = hidden<Int>(c, "getPlayerState")
+            if (state != null && state != PLAYER_STATE_STARTED) continue
+            val pkg = ctx.packageManager.getPackagesForUid(uid)?.firstOrNull { it in whitelist } ?: continue
+            startCurrent(ctx, pkg)
+            return
         }
-        if (hitPkg != null && activeJob == null) startCurrent(ctx, hitPkg)
-        else if (hitPkg == null && activeJob != null) stopCurrent()
     }
+
+    private inline fun <reified T> hidden(c: AudioPlaybackConfiguration, method: String): T? = runCatching {
+        AudioPlaybackConfiguration::class.java.getMethod(method).invoke(c) as T
+    }.getOrNull()
 
     fun onCallNotification(sbn: StatusBarNotification) {
         val job = activeJob ?: return
@@ -146,6 +193,9 @@ object MsgrCaptureManager {
                             "${job.label} · ${job.peer ?: "Неизвестный абонент"}",
                             segmentAt, durationMs, path)
                         LogFile.append("$TAG: сохранено $path (${durationMs / 1000}s, mic=$nearNonzero, far=$farNonzero) → журнал")
+                    } else {
+                        // Nothing worth keeping (call never really started); drop the empty file.
+                        runCatching { if (path.isNotEmpty()) java.io.File(path).delete() }
                     }
                 }
             }
@@ -161,6 +211,27 @@ object MsgrCaptureManager {
                 if (job.stopped) return
             }
             segmentAt = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * Tells the shell host which APK the app now runs. A host left over from a previous APK version
+     * exits on mismatch (the module then restarts it fresh), so the IPC protocol never gets split
+     * across a stale host and a fresh app. Best-effort: if the host is absent the next call's START
+     * simply fails and retries, as before.
+     */
+    private fun pingHost(ctx: Context) {
+        LocalSocket().use { socket ->
+            socket.connect(LocalSocketAddress(SOCKET, LocalSocketAddress.Namespace.ABSTRACT))
+            socket.soTimeout = 5_000
+            val out = DataOutputStream(socket.outputStream)
+            val input = DataInputStream(socket.inputStream)
+            out.writeUTF("HELLO")
+            out.writeUTF(ctx.applicationInfo.sourceDir)
+            out.flush()
+            val reply = runCatching { input.readUTF() }.getOrNull()
+            if (reply == "RESTART")
+                LogFile.append("$TAG: shell-хост на старом APK — перезапускается модулем")
         }
     }
 }

@@ -3,6 +3,8 @@ package com.davnozdu.autoresponder.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import androidx.core.content.FileProvider
 import android.media.MediaPlayer
 import android.os.Bundle
 import android.widget.Toast
@@ -17,6 +19,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SaveAlt
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -62,6 +66,7 @@ private fun reasonLabel(reason: String?): String = when (reason) {
     "voicemail" -> "голосовая почта"
     "voicemail_full" -> "полная запись звонка"
     "messenger" -> "мессенджер"
+    "call" -> "звонок"
     else -> "нерабочее"
 }
 
@@ -90,6 +95,9 @@ fun AmRecordingsScreen() {
 
     fun reload() { scope.launch { recs = withContext(Dispatchers.IO) {
         runCatching { com.davnozdu.autoresponder.msgrec.MsgrRecordingRecovery.run(ctx) }
+        // Pull in the dialer's own call recordings (and messenger ones) so they can be
+        // transcribed / saved / shared here without digging into the dialer.
+        runCatching { com.davnozdu.autoresponder.call.CallRecordingImporter.run(ctx) }
         db.amRecList(limit = 5000)
     } } }
     LaunchedEffect(Unit) { reload() }
@@ -257,18 +265,30 @@ fun AmRecordingsScreen() {
                                 style = MaterialTheme.typography.labelSmall)
                         }
                         if (expandedId == r.id && r.transcript != null) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(start = 62.dp, end = 14.dp, bottom = 10.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                SelectionContainer(Modifier.weight(1f)) {
-                                    Text(r.transcript, style = MaterialTheme.typography.bodyMedium)
+                            Column(Modifier.fillMaxWidth().padding(start = 62.dp, end = 14.dp, bottom = 10.dp)) {
+                                Row(verticalAlignment = Alignment.Top) {
+                                    SelectionContainer(Modifier.weight(1f)) {
+                                        Text(r.transcript, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    IconButton(onClick = {
+                                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("transcript", r.transcript))
+                                        Toast.makeText(ctx, "Текст скопирован", Toast.LENGTH_SHORT).show()
+                                    }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Копировать") }
                                 }
-                                IconButton(onClick = {
-                                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("transcript", r.transcript))
-                                    Toast.makeText(ctx, "Текст скопирован", Toast.LENGTH_SHORT).show()
-                                }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Копировать") }
+                                // Длинные разговоры удобнее не читать в списке, а сохранить в файл
+                                // или переслать (например, в Telegram) целиком.
+                                Row {
+                                    TextButton(onClick = { saveTranscript(ctx, r) }) {
+                                        Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp)); Text("Сохранить .txt")
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    TextButton(onClick = { shareTranscript(ctx, r) }) {
+                                        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp)); Text("Поделиться")
+                                    }
+                                }
                             }
                         }
                     }
@@ -276,5 +296,47 @@ fun AmRecordingsScreen() {
                 }
             }
         }
+    }
+}
+
+/** ASCII-only base name for a transcript file (see the English-file-names rule). */
+private fun transcriptBaseName(rec: AmRec): String {
+    val who = (rec.name ?: rec.number ?: "recording").replace(Regex("[^A-Za-z0-9._-]"), "_")
+        .trim('_', '.').take(40).ifEmpty { "recording" }
+    val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(rec.ts))
+    return "${who}_$stamp"
+}
+
+/** Persist the transcript as a .txt the owner can keep, so a long call need not be read in the list. */
+private fun saveTranscript(ctx: Context, rec: AmRec) {
+    val text = rec.transcript ?: return
+    runCatching {
+        val dir = File("/sdcard/AutoResponder/transcripts").apply { mkdirs() }
+        val file = File(dir, "${transcriptBaseName(rec)}.txt")
+        file.writeText(text)
+        Toast.makeText(ctx, "Сохранено: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+    }.onFailure {
+        Toast.makeText(ctx, "Не удалось сохранить: ${it.message}", Toast.LENGTH_LONG).show()
+    }
+}
+
+/** Share the transcript as a .txt attachment (works for long texts and forwards cleanly to Telegram). */
+private fun shareTranscript(ctx: Context, rec: AmRec) {
+    val text = rec.transcript ?: return
+    runCatching {
+        val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
+        val file = File(dir, "${transcriptBaseName(rec)}.txt")
+        file.writeText(text)
+        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, text)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        ctx.startActivity(Intent.createChooser(send, "Поделиться расшифровкой")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.onFailure {
+        Toast.makeText(ctx, "Не удалось поделиться: ${it.message}", Toast.LENGTH_LONG).show()
     }
 }

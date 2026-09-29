@@ -46,7 +46,10 @@ object Digest {
         val msgs = db.countIncoming(since, handledOnly = true) - calls
         val answered = db.countAuto(since)
         val pending = db.needsAnswer(since)
-        val voiceMsgs = db.amRecSince(since).filter { it.reason != "voicemail_full" }
+        // Только сообщения, принятые роботом на автоответчик. Импортированные записи звонилки
+        // ("call") и записи мессенджер-звонков ("messenger") — не события DND-сводки.
+        val voiceMsgs = db.amRecSince(since)
+            .filter { it.reason != "voicemail_full" && it.reason != "call" && it.reason != "messenger" }
         val totalCalls = calls + voiceMsgs.size
         if (totalCalls == 0 && msgs == 0 && pending.isEmpty()) return   // тихий сеанс — молчим
 

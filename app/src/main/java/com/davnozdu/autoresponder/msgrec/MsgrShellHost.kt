@@ -27,13 +27,18 @@ object MsgrShellHost {
     private const val RATE = VoipAudioPolicy.SAMPLE_RATE
     private const val DIR = "/sdcard/Music/Recordings/Messenger"
 
+    // The APK this host was launched with (CLASSPATH). If the app later reports a different path it
+    // has been updated and this host is stale, so it exits and the module relaunches it fresh.
+    private val ownApk: String? = System.getenv("CLASSPATH")
+
     @JvmStatic
     fun main(args: Array<String>) {
         val appUid = args.firstOrNull()?.toIntOrNull() ?: return
         if (Looper.myLooper() == null) Looper.prepare()
         check(Process.myUid() == 2000) { "shell UID required" }
+        cleanupOrphans()
         check(VoipAudioPolicy.arm()) { "could not arm VoIP AudioPolicy" }
-        println("msgrec host ready uid=${Process.myUid()} appUid=$appUid")
+        println("msgrec host ready uid=${Process.myUid()} appUid=$appUid apk=$ownApk")
         LocalServerSocket(SOCKET).use { server ->
             while (true) {
                 server.accept().use { socket ->
@@ -46,10 +51,32 @@ object MsgrShellHost {
         }
     }
 
+    /** A session killed mid-call (process death) leaves hidden temp files behind; drop them on start. */
+    private fun cleanupOrphans() {
+        runCatching {
+            File(DIR).listFiles { f -> f.name.startsWith(".") &&
+                (f.name.endsWith(".raw") || f.name.endsWith(".partial")) }
+                ?.forEach { it.delete() }
+        }
+    }
+
     private fun handle(socket: LocalSocket) {
         val input = DataInputStream(socket.inputStream)
         val output = DataOutputStream(socket.outputStream)
-        if (input.readUTF() != "START") return
+        when (input.readUTF()) {
+            "HELLO" -> {
+                val appApk = runCatching { input.readUTF() }.getOrNull()
+                val stale = ownApk != null && appApk != null && appApk != ownApk
+                runCatching { output.writeUTF(if (stale) "RESTART" else "OK"); output.flush() }
+                if (stale) {
+                    println("msgrec host stale (app apk=$appApk, ours=$ownApk); exiting for restart")
+                    System.exit(0)
+                }
+                return
+            }
+            "START" -> Unit
+            else -> return
+        }
         val label = input.readUTF()
         val startedAt = input.readLong()
         val session = Session(label, startedAt)
@@ -102,7 +129,7 @@ object MsgrShellHost {
 
         fun finish(peer: String): Result {
             near.finish(); far.finish()
-            val file = File(dir, "Мессенджер_${safe(label)}_${safe(peer.ifBlank { "Неизвестный_абонент" })}_$stamp.wav")
+            val file = File(dir, "Messenger_${safe(label)}_${safe(peer.ifBlank { "Unknown" })}_$stamp.wav")
             val partial = File(dir, ".$stamp.wav.partial")
             val frames = mix(partial, near, far)
             check(partial.renameTo(file)) { "could not publish ${file.name}" }
@@ -233,6 +260,8 @@ object MsgrShellHost {
     private fun le16(out: RandomAccessFile, v: Int) {
         out.write(v and 255); out.write((v ushr 8) and 255)
     }
-    private fun safe(s: String) = s.replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
-        .trim('_', '.').take(48).ifEmpty { "Неизвестный" }
+    // File names stay ASCII-only ("nothing Russian in file names"). The readable caller name,
+    // Cyrillic and all, is kept in the journal row, so nothing is lost by stripping it here.
+    private fun safe(s: String) = s.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        .trim('_', '.').take(48).ifEmpty { "Unknown" }
 }

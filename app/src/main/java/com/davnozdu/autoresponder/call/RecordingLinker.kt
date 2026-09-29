@@ -57,6 +57,9 @@ object RecordingLinker {
             // повторный вызов linkLatest для того же звонка — тихая перезапись здесь
             // раньше молча стирала первую запись при коллизии по минуте.
             src.copyTo(dst, overwrite = false)
+            // Mark the OEM original as already owned by the answering machine, so the
+            // "import every dialer recording" pass does not list this call a second time.
+            runCatching { com.davnozdu.autoresponder.store.HistoryDb.get(app).recLinkedAdd(src.name) }
             val dur = durationMs(dst.absolutePath)
             EventLog(app).add("AM запись: ${src.name} → ${dst.name} (${dur/1000}s)")
             dst.absolutePath to dur
