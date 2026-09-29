@@ -260,8 +260,10 @@ object MsgrShellHost {
     private fun le16(out: RandomAccessFile, v: Int) {
         out.write(v and 255); out.write((v ushr 8) and 255)
     }
-    // File names stay ASCII-only ("nothing Russian in file names"). The readable caller name,
-    // Cyrillic and all, is kept in the journal row, so nothing is lost by stripping it here.
-    private fun safe(s: String) = s.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    // Structural parts of the name stay English ("Messenger_<app>_"), but the caller name itself is
+    // kept as-is — Cyrillic and all — because that is what makes a recording findable on disk
+    // (по просьбе пользователя: «Мама Нидерланды» в имени файла — это нормально). Only characters
+    // unsafe for a filename (spaces, punctuation, path separators) are replaced with underscores.
+    private fun safe(s: String) = s.replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
         .trim('_', '.').take(48).ifEmpty { "Unknown" }
 }
