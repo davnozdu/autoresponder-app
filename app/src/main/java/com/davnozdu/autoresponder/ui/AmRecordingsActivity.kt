@@ -88,7 +88,10 @@ fun AmRecordingsScreen() {
     var transcribingId by remember { mutableStateOf(-1L) }
     var transcribeError by remember { mutableStateOf<Pair<Long, String>?>(null) }
 
-    fun reload() { scope.launch { recs = withContext(Dispatchers.IO) { db.amRecList(limit = 5000) } } }
+    fun reload() { scope.launch { recs = withContext(Dispatchers.IO) {
+        runCatching { com.davnozdu.autoresponder.msgrec.MsgrRecordingRecovery.run(ctx) }
+        db.amRecList(limit = 5000)
+    } } }
     LaunchedEffect(Unit) { reload() }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
     LaunchedEffect(selectedId, isPlaying) {

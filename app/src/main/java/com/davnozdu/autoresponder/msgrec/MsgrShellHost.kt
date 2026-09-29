@@ -14,6 +14,8 @@ import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Long-lived, idle-blocking shell process launched by the KSU module. Its AudioPolicy must exist
@@ -59,13 +61,15 @@ object MsgrShellHost {
             if (input.readUTF() == "STOP") peer = input.readUTF()
         } finally {
             val result = session.finish(peer)
-            output.writeUTF("DONE")
-            output.writeUTF(result.path)
-            output.writeLong(result.durationMs)
-            output.writeLong(result.nearNonzero)
-            output.writeLong(result.farNonzero)
-            output.flush()
             println("msgrec saved ${result.path} ${result.durationMs}ms mic=${result.nearNonzero} far=${result.farNonzero}")
+            runCatching {
+                output.writeUTF("DONE")
+                output.writeUTF(result.path)
+                output.writeLong(result.durationMs)
+                output.writeLong(result.nearNonzero)
+                output.writeLong(result.farNonzero)
+                output.flush()
+            }
         }
     }
 
@@ -88,12 +92,20 @@ object MsgrShellHost {
             far = Reader(farRecord, File(dir, ".$stamp.far.raw"), "far")
             near = Reader(nearRecord, File(dir, ".$stamp.near.raw"), "mic")
             far.start(); near.start()
+            try {
+                far.awaitStarted(); near.awaitStarted()
+            } catch (error: Throwable) {
+                far.finish(); near.finish()
+                throw error
+            }
         }
 
         fun finish(peer: String): Result {
             near.finish(); far.finish()
             val file = File(dir, "Мессенджер_${safe(label)}_${safe(peer.ifBlank { "Неизвестный_абонент" })}_$stamp.wav")
-            val frames = mix(file, near, far)
+            val partial = File(dir, ".$stamp.wav.partial")
+            val frames = mix(partial, near, far)
+            check(partial.renameTo(file)) { "could not publish ${file.name}" }
             near.file.delete(); far.file.delete()
             return Result(file.absolutePath, frames * 1000 / RATE, near.nonzero, far.nonzero)
         }
@@ -104,9 +116,15 @@ object MsgrShellHost {
         @Volatile var frames = 0L
         @Volatile var nonzero = 0L
         @Volatile var firstFrameNanos = 0L
+        @Volatile private var failure: Throwable? = null
+        private val started = CountDownLatch(1)
         private val thread = Thread({ run() }, "msgrec-$name")
 
         fun start() = thread.start()
+        fun awaitStarted() {
+            check(started.await(5, TimeUnit.SECONDS)) { "audio source did not start" }
+            failure?.let { throw IllegalStateException("audio source failed to start", it) }
+        }
 
         private fun run() {
             val buf = ShortArray(2048)
@@ -114,9 +132,14 @@ object MsgrShellHost {
             try {
                 file.outputStream().buffered().use { output ->
                     record.startRecording()
+                    check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        "AudioRecord did not enter RECORDING"
+                    }
+                    started.countDown()
                     while (running) {
                         val n = record.read(buf, 0, buf.size)
-                        if (n <= 0) break
+                        if (n < 0) error("AudioRecord.read failed: $n")
+                        if (n == 0) continue
                         if (firstFrameNanos == 0L) firstFrameNanos = System.nanoTime() - n * 1_000_000_000L / RATE
                         for (i in 0 until n) {
                             val v = buf[i].toInt()
@@ -128,7 +151,11 @@ object MsgrShellHost {
                         frames += n
                     }
                 }
+            } catch (error: Throwable) {
+                failure = error
+                System.err.println("msgrec reader failed: ${error.javaClass.simpleName}: ${error.message}")
             } finally {
+                started.countDown()
                 runCatching { record.stop() }
                 record.release()
             }
@@ -141,6 +168,7 @@ object MsgrShellHost {
                 runCatching { record.stop() }
                 thread.join(3000)
             }
+            check(!thread.isAlive) { "audio reader did not stop" }
         }
     }
 
