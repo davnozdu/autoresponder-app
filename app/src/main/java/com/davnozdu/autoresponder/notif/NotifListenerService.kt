@@ -71,14 +71,30 @@ class NotifListenerService : NotificationListenerService() {
                 ?.firstOrNull()
         } catch (_: Exception) { null }
 
-        fun callPeer(sbn: StatusBarNotification): String? {
-            val n = sbn.notification ?: return null
+        /**
+         * Пакет из [whitelist], у которого сейчас висит уведомление активного звонка. Это авторитетно
+         * определяет, КАКОЙ мессенджер звонит, без привилегий: пакет уведомления — факт, а не догадка.
+         * Сотовый звонок уведомления от мессенджера не создаёт, поэтому отсекается сам собой.
+         */
+        fun activeCallApp(whitelist: Set<String>): String? = try {
+            instance?.activeNotifications?.asSequence()
+                ?.filter { it.packageName in whitelist }
+                ?.firstOrNull { sbn -> sbn.notification?.let { isCallNotification(it) } == true }
+                ?.packageName
+        } catch (_: Exception) { null }
+
+        /** Похоже ли уведомление на активный звонок (категория CALL или ongoing со словом-маркером). */
+        private fun isCallNotification(n: Notification): Boolean {
+            if (n.category == Notification.CATEGORY_CALL) return true
             val text = n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
             val marker = "${n.channelId.orEmpty()} $text".lowercase()
-            val callCategory = n.category == Notification.CATEGORY_CALL
-            val ongoingCall = n.flags and Notification.FLAG_ONGOING_EVENT != 0 &&
+            return n.flags and Notification.FLAG_ONGOING_EVENT != 0 &&
                 listOf("call", "звон", "вызов", "hovor").any { it in marker }
-            if (!callCategory && !ongoingCall) return null
+        }
+
+        fun callPeer(sbn: StatusBarNotification): String? {
+            val n = sbn.notification ?: return null
+            if (!isCallNotification(n)) return null
             val generic = setOf("whatsapp", "whatsapp business", "telegram", "звонок", "вызов", "call")
             return listOf(Notification.EXTRA_TITLE, Notification.EXTRA_SUB_TEXT, Notification.EXTRA_TEXT)
                 .asSequence().mapNotNull { n.extras.getCharSequence(it)?.toString()?.trim() }
@@ -122,7 +138,7 @@ class NotifListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        com.davnozdu.autoresponder.msgrec.MsgrCaptureManager.onCallNotification(sbn)
+        com.davnozdu.autoresponder.msgrec.MsgrCaptureManager.onNotificationEvent(sbn)
         handlePosted(sbn)
     }
 

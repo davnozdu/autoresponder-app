@@ -26,12 +26,12 @@
          и foreground-сервис на время обработки звонка. ANSWER_PHONE_CALLS грантит модуль. -->
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <!-- Запись звонков в мессенджерах (свой захват, см. msgrec/). RECORD_AUDIO — runtime (grant модулем);
-         три привилегированных (signature|privileged) выдаются priv-app через privapp-permissions в модуле. -->
+    <!-- Запись звонков в мессенджерах (см. msgrec/). Сам двухканальный захват ведёт shell-хост
+         модуля под uid 2000 (у shell уже есть CAPTURE_*/MODIFY_AUDIO_ROUTING) — приложению
+         привилегированные разрешения НЕ нужны, поэтому и priv-app/overlay не требуется. Определение
+         звонящего мессенджера — по активному уведомлению звонка (публичный NotificationListener).
+         RECORD_AUDIO — runtime, грант модулем. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.CAPTURE_AUDIO_OUTPUT" tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="android.permission.CAPTURE_VOICE_COMMUNICATION_OUTPUT" tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_ROUTING" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 

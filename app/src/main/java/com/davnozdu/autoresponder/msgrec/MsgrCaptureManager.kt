@@ -31,17 +31,12 @@ object MsgrCaptureManager {
 
     @Volatile private var enabled = false
     @Volatile private var activeJob: CaptureJob? = null
-    @Volatile private var anonymizedLogged = false
 
     // Messenger call setup briefly bounces MODE_IN_COMMUNICATION (ring -> connect); observed ~1.5 s
     // for Telegram. Tearing the session down and restarting it inside that gap spawns a second
     // submix sink that steals the far-party route, so the far side goes silent to the user. Wait
     // this long for the mode to stay out of a call before actually stopping.
     private const val STOP_DEBOUNCE_MS = 2500L
-
-    // AudioPlaybackConfiguration.PLAYER_STATE_STARTED (@SystemApi constant). An idle SoundPool
-    // (WhatsApp's call tones) reports a different state and must not be taken for the call.
-    private const val PLAYER_STATE_STARTED = 2
 
     private class CaptureJob(val pkg: String, val label: String, @Volatile var peer: String?) {
         val monitor = Object()
@@ -64,7 +59,9 @@ object MsgrCaptureManager {
         cbThread = t
         val cb = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
-                runCatching { evaluate(configs) }.onFailure { LogFile.append("$TAG: evaluate: ${it.message}") }
+                // The configs are anonymised for a /data app; we only use this as a "something in the
+                // audio world changed" trigger and read the actual call state in evaluate().
+                runCatching { evaluate() }.onFailure { LogFile.append("$TAG: evaluate: ${it.message}") }
             }
         }
         callback = cb
@@ -77,7 +74,7 @@ object MsgrCaptureManager {
         // authoritative call boundary; it is a public event API, so no polling.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val ml = AudioManager.OnModeChangedListener {
-                runCatching { evaluate(manager.activePlaybackConfigurations) }
+                runCatching { evaluate() }
                     .onFailure { LogFile.append("$TAG: evaluate(mode): ${it.message}") }
             }
             modeListener = ml
@@ -92,7 +89,7 @@ object MsgrCaptureManager {
             // handshake now makes a stale host exit so the module restarts it before the next call.
             runCatching { pingHost(ctx) }
         }, "msgr-recover").start()
-        runCatching { evaluate(manager.activePlaybackConfigurations) }
+        runCatching { evaluate() }
     }
 
     @Synchronized
@@ -112,7 +109,7 @@ object MsgrCaptureManager {
     }
 
     @Synchronized
-    private fun evaluate(configs: List<AudioPlaybackConfiguration>) {
+    private fun evaluate() {
         val ctx = appCtx ?: return
         // A messenger call is exactly the window in which the device is in MODE_IN_COMMUNICATION.
         // Outside it there is no call, but stop only after a debounce so the setup-time bounce does
@@ -125,37 +122,31 @@ object MsgrCaptureManager {
         // leave it running for the whole call, so a mid-call track drop cannot spawn a second one.
         cancelStop()
         if (activeJob != null) return
+        // Which messenger is calling: the app that has posted an ongoing CALL notification. The
+        // notification's package is authoritative (it is WHICH app posted it), needs no privileged
+        // permission, and a SIM call posts none from a whitelisted messenger, so it is excluded for
+        // free. The mode may enter IN_COMMUNICATION a beat before the notification appears — the
+        // playback callback, the mode change and each notification post all re-trigger evaluate(),
+        // so the start fires as soon as the notification is up.
         val whitelist = Settings(ctx).msgrRecApps
-        for (c in configs) {
-            if (c.audioAttributes?.usage != AudioAttributes.USAGE_VOICE_COMMUNICATION) continue
-            val uid = hidden<Int>(c, "getClientUid") ?: -1
-            if (uid < 0 && !anonymizedLogged) {
-                anonymizedLogged = true
-                LogFile.append("$TAG: uid плеера скрыт (нет MODIFY_AUDIO_ROUTING — priv-app не смонтирован?), запись не запустится")
-            }
-            if (uid < 10000) continue
-            // An idle SoundPool (call tones) is not the live voice track — prefer STARTED players.
-            // Fail open: if the hidden state getter is unavailable we still proceed, since the
-            // MODE_IN_COMMUNICATION gate above already confines this to a real call.
-            val state = hidden<Int>(c, "getPlayerState")
-            if (state != null && state != PLAYER_STATE_STARTED) continue
-            val pkg = ctx.packageManager.getPackagesForUid(uid)?.firstOrNull { it in whitelist } ?: continue
-            startCurrent(ctx, pkg)
-            return
-        }
+        val pkg = NotifListenerService.activeCallApp(whitelist) ?: return
+        startCurrent(ctx, pkg)
     }
 
-    private inline fun <reified T> hidden(c: AudioPlaybackConfiguration, method: String): T? = runCatching {
-        AudioPlaybackConfiguration::class.java.getMethod(method).invoke(c) as T
-    }.getOrNull()
-
-    fun onCallNotification(sbn: StatusBarNotification) {
-        val job = activeJob ?: return
-        if (sbn.packageName != job.pkg) return
-        val peer = NotifListenerService.callPeer(sbn) ?: return
-        if (job.peer != peer) {
-            job.peer = peer
-            LogFile.append("$TAG: имя собеседника из уведомления: $peer")
+    /** A notification changed: update the peer name and (re)check whether a call has begun. */
+    fun onNotificationEvent(sbn: StatusBarNotification) {
+        val h = cbHandler ?: return
+        h.post {
+            activeJob?.let { job ->
+                if (sbn.packageName == job.pkg) {
+                    val peer = NotifListenerService.callPeer(sbn)
+                    if (peer != null && job.peer != peer) {
+                        job.peer = peer
+                        LogFile.append("$TAG: имя собеседника из уведомления: $peer")
+                    }
+                }
+            }
+            runCatching { evaluate() }.onFailure { LogFile.append("$TAG: evaluate(notif): ${it.message}") }
         }
     }
 
