@@ -83,27 +83,34 @@ class NotifListenerService : NotificationListenerService() {
                 ?.packageName
         } catch (_: Exception) { null }
 
-        /** Похоже ли уведомление на активный звонок (категория CALL или ongoing со словом-маркером). */
+        private val callFields = listOf(Notification.EXTRA_TITLE, Notification.EXTRA_SUB_TEXT, Notification.EXTRA_TEXT)
+        private val callWords = listOf("call", "звон", "вызов", "hovor")
+        // Слова статуса/приложения: если они есть в кандидате, это не имя собеседника, а надпись
+        // «Текущий звонок Telegram» / «Ongoing call» и т.п. WhatsApp кладёт имя в title, Telegram —
+        // в text («Текущий звонок Telegram» + «Мама Нидерланды»), поэтому берём первое ЧИСТОЕ поле.
+        private val statusWords = callWords + listOf("telegram", "whatsapp", "ongoing", "incoming",
+            "outgoing", "текущий", "входящ", "исходящ", "voip", "video", "видео")
+
+        /**
+         * Похоже ли уведомление на активный звонок: категория CALL, либо ongoing-уведомление, в
+         * ЛЮБОМ из полей (заголовок/подзаголовок/текст/канал) которого есть слово-маркер звонка.
+         * Заголовок обязателен в маркере: у Telegram category=null, а «звонок» стоит в title.
+         */
         private fun isCallNotification(n: Notification): Boolean {
             if (n.category == Notification.CATEGORY_CALL) return true
-            val text = n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-            val marker = "${n.channelId.orEmpty()} $text".lowercase()
-            return n.flags and Notification.FLAG_ONGOING_EVENT != 0 &&
-                listOf("call", "звон", "вызов", "hovor").any { it in marker }
+            if (n.flags and Notification.FLAG_ONGOING_EVENT == 0) return false
+            val fields = callFields.joinToString(" ") { n.extras.getCharSequence(it)?.toString().orEmpty() }
+            val marker = "${n.channelId.orEmpty()} $fields".lowercase()
+            return callWords.any { it in marker }
         }
 
         fun callPeer(sbn: StatusBarNotification): String? {
             val n = sbn.notification ?: return null
             if (!isCallNotification(n)) return null
-            val generic = setOf("whatsapp", "whatsapp business", "telegram", "звонок", "вызов", "call")
-            return listOf(Notification.EXTRA_TITLE, Notification.EXTRA_SUB_TEXT, Notification.EXTRA_TEXT)
-                .asSequence().mapNotNull { n.extras.getCharSequence(it)?.toString()?.trim() }
-                .firstOrNull { candidate ->
-                    val c = candidate.lowercase()
-                    candidate.isNotBlank() && c !in generic &&
-                        !listOf("incoming call", "ongoing call", "входящий звонок", "текущий вызов")
-                            .any { it in c }
-                }?.take(80)
+            return callFields.asSequence()
+                .mapNotNull { n.extras.getCharSequence(it)?.toString()?.trim() }
+                .firstOrNull { c -> c.isNotBlank() && statusWords.none { w -> w in c.lowercase() } }
+                ?.take(80)
         }
         /** Снять уведомление после ответа, чтобы не обрабатывать повторно. */
         fun dismiss(key: String?) {
