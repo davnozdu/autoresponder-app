@@ -43,8 +43,19 @@ class CallScreeningServiceImpl : CallScreeningService() {
         // и так подавляет собственное уведомление отдельно, не через этот путь).
         val skipEarly = SkipPolicy.reason(this, number, s, isCall = true) != null
         val overlayOkEarly = android.provider.Settings.canDrawOverlays(this)
-        val alreadyInCallEarly = getSystemService(android.telephony.TelephonyManager::class.java)
-            ?.callState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK
+        // «Уже идёт разговор» — чтобы не перехватывать ВТОРУЮ линию (call waiting) авто-ответом,
+        // который поставил бы/сбросил активный звонок владельца. ВАЖНО: одного
+        // TelephonyManager.callState==OFFHOOK мало — при звонке-ожидании getCallState() возвращает
+        // RINGING (новый звонящий «важнее» активного), и проверка была бы false → мы отвечали на
+        // вторую линию и рвали текущий разговор (живой баг). Надёжный признак активного звонка —
+        // AudioManager.mode: у активного звонка он MODE_IN_CALL (сотовый) / MODE_IN_COMMUNICATION
+        // (VoIP) и ДЕРЖИТСЯ, пока звонит вторая линия; у ПЕРВОГО входящего режим ещё RINGTONE.
+        val amMode = getSystemService(android.media.AudioManager::class.java)?.mode
+        val alreadyInCallEarly =
+            getSystemService(android.telephony.TelephonyManager::class.java)
+                ?.callState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK ||
+            amMode == android.media.AudioManager.MODE_IN_CALL ||
+            amMode == android.media.AudioManager.MODE_IN_COMMUNICATION
         // Посчитаны уже здесь (а не только ниже, у screeningTrigger) и переиспользуются как
         // closedReason/matches дальше — не только для экономии.
         val closedReasonEarly = ClosedState.reason(this, s)

@@ -154,10 +154,14 @@ fun AmRecordingsScreen() {
         if (path.isNullOrBlank() || !File(path).exists()) return
         transcribeError = null
         transcribingId = rec.id
+        // Длинные разговоры (например, 8-минутный звонок) облачные API расшифровки не тянут
+        // (лимит размера/длительности файла, таймаут). Всё, что длиннее минуты, автоматически
+        // отправляем во встроенную локальную модель — она без лимитов и работает офлайн.
+        val useLocal = s.transcribeProvider == "local" || rec.durationMs > 60_000L
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    if (s.transcribeProvider == "local")
+                    if (useLocal)
                         LocalTranscriber.transcribe(ctx, File(path))
                     else
                         Transcriber.transcribe(s.transcribeProvider, s.transcribeApiKey, s.transcribeModel, File(path))
