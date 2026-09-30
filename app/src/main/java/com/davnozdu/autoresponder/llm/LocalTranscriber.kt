@@ -166,10 +166,13 @@ object LocalTranscriber {
     // именно на сам декод, не на acquireRecognizer/finishDecode — та синхронизация короткая
     // и не должна блокироваться на время самой расшифровки (секунды).
     private val decodeLock = Any()
-    // Настройки уже ограничивают длину исходной записи (voicemailMaxSec/amMaxMessageSec ≤ 300с
-    // — см. Settings), так что это скорее защита в глубину на случай будущего пути, который
-    // почему-то обойдёт эти лимиты, чем реальный сценарий на сегодня.
-    private const val MAX_DECODE_SEC = 600
+    // Записи мессенджеров длинные (звонок 8+ мин), поэтому декодируем по КУСКАМ (см. transcribe):
+    // энкодер Parakeet имеет предел длины последовательности (позиционное кодирование ~1112
+    // subsampled-кадров ≈ 89с) — на длинном входе ONNX падает "broadcast ... 1112 by 6112" в
+    // self-attention. Кусок берём с запасом ниже предела; на кусках можно расшифровывать сколь
+    // угодно длинную запись, поэтому общий лимит поднят (защита в глубину от абсурдных файлов).
+    private const val CHUNK_SEC = 60
+    private const val MAX_DECODE_SEC = 3600
     private val idleHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val idleUnload = Runnable { release() }
 
@@ -271,19 +274,32 @@ object LocalTranscriber {
         }
         val rec = acquireRecognizer(ctx)
         try {
-            val samples = FloatArray(trimmed.size) { trimmed[it] / 32768f }
-            synchronized(decodeLock) {
-                val stream = rec.createStream()
-                try {
-                    stream.acceptWaveform(samples, sampleRate)
-                    rec.decode(stream)
-                    val text = rec.getResult(stream).text.trim()
-                    if (text.isBlank()) error("Пустой ответ дешифровки")
-                    return text
-                } finally {
-                    stream.release()
+            // Режем на куски ≤ CHUNK_SEC: энкодер Parakeet не берёт длинную последовательность за
+            // один проход (см. CHUNK_SEC). Каждый кусок распознаём отдельно и склеиваем текст;
+            // так же ограничивается пиковая память (FloatArray только на текущий кусок). Границы
+            // могут разрезать слово — приемлемо для длинного разговора.
+            val chunk = CHUNK_SEC * sampleRate
+            val parts = StringBuilder()
+            var off = 0
+            while (off < trimmed.size) {
+                val len = minOf(chunk, trimmed.size - off)
+                val samples = FloatArray(len) { trimmed[off + it] / 32768f }
+                val text = synchronized(decodeLock) {
+                    val stream = rec.createStream()
+                    try {
+                        stream.acceptWaveform(samples, sampleRate)
+                        rec.decode(stream)
+                        rec.getResult(stream).text.trim()
+                    } finally {
+                        stream.release()
+                    }
                 }
+                if (text.isNotBlank()) { if (parts.isNotEmpty()) parts.append(' '); parts.append(text) }
+                off += len
             }
+            val full = parts.toString().trim()
+            if (full.isBlank()) error("Пустой ответ дешифровки")
+            return full
         } finally {
             finishDecode()
         }

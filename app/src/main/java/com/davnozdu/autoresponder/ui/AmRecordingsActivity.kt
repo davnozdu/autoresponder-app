@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
@@ -111,6 +114,8 @@ fun AmRecordingsScreen() {
     var durationMs by remember { mutableIntStateOf(0) }
     var seeking by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    // Развёрнутые группы источников (WhatsApp/Telegram/Телефон/…). По умолчанию свёрнуты (3 последних).
+    val expandedGroups = remember { mutableStateMapOf<Int, Boolean>() }
     val player = remember { MediaPlayer() }
     // Дешифровка: какая запись раскрыта (показывает текст) и какая сейчас в процессе запроса
     // к API — раздельно, чтобы можно было развернуть УЖЕ закэшированный текст мгновенно, не
@@ -174,6 +179,10 @@ fun AmRecordingsScreen() {
                 expandedId = rec.id
             }.onFailure { e ->
                 transcribeError = rec.id to (e.message ?: "Ошибка дешифровки")
+                // Ошибка расшифровки видна только в UI — дублируем в лог, чтобы её можно было
+                // поднять постфактум (провайдер=$useLocal-local), не переспрашивая скриншот.
+                com.davnozdu.autoresponder.data.LogFile.append(
+                    "transcribe FAIL id=${rec.id} local=$useLocal dur=${rec.durationMs/1000}s: ${e.message}")
             }
         }
     }
@@ -231,18 +240,29 @@ fun AmRecordingsScreen() {
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 grouped.forEach { (key, rows) ->
+                    // Группа сворачиваемая: по умолчанию показываем 3 последних звонка (список
+                    // длинный, листать неудобно), тап по заголовку разворачивает все.
+                    val gExpanded = expandedGroups[key] ?: false
+                    val shownRows = if (gExpanded) rows else rows.take(3)
                     item(key = "hdr-$key") {
                         Row(
-                            Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp),
+                            Modifier.fillMaxWidth()
+                                .clickable { expandedGroups[key] = !gExpanded }
+                                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(Modifier.size(10.dp).clip(CircleShape).background(sourceColor(key)))
                             Spacer(Modifier.width(8.dp))
                             Text("${sourceTitle(key)} · ${rows.size}",
                                 style = MaterialTheme.typography.titleSmall, color = sourceColor(key))
+                            Spacer(Modifier.weight(1f))
+                            Icon(
+                                if (gExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = if (gExpanded) "Свернуть" else "Развернуть",
+                                tint = sourceColor(key))
                         }
                     }
-                items(rows, key = { it.id }) { r ->
+                items(shownRows, key = { it.id }) { r ->
                     val hasFile = !r.file.isNullOrBlank() && File(r.file).exists()
                     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                       Box(Modifier.width(4.dp).fillMaxHeight().background(sourceColor(key)))
@@ -341,6 +361,22 @@ fun AmRecordingsScreen() {
                       }
                     }
                     HorizontalDivider()
+                }
+                if (!gExpanded && rows.size > 3) {
+                    item(key = "more-$key") {
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable { expandedGroups[key] = true }
+                                .padding(start = 32.dp, end = 14.dp, top = 2.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.ExpandMore, contentDescription = null,
+                                modifier = Modifier.size(18.dp), tint = sourceColor(key))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Показать все ${rows.size}",
+                                style = MaterialTheme.typography.labelLarge, color = sourceColor(key))
+                        }
+                    }
                 }
                 }
             }
