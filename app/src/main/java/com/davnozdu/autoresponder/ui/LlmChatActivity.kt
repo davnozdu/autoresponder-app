@@ -3,14 +3,17 @@ package com.davnozdu.autoresponder.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.davnozdu.autoresponder.data.EventLog
 import com.davnozdu.autoresponder.data.Settings
 import com.davnozdu.autoresponder.llm.Llm
 import com.davnozdu.autoresponder.store.AboutInfo
@@ -23,21 +26,71 @@ import java.time.ZonedDateTime
 
 /** Manual test of the configured text route. Never sends a message to a customer. */
 class LlmChatActivity : ComponentActivity() {
+    private val chatModel by viewModels<LlmChatViewModel>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { AppTheme { LlmChatScreen() } }
+        setContent { AppTheme { LlmChatScreen(chatModel) } }
+    }
+}
+
+/** Keeps a long native inference and its answer across screen rotation. */
+class LlmChatViewModel : ViewModel() {
+    var question by mutableStateOf("")
+    var busy by mutableStateOf(false)
+        private set
+    var turns by mutableStateOf(listOf<Pair<String, String>>())
+        private set
+
+    fun ask(ctx: android.content.Context) {
+        val text = question.trim()
+        if (text.isEmpty() || busy) return
+        val app = ctx.applicationContext
+        val settings = Settings(app)
+        val previous = turns.takeLast(8)
+        question = ""
+        turns = turns + ("Вы" to text)
+        busy = true
+        viewModelScope.launch {
+            val started = android.os.SystemClock.elapsedRealtime()
+            val answer = try {
+                withContext(Dispatchers.IO) {
+                    if (!settings.llmEnabled) "Включите LLM в настройках."
+                    else if (!Llm.isConfigured(app)) "Модель для выбранного режима не настроена или не скачана."
+                    else {
+                        EventLog(app).add("Тест LLM: запрос начат, режим ${settings.llmMode}")
+                        val system = buildString {
+                            append(settings.promptSms).append("\n\n")
+                            append("Business knowledge / FAQ:\n")
+                            append(AboutInfo.text(app, settings.businessInfo)).append("\n\n")
+                            append(Prices.promptBlock(app, text)).append("\n")
+                            if (settings.holidaysEnabled) append(Holidays.text(app)).append("\n")
+                            append("Current date/time: ").append(ZonedDateTime.now()).append("\n")
+                            append("Answer the user's question in its language. Do not invent prices or order facts. " +
+                                "This is a manual test, so do not claim that a message was sent to a customer.")
+                        }
+                        val prompt = previous.joinToString("\n") { "${it.first}: ${it.second}" } + "\nВы: $text"
+                        Llm.generate(app, prompt, 2000, system) ?: "Модель не ответила. Проверьте настройки и журнал."
+                    }
+                }
+            } catch (e: Exception) {
+                EventLog(app).add("Тест LLM: ошибка ${e.javaClass.simpleName}: ${e.message}")
+                "Ошибка модели: ${e.message ?: e.javaClass.simpleName}"
+            }
+            EventLog(app).add("Тест LLM: завершён за ${
+                (android.os.SystemClock.elapsedRealtime() - started) / 1000
+            } с, длина ответа ${answer.length}")
+            turns = turns + ("LLM" to answer)
+            busy = false
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LlmChatScreen() {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
+private fun LlmChatScreen(model: LlmChatViewModel) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val settings = remember { Settings(ctx) }
-    var question by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var turns by remember { mutableStateOf(listOf<Pair<String, String>>()) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Чат с LLM") }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
@@ -45,45 +98,23 @@ private fun LlmChatScreen() {
                 "Проверяет модель и базу знаний из настроек. Сообщения клиентам не отправляются.",
                 Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
             LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)) {
-                items(turns) { (role, text) ->
+                items(model.turns) { (role, text) ->
                     Text("$role: $text", Modifier.fillMaxWidth().padding(vertical = 7.dp),
                         style = MaterialTheme.typography.bodyMedium)
                 }
-                if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                if (model.busy) item {
+                    Column {
+                        Text("Модель загружается или формирует ответ…", style = MaterialTheme.typography.bodySmall)
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                }
             }
             Row(Modifier.fillMaxWidth().padding(8.dp)) {
-                OutlinedTextField(question, { question = it }, Modifier.weight(1f),
+                OutlinedTextField(model.question, { model.question = it }, Modifier.weight(1f),
                     placeholder = { Text("Задайте вопрос модели") })
                 Spacer(Modifier.width(8.dp))
-                Button(enabled = question.isNotBlank() && !busy, onClick = {
-                    val text = question.trim()
-                    question = ""
-                    val previous = turns.takeLast(8)
-                    turns = turns + ("Вы" to text)
-                    busy = true
-                    scope.launch {
-                        val answer = withContext(Dispatchers.IO) {
-                            if (!settings.llmEnabled) "Включите LLM в настройках."
-                            else if (!Llm.isConfigured(ctx)) "Модель для выбранного режима не настроена или не скачана."
-                            else {
-                                val system = buildString {
-                                    append(settings.promptSms).append("\n\n")
-                                    append("Business knowledge / FAQ:\n")
-                                    append(AboutInfo.text(ctx, settings.businessInfo)).append("\n\n")
-                                    append(Prices.promptBlock(ctx, text)).append("\n")
-                                    if (settings.holidaysEnabled) append(Holidays.text(ctx)).append("\n")
-                                    append("Current date/time: ").append(ZonedDateTime.now()).append("\n")
-                                    append("Answer the user's question in its language. Do not invent prices or order facts. " +
-                                        "This is a manual test, so do not claim that a message was sent to a customer.")
-                                }
-                                val prompt = previous.joinToString("\n") { "${it.first}: ${it.second}" } + "\nВы: $text"
-                                Llm.generate(ctx, prompt, 2000, system) ?: "Модель не ответила. Проверьте настройки и журнал."
-                            }
-                        }
-                        turns = turns + ("LLM" to answer)
-                        busy = false
-                    }
-                }) { Text("→") }
+                Button(enabled = model.question.isNotBlank() && !model.busy,
+                    onClick = { model.ask(ctx) }) { Text("→") }
             }
         }
     }
