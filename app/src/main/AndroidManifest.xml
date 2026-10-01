@@ -61,7 +61,8 @@
         <uses-native-library android:name="libOpenCL.so" android:required="false" />
 
         <activity android:name=".ui.HistoryActivity" android:exported="false" />
-        <activity android:name=".ui.LlmChatActivity" android:exported="false" />
+        <activity android:name=".ui.LlmChatActivity" android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ui.AmRecordingsActivity" android:exported="false" />
         <activity android:name=".ui.BlacklistActivity" android:exported="false" />
         <activity android:name=".ui.HistoryChatActivity" android:exported="false" />

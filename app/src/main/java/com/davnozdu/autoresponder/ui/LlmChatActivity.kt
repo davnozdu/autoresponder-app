@@ -12,8 +12,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -95,24 +94,25 @@ class LlmChatViewModel : ViewModel() {
 @Composable
 private fun LlmChatScreen(model: LlmChatViewModel) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val focusManager = LocalFocusManager.current
-    val keyboard = LocalSoftwareKeyboardController.current
     val settings = remember { Settings(ctx) }
     val listState = rememberLazyListState()
-    LaunchedEffect(model.turns.size, model.busy) {
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(model.turns.size, model.busy, imeVisible) {
         val last = model.turns.size - 1 + if (model.busy) 1 else 0
         if (last >= 0) {
-            // Wait for the keyboard to close and the available height to settle.
-            delay(250)
+            // Recalculate after IME animation or a new answer changes the list height.
+            delay(120)
             listState.animateScrollToItem(last)
         }
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Чат с LLM") }) }) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            Text("Режим: ${when (settings.llmMode) { "local" -> "локально"; "auto" -> "авто"; else -> "облако" }}. " +
-                "Проверяет модель и базу знаний из настроек. Сообщения клиентам не отправляются.",
-                Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+        Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+            if (!imeVisible) {
+                Text("Режим: ${when (settings.llmMode) { "local" -> "локально"; "auto" -> "авто"; else -> "облако" }}. " +
+                    "Проверяет модель и базу знаний из настроек. Сообщения клиентам не отправляются.",
+                    Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+            }
             LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp), state = listState) {
                 items(model.turns) { (role, text) ->
                     Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
@@ -138,11 +138,7 @@ private fun LlmChatScreen(model: LlmChatViewModel) {
                     placeholder = { Text("Задайте вопрос модели") }, maxLines = 4)
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = model.question.isNotBlank() && !model.busy,
-                    onClick = {
-                        keyboard?.hide()
-                        focusManager.clearFocus()
-                        model.ask(ctx)
-                    }) { Text("→") }
+                    onClick = { model.ask(ctx) }) { Text("→") }
             }
         }
     }
