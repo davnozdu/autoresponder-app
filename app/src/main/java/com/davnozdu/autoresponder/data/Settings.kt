@@ -786,6 +786,10 @@ class Settings(context: Context) {
         get() = sp.getString(K_LLM_MODE, "cloud") ?: "cloud"
         set(v) = sp.edit().putString(K_LLM_MODE, v).apply()
 
+    var llmLocalGpu: Boolean
+        get() = sp.getBoolean(K_LLM_LOCAL_GPU, false)
+        set(v) = sp.edit().putBoolean(K_LLM_LOCAL_GPU, v).apply()
+
     /** Режим размышления (reasoning). false — прямой краткий ответ (подходит всем моделям);
      *  true — модель думает (большой бюджет токенов), ответ всё равно обрезается под лимит SMS. */
     var llmThink: Boolean
@@ -1009,6 +1013,7 @@ class Settings(context: Context) {
         private const val K_LLM_COUNT = "llm_count"
         private const val K_LLM_ON = "llm_on"
         private const val K_LLM_MODE = "llm_mode"
+        private const val K_LLM_LOCAL_GPU = "llm_local_gpu"
         private const val K_LLM_THINK = "llm_think"
         private const val K_LLM_PROV = "llm_prov"
         private const val K_LLM_URL = "llm_url"

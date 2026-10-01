@@ -3,6 +3,8 @@ package com.davnozdu.autoresponder.llm
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.davnozdu.autoresponder.data.EventLog
+import com.davnozdu.autoresponder.data.Settings
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Content
@@ -31,6 +33,8 @@ object LocalTextModel {
     private val inferenceLock = Any()
     @Volatile private var downloading = false
     private var engine: Engine? = null
+    private var engineGpu: Boolean? = null
+    private var gpuFailed = false
 
     private fun dir(ctx: Context) = File(ctx.filesDir, "gemma4").apply { mkdirs() }
     private fun model(ctx: Context) = File(dir(ctx), NAME)
@@ -106,6 +110,43 @@ object LocalTextModel {
         idleHandler.removeCallbacks(idleUnload)
         engine?.close()
         engine = null
+        engineGpu = null
+    }
+
+    fun resetBackend() = synchronized(inferenceLock) {
+        release()
+        gpuFailed = false
+    }
+
+    private fun acquire(ctx: Context): Engine {
+        val wantGpu = Settings(ctx).llmLocalGpu && !gpuFailed
+        if (engine != null && engineGpu != wantGpu) release()
+        engine?.let { return it }
+        fun start(gpu: Boolean): Engine {
+            val candidate = Engine(EngineConfig(
+                modelPath = model(ctx).absolutePath,
+                backend = if (gpu) Backend.GPU() else Backend.CPU(),
+                audioBackend = Backend.CPU(),
+                cacheDir = ctx.cacheDir.absolutePath,
+            ))
+            try {
+                candidate.initialize()
+                engine = candidate
+                engineGpu = gpu
+                return candidate
+            } catch (e: Exception) {
+                candidate.close()
+                throw e
+            }
+        }
+        if (wantGpu) {
+            try { return start(true) }
+            catch (e: Exception) {
+                gpuFailed = true
+                EventLog(ctx).add("Gemma GPU недоступен: ${e.message}; пробуем CPU")
+            }
+        }
+        return start(false)
     }
 
     fun delete(ctx: Context) {
@@ -118,12 +159,7 @@ object LocalTextModel {
         if (!isReady(ctx)) return@synchronized null
         idleHandler.removeCallbacks(idleUnload)
         try {
-            val current = engine ?: Engine(EngineConfig(
-                modelPath = model(ctx).absolutePath,
-                backend = Backend.CPU(),
-                audioBackend = Backend.CPU(),
-                cacheDir = ctx.cacheDir.absolutePath,
-            )).also { it.initialize(); engine = it }
+            val current = acquire(ctx)
             current.createConversation(ConversationConfig(
                 systemInstruction = Contents.of(system),
             )).use { conversation ->
@@ -149,11 +185,7 @@ object LocalTextModel {
             error("Сообщение не записано после приветствия")
         idleHandler.removeCallbacks(idleUnload)
         try {
-            val current = engine ?: Engine(EngineConfig(
-                modelPath = model(ctx).absolutePath,
-                backend = Backend.CPU(), audioBackend = Backend.CPU(),
-                cacheDir = ctx.cacheDir.absolutePath,
-            )).also { it.initialize(); engine = it }
+            val current = acquire(ctx)
             val parts = StringBuilder()
             val chunkSamples = 25 * rate
             var offset = 0

@@ -155,6 +155,7 @@ fun AppScreen() {
 
     var llmOn by remember { mutableStateOf(s.llmEnabled) }
     var llmMode by remember { mutableStateOf(s.llmMode) }
+    var localGpu by remember { mutableStateOf(s.llmLocalGpu) }
     var localReady by remember { mutableStateOf(com.davnozdu.autoresponder.llm.LocalTextModel.isReady(ctx)) }
     var localDownloading by remember { mutableStateOf(false) }
     var localProgress by remember { mutableStateOf(0L) }
@@ -1238,6 +1239,13 @@ fun AppScreen() {
                 Text("Авто: облако при доступной сети; при ошибке или отсутствии интернета — локальная модель. " +
                     "После сбоя облако повторяется при следующем запросе, но не чаще чем через 2 минуты. " +
                     "Фоновых проверок сети нет.", style = MaterialTheme.typography.bodySmall)
+                SwitchRow("Ускорение Gemma через GPU", localGpu) {
+                    localGpu = it; s.llmLocalGpu = it
+                    com.davnozdu.autoresponder.llm.LocalTextModel.resetBackend()
+                }
+                Text("При ошибке запуска GPU приложение автоматически попробует CPU. " +
+                    "После проверки на этом телефоне ускорение можно оставить включённым.",
+                    style = MaterialTheme.typography.bodySmall)
                 Text(if (localReady) "Gemma 4 E2B установлена (${com.davnozdu.autoresponder.llm.LocalTextModel.sizeMb(ctx)} МБ)"
                     else "Gemma 4 E2B не установлена (загрузка ~2,6 ГБ с Hugging Face)",
                     style = MaterialTheme.typography.bodySmall)
@@ -1770,6 +1778,7 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Использовать LLM", "LLM — основная модель"),
     SettingSearchEntry("Режим LLM: облако, локально, авто", "LLM — основная модель"),
     SettingSearchEntry("Скачать Gemma 4 E2B", "LLM — основная модель"),
+    SettingSearchEntry("Ускорение Gemma через GPU", "LLM — основная модель"),
     SettingSearchEntry("Чат с LLM", "LLM — основная модель"),
     SettingSearchEntry("Режим размышления (reasoning)", "LLM — основная модель"),
     SettingSearchEntry("Base URL", "LLM — основная модель"),
