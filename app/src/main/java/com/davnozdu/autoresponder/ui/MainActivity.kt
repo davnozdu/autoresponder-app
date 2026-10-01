@@ -1232,7 +1232,9 @@ fun AppScreen() {
                     listOf("cloud" to "Облако", "local" to "Локально", "auto" to "Авто").forEach { (value, label) ->
                         FilterChip(selected = llmMode == value, onClick = {
                             llmMode = value; s.llmMode = value
-                            if (value == "cloud") com.davnozdu.autoresponder.llm.LocalTextModel.release()
+                            if (value == "cloud") scope.launch(Dispatchers.IO) {
+                                com.davnozdu.autoresponder.llm.LocalTextModel.release()
+                            }
                         }, label = { Text(label) })
                     }
                 }
@@ -1241,7 +1243,7 @@ fun AppScreen() {
                     "Фоновых проверок сети нет.", style = MaterialTheme.typography.bodySmall)
                 SwitchRow("Ускорение Gemma через GPU", localGpu) {
                     localGpu = it; s.llmLocalGpu = it
-                    com.davnozdu.autoresponder.llm.LocalTextModel.resetBackend()
+                    scope.launch(Dispatchers.IO) { com.davnozdu.autoresponder.llm.LocalTextModel.resetBackend() }
                 }
                 Text("При ошибке запуска GPU приложение автоматически попробует CPU. " +
                     "После проверки на этом телефоне ускорение можно оставить включённым.",
@@ -1262,7 +1264,9 @@ fun AppScreen() {
                             val result = withContext(Dispatchers.IO) {
                                 runCatching {
                                     com.davnozdu.autoresponder.llm.LocalTextModel.download(ctx) { done, _ ->
-                                        localProgress = done
+                                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                            localProgress = done
+                                        }
                                     }
                                 }
                             }
@@ -1272,9 +1276,13 @@ fun AppScreen() {
                         }
                     }) { Text("Скачать модель") }
                     if (localReady) TextButton(onClick = {
-                        com.davnozdu.autoresponder.llm.LocalTextModel.delete(ctx)
-                        localReady = false
-                        localStatus = "Модель удалена"
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                com.davnozdu.autoresponder.llm.LocalTextModel.delete(ctx)
+                            }
+                            localReady = false
+                            localStatus = "Модель удалена"
+                        }
                     }) { Text("Удалить") }
                 }
                 if (localStatus.isNotBlank()) Text(localStatus, style = MaterialTheme.typography.bodySmall)
@@ -1310,11 +1318,11 @@ fun AppScreen() {
                     label = { Text("Модель") }, modifier = Modifier.fillMaxWidth())
                 // Частая ошибка: имя модели из Ollama («gemma3:27b») оставлено при облачном
                 // провайдере — запрос падает, и ответ уходит офлайн-шаблоном.
-                if (model.isBlank())
+                if (llmMode != "local" && model.isBlank())
                     Text("Модель не выбрана — этот канал работать не будет.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error)
-                else if (provider != "ollama" && model.contains(":"))
+                else if (llmMode != "local" && provider != "ollama" && model.contains(":"))
                     Text("«$model» выглядит как имя модели Ollama, а провайдер — $provider. "
                         + "Нажмите «Запросить все модели» и выберите из списка.",
                         style = MaterialTheme.typography.bodySmall,

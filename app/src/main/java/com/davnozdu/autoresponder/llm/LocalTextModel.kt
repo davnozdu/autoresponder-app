@@ -53,6 +53,7 @@ object LocalTextModel {
             val part = File(dir(ctx), "$NAME.part")
             var start = part.length().takeIf { it in 1 until SIZE } ?: 0L
             if (start == 0L && part.exists()) part.delete()
+            onProgress(start, SIZE)
             val request = Request.Builder().url(URL).apply {
                 if (start > 0) header("Range", "bytes=$start-")
             }.build()
@@ -149,6 +150,18 @@ object LocalTextModel {
         return start(false)
     }
 
+    private fun <T> withCpuFallback(ctx: Context, run: (Engine) -> T): T {
+        val current = acquire(ctx)
+        return try { run(current) }
+        catch (e: Exception) {
+            if (engineGpu != true) throw e
+            gpuFailed = true
+            EventLog(ctx).add("Gemma GPU ошибка генерации: ${e.message}; повтор на CPU")
+            release()
+            run(acquire(ctx))
+        }
+    }
+
     fun delete(ctx: Context) {
         release()
         dir(ctx).deleteRecursively()
@@ -159,11 +172,12 @@ object LocalTextModel {
         if (!isReady(ctx)) return@synchronized null
         idleHandler.removeCallbacks(idleUnload)
         try {
-            val current = acquire(ctx)
-            current.createConversation(ConversationConfig(
-                systemInstruction = Contents.of(system),
-            )).use { conversation ->
-                conversation.sendMessage(prompt).toString().trim().ifBlank { null }
+            withCpuFallback(ctx) { current ->
+                current.createConversation(ConversationConfig(
+                    systemInstruction = Contents.of(system),
+                )).use { conversation ->
+                    conversation.sendMessage(prompt).toString().trim().ifBlank { null }
+                }
             }
         } finally {
             idleHandler.postDelayed(idleUnload, IDLE_MS)
@@ -185,18 +199,19 @@ object LocalTextModel {
             error("Сообщение не записано после приветствия")
         idleHandler.removeCallbacks(idleUnload)
         try {
-            val current = acquire(ctx)
             val parts = StringBuilder()
             val chunkSamples = 25 * rate
             var offset = 0
             while (offset < trimmed.size) {
                 val length = minOf(chunkSamples, trimmed.size - offset)
                 val wav = wav16k(trimmed, rate, offset, length)
-                val text = current.createConversation().use { conversation ->
-                    conversation.sendMessage(Contents.of(
-                        Content.AudioBytes(wav),
-                        Content.Text("Transcribe the speech exactly. Output only the transcript in the original language."),
-                    )).toString().trim()
+                val text = withCpuFallback(ctx) { current ->
+                    current.createConversation().use { conversation ->
+                        conversation.sendMessage(Contents.of(
+                            Content.AudioBytes(wav),
+                            Content.Text("Transcribe the speech exactly. Output only the transcript in the original language."),
+                        )).toString().trim()
+                    }
                 }
                 if (text.isNotBlank()) {
                     if (parts.isNotEmpty()) parts.append(' ')
