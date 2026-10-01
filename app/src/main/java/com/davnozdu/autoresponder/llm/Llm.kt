@@ -47,6 +47,7 @@ object Llm {
         val backup = s.llm2Enabled && s.llm2Model.isNotBlank()
         val mode = s.llmMode
         val localReady = mode != "cloud" && LocalTextModel.isReady(context)
+        if (!s.llmEnabled || (mode == "local" && !localReady)) return null
         // Нечего спрашивать — не трогаем счётчик вообще.
         if (!primary && !backup && !localReady) return null
         if (!consumeQuota(s)) return null
@@ -66,7 +67,7 @@ object Llm {
                 ).generate(prompt, maxChars, s.llmThink, system)
                 if (!out.isNullOrBlank()) {
                     retryCloudAt = 0L
-                    LocalTextModel.release()
+                    LocalTextModel.releaseIfIdle()
                     return out
                 }
                 EventLog(context).add("LLM основной [${s.llmProvider}/${s.llmModel}] пуст/таймаут → резервный")
@@ -83,7 +84,7 @@ object Llm {
                 ).generate(prompt, maxChars, s.llmThink, system)
                 if (!out.isNullOrBlank()) {
                     retryCloudAt = 0L
-                    LocalTextModel.release()
+                    LocalTextModel.releaseIfIdle()
                     return out
                 }
                 EventLog(context).add("LLM резервный [${s.llm2Provider}/${s.llm2Model}] пуст/таймаут → заглушка")

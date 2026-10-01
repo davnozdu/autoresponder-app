@@ -40,6 +40,7 @@ class LlmChatActivity : ComponentActivity() {
 
 /** Keeps a long native inference and its answer across screen rotation. */
 class LlmChatViewModel : ViewModel() {
+    private companion object { const val MAX_VISIBLE_TURNS = 100 }
     var question by mutableStateOf("")
     var busy by mutableStateOf(false)
         private set
@@ -53,7 +54,7 @@ class LlmChatViewModel : ViewModel() {
         val settings = Settings(app)
         val previous = turns.takeLast(8)
         question = ""
-        turns = turns + ("Вы" to text)
+        turns = (turns + ("Вы" to text)).takeLast(MAX_VISIBLE_TURNS)
         busy = true
         viewModelScope.launch {
             val started = android.os.SystemClock.elapsedRealtime()
@@ -84,7 +85,7 @@ class LlmChatViewModel : ViewModel() {
             EventLog(app).add("Тест LLM: завершён за ${
                 (android.os.SystemClock.elapsedRealtime() - started) / 1000
             } с, длина ответа ${answer.length}")
-            turns = turns + ("LLM" to answer)
+            turns = (turns + ("LLM" to answer)).takeLast(MAX_VISIBLE_TURNS)
             busy = false
         }
     }

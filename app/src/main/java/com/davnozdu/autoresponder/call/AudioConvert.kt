@@ -18,6 +18,8 @@ import java.nio.ByteOrder
  */
 object AudioConvert {
     private const val OUT_RATE = 48000
+    // In-memory transcription on a 512 MB Java heap needs a hard PCM bound.
+    private const val MAX_DECODED_SAMPLES = 50_000_000 // 100 MB PCM16; ~8.5 min at 48 kHz stereo
 
     /** @return true, если [outPath] записан как PCM 48к/16/stereo. */
     fun toRawPcm48kStereo(inPath: String, outPath: String): Boolean {
@@ -38,8 +40,15 @@ object AudioConvert {
      *  поэтому оба пути должны сюда попадать одинаково, как уже умеет toRawPcm48kStereo выше.
      *  @return (сэмплы, частота) или null, если декодировать не удалось. */
     fun decodeToMono(path: String): Pair<ShortArray, Int>? {
+        // A transcription may be minutes long; the greeting decoder's fixed 20s deadline
+        // would silently reject a valid recording on a slower device.
+        val duration = probeDurationSec(path)
+        val decodeTimeoutMs = if (duration != null && duration.isFinite() && duration > 0)
+            (duration * 250).toLong().coerceIn(20_000L, 180_000L) else 60_000L
+        val wav = isWav(path)
+        if (wav && File(path).length() > MAX_DECODED_SAMPLES * 2L + 1_048_576L) return null
         val pcm = try {
-            if (isWav(path)) decodeWav16(path) else decodeCompressed(path)
+            if (wav) decodeWav16(path) else decodeCompressed(path, decodeTimeoutMs)
         } catch (e: Exception) { null } ?: return null
         if (pcm.channels <= 1) return pcm.samples to pcm.rate
         val frames = pcm.samples.size / pcm.channels
@@ -159,7 +168,7 @@ object AudioConvert {
     /** Декод сжатого аудио (mp3/aac/...) через MediaCodec в PCM16.
      *  @return null при ошибке формата ИЛИ если не успели дойти до EOS за дедлайн — частичный
      *  декод битого/подвисшего файла не должен маскироваться под валидное приветствие/дешифровку. */
-    private fun decodeCompressed(path: String): Pcm? {
+    private fun decodeCompressed(path: String, timeoutMs: Long = 20_000L): Pcm? {
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -180,13 +189,14 @@ object AudioConvert {
             codec = c
             c.configure(fmt, null, null, 0)
             c.start()
-            val out = java.io.ByteArrayOutputStream()
+            var samples = ShortArray(64 * 1024)
+            var sampleCount = 0
             val info = MediaCodec.BufferInfo()
             var sawInputEos = false; var sawOutputEos = false
-            // Защитный дедлайн: приветствие — секунды звука, а не минуты. Без него кривой/битый
-            // файл мог бы держать декодер в цикле неопределённо долго прямо во время звонка.
-            val deadline = System.currentTimeMillis() + 20_000L
-            while (!sawOutputEos && System.currentTimeMillis() < deadline) {
+            // Greeting keeps a 20s deadline; transcription scales it with recording length.
+            // A corrupt file must never keep the decoder in this loop indefinitely.
+            val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
+            while (!sawOutputEos && android.os.SystemClock.elapsedRealtime() < deadline) {
                 if (!sawInputEos) {
                     val inIdx = c.dequeueInputBuffer(10_000)
                     if (inIdx >= 0) {
@@ -204,9 +214,21 @@ object AudioConvert {
                 val outIdx = c.dequeueOutputBuffer(info, 10_000)
                 if (outIdx >= 0) {
                     val buf = c.getOutputBuffer(outIdx)!!
-                    val chunk = ByteArray(info.size)
-                    buf.position(info.offset); buf.get(chunk)
-                    out.write(chunk)
+                    if (info.size % 2 != 0) return null // PCM16 must contain whole samples
+                    val count = info.size / 2
+                    val needed = sampleCount.toLong() + count
+                    if (needed > MAX_DECODED_SAMPLES) return null
+                    if (needed > samples.size) {
+                        val capacity = maxOf(needed.toInt(), samples.size * 2)
+                            .coerceAtMost(MAX_DECODED_SAMPLES)
+                        samples = samples.copyOf(capacity)
+                    }
+                    val pcm = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+                    pcm.position(info.offset)
+                    pcm.limit(info.offset + info.size)
+                    pcm.slice().order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                        .get(samples, sampleCount, count)
+                    sampleCount += count
                     c.releaseOutputBuffer(outIdx, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) sawOutputEos = true
                 }
@@ -215,10 +237,7 @@ object AudioConvert {
             // как успешный результат — битый/подвисший файл превращался в урезанное
             // приветствие или неполную расшифровку без явной ошибки.
             if (!sawOutputEos) return null
-            val bytes = out.toByteArray()
-            val shorts = ShortArray(bytes.size / 2)
-            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
-            return Pcm(shorts, rate, channels)
+            return Pcm(samples.copyOf(sampleCount), rate, channels)
         } finally {
             // Найдено аудитом: исключение в setDataSource/configure/start/чтении буфера раньше
             // пропускало освобождение нативных объектов целиком (release вызывался только в

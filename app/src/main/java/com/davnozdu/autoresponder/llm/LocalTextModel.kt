@@ -18,6 +18,9 @@ import java.security.MessageDigest
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 
 /** Gemma 4 E2B for text generation. No worker, timer or network activity while idle. */
 object LocalTextModel {
@@ -29,8 +32,10 @@ object LocalTextModel {
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS).callTimeout(0, TimeUnit.SECONDS).build()
     private val idleHandler = Handler(Looper.getMainLooper())
-    private val idleUnload = Runnable { release() }
-    private val inferenceLock = Any()
+    private val idleUnload = Runnable {
+        thread(name = "gemma-idle-close") { releaseIfIdle() }
+    }
+    private val inferenceLock = ReentrantLock()
     @Volatile private var downloading = false
     private var engine: Engine? = null
     private var engineGpu: Boolean? = null
@@ -107,14 +112,29 @@ object LocalTextModel {
         }
     }
 
-    fun release(): Unit = synchronized(inferenceLock) {
+    fun release(): Unit = inferenceLock.withLock {
         idleHandler.removeCallbacks(idleUnload)
-        engine?.close()
+        val closing = engine
         engine = null
         engineGpu = null
+        runCatching { closing?.close() }.onFailure {
+            android.util.Log.w("AutoResp", "Gemma close failed", it)
+        }
+        Unit
     }
 
-    fun resetBackend(): Unit = synchronized(inferenceLock) {
+    /** Cloud replies must never wait for a concurrent local transcription to finish. */
+    fun releaseIfIdle(): Boolean {
+        if (!inferenceLock.tryLock()) return false
+        return try {
+            release()
+            true
+        } finally {
+            inferenceLock.unlock()
+        }
+    }
+
+    fun resetBackend(): Unit = inferenceLock.withLock {
         release()
         gpuFailed = false
     }
@@ -163,13 +183,15 @@ object LocalTextModel {
     }
 
     fun delete(ctx: Context) {
-        release()
-        dir(ctx).deleteRecursively()
+        inferenceLock.withLock {
+            release()
+            dir(ctx).deleteRecursively()
+        }
     }
 
     /** Serialized: one native engine and one request at a time; each conversation is fresh. */
-    fun generate(ctx: Context, prompt: String, system: String): String? = synchronized(inferenceLock) {
-        if (!isReady(ctx)) return@synchronized null
+    fun generate(ctx: Context, prompt: String, system: String): String? = inferenceLock.withLock {
+        if (!isReady(ctx)) return@withLock null
         idleHandler.removeCallbacks(idleUnload)
         try {
             withCpuFallback(ctx) { current ->
@@ -185,12 +207,12 @@ object LocalTextModel {
     }
 
     /** Gemma audio input is limited to 30 seconds. Split longer recordings into 25s WAVs. */
-    fun transcribe(ctx: Context, audioFile: File): String = synchronized(inferenceLock) {
+    fun transcribe(ctx: Context, audioFile: File): String = inferenceLock.withLock {
         if (!isReady(ctx)) error("Сначала скачайте Gemma 4 E2B в настройках LLM")
         val seconds = com.davnozdu.autoresponder.call.AudioConvert.probeDurationSec(audioFile.absolutePath)
         if (seconds != null && seconds > 3600) error("Запись длиннее 60 минут")
         val (samples, rate) = com.davnozdu.autoresponder.call.AudioConvert.decodeToMono(audioFile.absolutePath)
-            ?: error("Не удалось прочитать аудиофайл")
+            ?: error("Не удалось прочитать аудио: формат повреждён, декодер завис или запись слишком велика для памяти")
         if (rate <= 0 || samples.size / rate > 3600) error("Запись длиннее 60 минут")
         val trimmed = com.davnozdu.autoresponder.call.GreetingTrim.trimForTranscription(
             audioFile.absolutePath, samples, rate)
