@@ -154,6 +154,11 @@ fun AppScreen() {
     var tplEn by remember { mutableStateOf(s.template("en")) }
 
     var llmOn by remember { mutableStateOf(s.llmEnabled) }
+    var llmMode by remember { mutableStateOf(s.llmMode) }
+    var localReady by remember { mutableStateOf(com.davnozdu.autoresponder.llm.LocalTextModel.isReady(ctx)) }
+    var localDownloading by remember { mutableStateOf(false) }
+    var localProgress by remember { mutableStateOf(0L) }
+    var localStatus by remember { mutableStateOf("") }
     var llmThink by remember { mutableStateOf(s.llmThink) }
     var provider by remember { mutableStateOf(s.llmProvider) }
     var baseUrl by remember { mutableStateOf(s.llmBaseUrl) }
@@ -507,7 +512,8 @@ fun AppScreen() {
                     style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 var trProvider by remember { mutableStateOf(s.transcribeProvider) }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     FilterChip(trProvider == "groq",
                         {
                             trProvider = "groq"; s.transcribeProvider = "groq"
@@ -518,6 +524,10 @@ fun AppScreen() {
                         }, { Text("Groq (облако)") })
                     FilterChip(trProvider == "local",
                         { trProvider = "local"; s.transcribeProvider = "local" }, { Text("Локально (Parakeet)") })
+                    FilterChip(trProvider == "gemma4", {
+                        trProvider = "gemma4"; s.transcribeProvider = "gemma4"
+                        com.davnozdu.autoresponder.llm.LocalTranscriber.release()
+                    }, { Text("Локально (Gemma 4)") })
                 }
                 Spacer(Modifier.height(8.dp))
                 if (trProvider == "groq") {
@@ -528,6 +538,14 @@ fun AppScreen() {
                     OutlinedTextField(trModel, { trModel = it; s.transcribeModel = it },
                         label = { Text("Модель") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         supportingText = { Text("По умолчанию whisper-large-v3-turbo") })
+                } else if (trProvider == "gemma4") {
+                    Text("Gemma 4 E2B использует ту же модель, что текстовый офлайн-режим. " +
+                        "Записи длиннее 30 секунд обрабатываются частями. " +
+                        "Для быстрой обычной расшифровки рекомендуется Parakeet.",
+                        style = MaterialTheme.typography.bodySmall)
+                    Text(if (com.davnozdu.autoresponder.llm.LocalTextModel.isReady(ctx))
+                        "Модель установлена" else "Скачайте модель в разделе «LLM — основная модель»",
+                        style = MaterialTheme.typography.bodySmall)
                 } else {
                     val lt = com.davnozdu.autoresponder.llm.LocalTranscriber
                     var modelReady by remember { mutableStateOf(lt.isModelReady(ctx)) }
@@ -1208,6 +1226,53 @@ fun AppScreen() {
 
             ExpandableSection("LLM — основная модель") {
                 SwitchRow("Использовать LLM", llmOn) { llmOn = it; s.llmEnabled = it }
+                Text("Режим работы", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("cloud" to "Облако", "local" to "Локально", "auto" to "Авто").forEach { (value, label) ->
+                        FilterChip(selected = llmMode == value, onClick = {
+                            llmMode = value; s.llmMode = value
+                            if (value == "cloud") com.davnozdu.autoresponder.llm.LocalTextModel.release()
+                        }, label = { Text(label) })
+                    }
+                }
+                Text("Авто: облако при доступной сети; при ошибке или отсутствии интернета — локальная модель. " +
+                    "После сбоя облако повторяется при следующем запросе, но не чаще чем через 2 минуты. " +
+                    "Фоновых проверок сети нет.", style = MaterialTheme.typography.bodySmall)
+                Text(if (localReady) "Gemma 4 E2B установлена (${com.davnozdu.autoresponder.llm.LocalTextModel.sizeMb(ctx)} МБ)"
+                    else "Gemma 4 E2B не установлена (загрузка ~2,6 ГБ с Hugging Face)",
+                    style = MaterialTheme.typography.bodySmall)
+                if (localDownloading) {
+                    LinearProgressIndicator(progress = { (localProgress / 2_588_147_712f).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth())
+                    Text("Скачано ${localProgress / (1024 * 1024)} из 2468 МБ", style = MaterialTheme.typography.bodySmall)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !localDownloading && !localReady, onClick = {
+                        localDownloading = true
+                        localStatus = "Скачивание…"
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    com.davnozdu.autoresponder.llm.LocalTextModel.download(ctx) { done, _ ->
+                                        localProgress = done
+                                    }
+                                }
+                            }
+                            localDownloading = false
+                            localReady = com.davnozdu.autoresponder.llm.LocalTextModel.isReady(ctx)
+                            localStatus = result.fold({ "Модель готова" }, { "Ошибка: ${it.message}" })
+                        }
+                    }) { Text("Скачать модель") }
+                    if (localReady) TextButton(onClick = {
+                        com.davnozdu.autoresponder.llm.LocalTextModel.delete(ctx)
+                        localReady = false
+                        localStatus = "Модель удалена"
+                    }) { Text("Удалить") }
+                }
+                if (localStatus.isNotBlank()) Text(localStatus, style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { ctx.startActivity(Intent(ctx, LlmChatActivity::class.java)) }) {
+                    Text("Чат с LLM")
+                }
                 SwitchRow("Режим размышления (reasoning)", llmThink) { llmThink = it; s.llmThink = it }
                 Text(if (llmThink)
                     "Вкл: модель думает (большой бюджет токенов, таймаут до 95с), ответ обрезается под лимит SMS. Для reasoning-моделей (deepseek и т.п.)."
@@ -1478,6 +1543,8 @@ fun AppScreen() {
                     modifier = Modifier.fillMaxWidth()) { Text("💬 История общения") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, HistoryChatActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("🤖 История запросов (чат с AI)") }
+                Button(onClick = { ctx.startActivity(Intent(ctx, LlmChatActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()) { Text("🤖 Чат с LLM — проверка настроек") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, BlacklistActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth()) { Text("🚫 Чёрный список") }
                 Button(onClick = { ctx.startActivity(Intent(ctx, AppPickerActivity::class.java)) },
@@ -1649,6 +1716,7 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Тихий режим", "Голосовой автоответчик"),
     SettingSearchEntry("Дешифровка записей, API key, модель Whisper", "Дешифровка записей (речь → текст)"),
     SettingSearchEntry("Локально (Parakeet), скачать модель офлайн", "Дешифровка записей (речь → текст)"),
+    SettingSearchEntry("Локально (Gemma 4), дешифровка аудио", "Дешифровка записей (речь → текст)"),
     SettingSearchEntry("Проверить обновления", "Версия приложения"),
     SettingSearchEntry("Включён", "Основное"),
     SettingSearchEntry("Отвечать на звонки", "Основное"),
@@ -1700,6 +1768,9 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Не отвечать на сообщения старше", "Лимиты и предупреждение"),
     SettingSearchEntry("Шаблоны ответа без LLM (RU/CS/EN)", "Шаблоны — ответ БЕЗ LLM (заглушка)"),
     SettingSearchEntry("Использовать LLM", "LLM — основная модель"),
+    SettingSearchEntry("Режим LLM: облако, локально, авто", "LLM — основная модель"),
+    SettingSearchEntry("Скачать Gemma 4 E2B", "LLM — основная модель"),
+    SettingSearchEntry("Чат с LLM", "LLM — основная модель"),
     SettingSearchEntry("Режим размышления (reasoning)", "LLM — основная модель"),
     SettingSearchEntry("Base URL", "LLM — основная модель"),
     SettingSearchEntry("API key", "LLM — основная модель"),
@@ -1724,6 +1795,7 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Состояние (проверка готовности)", "Списки и приложения"),
     SettingSearchEntry("История общения", "Списки и приложения"),
     SettingSearchEntry("История запросов (чат с AI)", "Списки и приложения"),
+    SettingSearchEntry("Чат с LLM — проверка настроек", "Списки и приложения"),
     SettingSearchEntry("Приложения для автоответа", "Списки и приложения"),
     SettingSearchEntry("Выгружать API-ключи LLM", "Импорт / экспорт настроек"),
     SettingSearchEntry("Копировать / вставить настройки", "Импорт / экспорт настроек"),

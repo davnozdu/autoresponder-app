@@ -162,11 +162,14 @@ fun AmRecordingsScreen() {
         // Длинные разговоры (например, 8-минутный звонок) облачные API расшифровки не тянут
         // (лимит размера/длительности файла, таймаут). Всё, что длиннее минуты, автоматически
         // отправляем во встроенную локальную модель — она без лимитов и работает офлайн.
-        val useLocal = s.transcribeProvider == "local" || rec.durationMs > 60_000L
+        val provider = s.transcribeProvider
+        val useLocal = provider == "local" || (provider == "groq" && rec.durationMs > 60_000L)
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    if (useLocal)
+                    if (provider == "gemma4")
+                        com.davnozdu.autoresponder.llm.LocalTextModel.transcribe(ctx, File(path))
+                    else if (useLocal)
                         LocalTranscriber.transcribe(ctx, File(path))
                     else
                         Transcriber.transcribe(s.transcribeProvider, s.transcribeApiKey, s.transcribeModel, File(path))
@@ -182,7 +185,7 @@ fun AmRecordingsScreen() {
                 // Ошибка расшифровки видна только в UI — дублируем в лог, чтобы её можно было
                 // поднять постфактум (провайдер=$useLocal-local), не переспрашивая скриншот.
                 com.davnozdu.autoresponder.data.LogFile.append(
-                    "transcribe FAIL id=${rec.id} local=$useLocal dur=${rec.durationMs/1000}s: ${e.message}")
+                    "transcribe FAIL id=${rec.id} provider=$provider dur=${rec.durationMs/1000}s: ${e.message}")
             }
         }
     }

@@ -281,6 +281,11 @@ object Responder {
         fun ready(prov: String, model: String, key: String) =
             model.isNotBlank() && (prov == "ollama" || key.isNotBlank())
         if (!s.llmEnabled) return "LLM выключена в настройках"
+        if (s.llmMode == "local")
+            return if (com.davnozdu.autoresponder.llm.LocalTextModel.isReady(context)) null
+                else "локальная модель не скачана"
+        if (s.llmMode == "auto" && com.davnozdu.autoresponder.llm.LocalTextModel.isReady(context))
+            return null
         if (!NetworkUtil.isOnline(context)) return "нет интернета"
         val ok = ready(s.llmProvider, s.llmModel, s.llmApiKey) ||
                  (s.llm2Enabled && ready(s.llm2Provider, s.llm2Model, s.llm2ApiKey))

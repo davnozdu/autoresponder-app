@@ -15,8 +15,8 @@ android {
         applicationId = "com.davnozdu.autoresponder"
         minSdk = 29
         targetSdk = 35
-        versionCode = 106
-        versionName = "0.28.0"
+        versionCode = 107
+        versionName = "0.29.0"
         // Телефон, для которого собирается приложение, — arm64-only. sherpa-onnx AAR (локальная
         // дешифровка речи, Parakeet) несёт нативные .so под 4 архитектуры разом — без фильтра
         // APK раздулся бы на лишние ~100+МБ ради архитектур, которых на этом устройстве нет.
@@ -123,6 +123,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     testImplementation("junit:junit:4.13.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.1")
     // org.json НЕ подключаем: он есть в android.jar. Внешняя копия дублирует классы
     // фреймворка и даёт расхождение поведения/VerifyError на устройстве.
 }
