@@ -23,7 +23,7 @@ object Outgoing {
                 put("parts", parts); put("job", job); put("history_key", historyChannel)
                 put("limit_key", limitKey); put("timeout", timeout)
             })
-            repeat(parts) { n -> db.execSQL("INSERT INTO segments(outgoing,part,sent,delivered) VALUES(?,?,0,0)", arrayOf(id,n)) }
+            repeat(parts) { n -> db.execSQL("INSERT INTO segments(outgoing,part,sent,delivered) VALUES(?,?,0,0)", arrayOf<Any>(id,n)) }
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
         return id
@@ -54,7 +54,7 @@ object Outgoing {
         val db = RuntimeDb.get(context).writableDatabase
         val col = if (delivery) "delivered" else "sent"
         // Duplicate callbacks are idempotent. Successful delivery may follow delayed sent callbacks.
-        db.execSQL("UPDATE segments SET $col=? WHERE outgoing=? AND part=? AND $col=0", arrayOf(if (result == 0) 999 else result,id,part))
+        db.execSQL("UPDATE segments SET $col=? WHERE outgoing=? AND part=? AND $col=0", arrayOf<Any>(if (result == 0) 999 else result,id,part))
         var total=0; var ok=0; var bad=0; var delivered=0; var badCode=0
         db.rawQuery("SELECT sent,delivered FROM segments WHERE outgoing=?", arrayOf(id)).use { c ->
             while(c.moveToNext()) {

@@ -102,7 +102,7 @@ object LocalTextModel {
         }
     }
 
-    fun release() = synchronized(inferenceLock) {
+    fun release(): Unit = synchronized(inferenceLock) {
         idleHandler.removeCallbacks(idleUnload)
         engine?.close()
         engine = null
@@ -120,14 +120,14 @@ object LocalTextModel {
         try {
             val current = engine ?: Engine(EngineConfig(
                 modelPath = model(ctx).absolutePath,
-                backend = Backend.GPU(),
+                backend = Backend.CPU(),
                 audioBackend = Backend.CPU(),
                 cacheDir = ctx.cacheDir.absolutePath,
             )).also { it.initialize(); engine = it }
             current.createConversation(ConversationConfig(
                 systemInstruction = Contents.of(system),
             )).use { conversation ->
-                conversation.sendMessage(prompt).text.trim().ifBlank { null }
+                conversation.sendMessage(prompt).toString().trim().ifBlank { null }
             }
         } finally {
             idleHandler.postDelayed(idleUnload, IDLE_MS)
@@ -151,7 +151,7 @@ object LocalTextModel {
         try {
             val current = engine ?: Engine(EngineConfig(
                 modelPath = model(ctx).absolutePath,
-                backend = Backend.GPU(), audioBackend = Backend.CPU(),
+                backend = Backend.CPU(), audioBackend = Backend.CPU(),
                 cacheDir = ctx.cacheDir.absolutePath,
             )).also { it.initialize(); engine = it }
             val parts = StringBuilder()
@@ -164,7 +164,7 @@ object LocalTextModel {
                     conversation.sendMessage(Contents.of(
                         Content.AudioBytes(wav),
                         Content.Text("Transcribe the speech exactly. Output only the transcript in the original language."),
-                    )).text.trim()
+                    )).toString().trim()
                 }
                 if (text.isNotBlank()) {
                     if (parts.isNotEmpty()) parts.append(' ')
