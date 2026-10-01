@@ -113,7 +113,7 @@ object LocalTextModel {
         engineGpu = null
     }
 
-    fun resetBackend() = synchronized(inferenceLock) {
+    fun resetBackend(): Unit = synchronized(inferenceLock) {
         release()
         gpuFailed = false
     }
