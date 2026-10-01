@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,6 +24,7 @@ import com.davnozdu.autoresponder.store.AboutInfo
 import com.davnozdu.autoresponder.store.Holidays
 import com.davnozdu.autoresponder.store.Prices
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.ZonedDateTime
@@ -91,11 +95,17 @@ class LlmChatViewModel : ViewModel() {
 @Composable
 private fun LlmChatScreen(model: LlmChatViewModel) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val settings = remember { Settings(ctx) }
     val listState = rememberLazyListState()
     LaunchedEffect(model.turns.size, model.busy) {
         val last = model.turns.size - 1 + if (model.busy) 1 else 0
-        if (last >= 0) listState.animateScrollToItem(last)
+        if (last >= 0) {
+            // Wait for the keyboard to close and the available height to settle.
+            delay(250)
+            listState.animateScrollToItem(last)
+        }
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Чат с LLM") }) }) { padding ->
@@ -105,8 +115,15 @@ private fun LlmChatScreen(model: LlmChatViewModel) {
                 Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
             LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp), state = listState) {
                 items(model.turns) { (role, text) ->
-                    Text("$role: $text", Modifier.fillMaxWidth().padding(vertical = 7.dp),
-                        style = MaterialTheme.typography.bodyMedium)
+                    Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            Text(role, style = MaterialTheme.typography.labelMedium)
+                            SelectionContainer {
+                                Text(text, Modifier.fillMaxWidth(), softWrap = true,
+                                    style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
                 }
                 if (model.busy) item {
                     Column {
@@ -116,11 +133,16 @@ private fun LlmChatScreen(model: LlmChatViewModel) {
                 }
             }
             Row(Modifier.fillMaxWidth().padding(8.dp)) {
-                OutlinedTextField(model.question, { model.question = it }, Modifier.weight(1f),
-                    placeholder = { Text("Задайте вопрос модели") })
+                OutlinedTextField(model.question, { model.question = it },
+                    Modifier.weight(1f).heightIn(max = 140.dp),
+                    placeholder = { Text("Задайте вопрос модели") }, maxLines = 4)
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = model.question.isNotBlank() && !model.busy,
-                    onClick = { model.ask(ctx) }) { Text("→") }
+                    onClick = {
+                        keyboard?.hide()
+                        focusManager.clearFocus()
+                        model.ask(ctx)
+                    }) { Text("→") }
             }
         }
     }
