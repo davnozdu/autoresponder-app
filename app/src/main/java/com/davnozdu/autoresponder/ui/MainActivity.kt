@@ -499,6 +499,12 @@ fun AppScreen() {
                     modifier = Modifier.fillMaxWidth())
 
                 var silent by remember { mutableStateOf(s.amSilentToOwner) }
+                var vibrate by remember { mutableStateOf(s.amVibrateToOwner) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(vibrate, { vibrate = it; s.amVibrateToOwner = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("Вибрация при автоответе (кроме DND)")
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(silent, { silent = it; s.amSilentToOwner = it })
                     Spacer(Modifier.width(8.dp))
@@ -1730,6 +1736,7 @@ private val settingsSearchIndex = listOf(
     SettingSearchEntry("Приветствие: текст или файл", "Голосовой автоответчик"),
     SettingSearchEntry("Секунд на сообщение клиента", "Голосовой автоответчик"),
     SettingSearchEntry("Тихий режим", "Голосовой автоответчик"),
+    SettingSearchEntry("Вибрация при автоответе", "Голосовой автоответчик"),
     SettingSearchEntry("Дешифровка записей, API key, модель Whisper", "Дешифровка записей (речь → текст)"),
     SettingSearchEntry("Локально (Parakeet), скачать модель офлайн", "Дешифровка записей (речь → текст)"),
     SettingSearchEntry("Локально (Gemma 4), дешифровка аудио", "Дешифровка записей (речь → текст)"),

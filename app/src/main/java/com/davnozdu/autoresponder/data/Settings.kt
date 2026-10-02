@@ -492,6 +492,10 @@ class Settings(context: Context) {
         set(v) = sp.edit().putInt(K_AM_MSG_SEC, v).apply()
 
     /** Тихий режим: глушить вывод к владельцу (громкость 0), чтобы не будить. */
+    var amVibrateToOwner: Boolean
+        get() = sp.getBoolean("am_vibrate", true)
+        set(v) = sp.edit().putBoolean("am_vibrate", v).apply()
+
     var amSilentToOwner: Boolean
         get() = sp.getBoolean(K_AM_SILENT, true)
         set(v) = sp.edit().putBoolean(K_AM_SILENT, v).apply()

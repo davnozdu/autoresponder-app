@@ -40,6 +40,7 @@ class AnswerMachineService : Service() {
     @Volatile private var declined = false
     @Volatile private var transferred = false
     private var watcher: BroadcastReceiver? = null
+    private val callVibration by lazy { AnswerMachineVibration(applicationContext) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -76,7 +77,7 @@ class AnswerMachineService : Service() {
                 }
             }
             catch (e: Exception) { EventLog(applicationContext).add("AM: сбой (${e.message})") }
-            finally { busy = false; stopSelfSafe() }
+            finally { callVibration.stop(); busy = false; stopSelfSafe() }
         }
         return START_NOT_STICKY
     }
@@ -135,6 +136,7 @@ class AnswerMachineService : Service() {
             // встроенная автозапись звонилки тоже уже пишет (она стартует по offhook), так что
             // greeting+бип+сообщение клиента попадут в один файл с самого начала разговора.
             val recId = db.amRecInsert(number, name, start, 0, null, reason)
+            if (s.amVibrateToOwner) callVibration.start(s.amMaxMessageSec.coerceIn(5, 300) + 20)
 
             // Железная блокировка: подсветка в 0 через sysfs + тачскрин выключен на уровне
             // ядра (портировано из vr-usb-monitor, проверено на этом телефоне) — не зависит
@@ -306,6 +308,7 @@ class AnswerMachineService : Service() {
             // мёртвую тишину до самого автопереброса, а recStart останавливает буфер раньше,
             // чем истекает ожидание. Найдено финальным ревью ветки.
             val waitSec = s.screeningWaitSec.coerceIn(5, 300)
+            if (s.amVibrateToOwner) callVibration.start(waitSec + 20)
             AmBridge.recStart(app, waitSec)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -547,6 +550,7 @@ class AnswerMachineService : Service() {
 
     @android.annotation.SuppressLint("MissingPermission")
     private fun endCall(ctx: Context) {
+        callVibration.stop()
         val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -604,10 +608,17 @@ class AnswerMachineService : Service() {
     private fun registerWatcher(ctx: Context) {
         val r = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) {
+                if (i.action == NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED) {
+                    if (!callVibration.dndAllowsVibration()) callVibration.stop()
+                    return
+                }
                 if (i.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
                 when (i.getStringExtra(TelephonyManager.EXTRA_STATE)) {
                     TelephonyManager.EXTRA_STATE_OFFHOOK -> offhook = true
-                    TelephonyManager.EXTRA_STATE_IDLE -> { idle = true; offhook = false }
+                    TelephonyManager.EXTRA_STATE_IDLE -> {
+                        idle = true; offhook = false
+                        callVibration.stop()
+                    }
                 }
             }
         }
@@ -617,11 +628,14 @@ class AnswerMachineService : Service() {
         // onStartCommand и тихо обрывало весь сценарий на первом же шаге, ещё до ответа на
         // звонок. ContextCompat сам решает нужен ли флаг на текущем API.
         androidx.core.content.ContextCompat.registerReceiver(
-            ctx, r, IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED),
+            ctx, r, IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED).apply {
+                addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
+            },
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     private fun unregisterWatcher(ctx: Context) {
+        callVibration.stop()
         watcher?.let { runCatching { ctx.unregisterReceiver(it) } }
         watcher = null
     }
@@ -734,9 +748,9 @@ class AnswerMachineService : Service() {
 
         /** Вызывается из CallerOverlay по тапу «Принять» — сигнализирует в текущий
          *  экземпляр сервиса, тот же паттерн, что уже используют idle/offhook. */
-        fun screeningAccept() { active?.let { it.accepted = true } }
-        fun screeningDecline() { active?.let { it.declined = true } }
-        fun screeningTransfer() { active?.let { it.transferred = true } }
+        fun screeningAccept() { active?.let { it.accepted = true; it.callVibration.stop() } }
+        fun screeningDecline() { active?.let { it.declined = true; it.callVibration.stop() } }
+        fun screeningTransfer() { active?.let { it.transferred = true; it.callVibration.stop() } }
 
         /** Ручная проверка блокировки экрана/тача БЕЗ звонка (та же защита от заморозки
          *  процесса, что и в реальном вызове — foreground-сервис). Вызывается из AmTestReceiver. */

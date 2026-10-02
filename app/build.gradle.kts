@@ -15,8 +15,8 @@ android {
         applicationId = "com.davnozdu.autoresponder"
         minSdk = 29
         targetSdk = 35
-        versionCode = 108
-        versionName = "0.29.1"
+        versionCode = 109
+        versionName = "0.29.2"
         // Телефон, для которого собирается приложение, — arm64-only. sherpa-onnx AAR (локальная
         // дешифровка речи, Parakeet) несёт нативные .so под 4 архитектуры разом — без фильтра
         // APK раздулся бы на лишние ~100+МБ ради архитектур, которых на этом устройстве нет.
