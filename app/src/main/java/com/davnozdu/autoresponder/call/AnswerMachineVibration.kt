@@ -20,17 +20,18 @@ internal class AnswerMachineVibration(private val context: Context) {
     private val vibrator = context.getSystemService(Vibrator::class.java)
 
     @Synchronized
-    fun start(seconds: Int, scope: CoroutineScope) {
+    fun start(seconds: Int, intervalSec: Int, scope: CoroutineScope) {
         // stop() is terminal, including an IDLE/DND event racing with answerCall().
-        if (closed || vibrating || !dndAllowsVibration() || vibrator?.hasVibrator() != true) return
+        if (closed || pulseJob != null || !dndAllowsVibration() || vibrator?.hasVibrator() != true) return
         val deadline = SystemClock.elapsedRealtime() + seconds.coerceIn(1, 330) * 1000L
+        val intervalMs = intervalSec.coerceIn(1, 60) * 1000L
         // The initial notification vibrates first (and is mirrored to the watch).
         // Use short subsequent pulses so other notifications cannot cancel all reminders.
         pulseJob = scope.launch {
-            delay(5000)
+            delay(intervalMs)
             while (SystemClock.elapsedRealtime() < deadline) {
                 if (!pulse()) break
-                delay(5000)
+                delay(intervalMs)
             }
         }
         EventLog(context).add("AM: вибрация ожидания включена")

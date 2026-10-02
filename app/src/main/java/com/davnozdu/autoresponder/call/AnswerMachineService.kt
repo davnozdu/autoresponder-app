@@ -138,7 +138,8 @@ class AnswerMachineService : Service() {
             // greeting+бип+сообщение клиента попадут в один файл с самого начала разговора.
             val recId = db.amRecInsert(number, name, start, 0, null, reason)
             showCallAlert(name ?: number ?: "Неизвестный абонент", s.amVibrateToOwner)
-            if (s.amVibrateToOwner) callVibration.start(s.amMaxMessageSec.coerceIn(5, 300) + 20, scope)
+            if (s.amVibrateToOwner) callVibration.start(s.amMaxMessageSec.coerceIn(5, 300) + 20,
+                s.amVibrationIntervalSec, scope)
 
             // Железная блокировка: подсветка в 0 через sysfs + тачскрин выключен на уровне
             // ядра (портировано из vr-usb-monitor, проверено на этом телефоне) — не зависит
@@ -311,7 +312,7 @@ class AnswerMachineService : Service() {
             // чем истекает ожидание. Найдено финальным ревью ветки.
             val waitSec = s.screeningWaitSec.coerceIn(5, 300)
             showCallAlert(name ?: number ?: "Неизвестный абонент", s.amVibrateToOwner)
-            if (s.amVibrateToOwner) callVibration.start(waitSec + 20, scope)
+            if (s.amVibrateToOwner) callVibration.start(waitSec + 20, s.amVibrationIntervalSec, scope)
             AmBridge.recStart(app, waitSec)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager

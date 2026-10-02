@@ -496,6 +496,10 @@ class Settings(context: Context) {
         get() = sp.getBoolean("am_vibrate", true)
         set(v) = sp.edit().putBoolean("am_vibrate", v).apply()
 
+    var amVibrationIntervalSec: Int
+        get() = sp.getInt("am_vibration_interval_sec", 2).coerceIn(1, 60)
+        set(v) = sp.edit().putInt("am_vibration_interval_sec", v.coerceIn(1, 60)).apply()
+
     var amSilentToOwner: Boolean
         get() = sp.getBoolean(K_AM_SILENT, true)
         set(v) = sp.edit().putBoolean(K_AM_SILENT, v).apply()
