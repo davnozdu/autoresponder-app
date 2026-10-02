@@ -41,6 +41,7 @@ class AnswerMachineService : Service() {
     @Volatile private var transferred = false
     private var watcher: BroadcastReceiver? = null
     private val callVibration by lazy { AnswerMachineVibration(applicationContext) }
+    @Volatile private var callAlertPeer: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -136,7 +137,8 @@ class AnswerMachineService : Service() {
             // встроенная автозапись звонилки тоже уже пишет (она стартует по offhook), так что
             // greeting+бип+сообщение клиента попадут в один файл с самого начала разговора.
             val recId = db.amRecInsert(number, name, start, 0, null, reason)
-            if (s.amVibrateToOwner) callVibration.start(s.amMaxMessageSec.coerceIn(5, 300) + 20)
+            showCallAlert(name ?: number ?: "Неизвестный абонент", s.amVibrateToOwner)
+            if (s.amVibrateToOwner) callVibration.start(s.amMaxMessageSec.coerceIn(5, 300) + 20, scope)
 
             // Железная блокировка: подсветка в 0 через sysfs + тачскрин выключен на уровне
             // ядра (портировано из vr-usb-monitor, проверено на этом телефоне) — не зависит
@@ -308,7 +310,8 @@ class AnswerMachineService : Service() {
             // мёртвую тишину до самого автопереброса, а recStart останавливает буфер раньше,
             // чем истекает ожидание. Найдено финальным ревью ветки.
             val waitSec = s.screeningWaitSec.coerceIn(5, 300)
-            if (s.amVibrateToOwner) callVibration.start(waitSec + 20)
+            showCallAlert(name ?: number ?: "Неизвестный абонент", s.amVibrateToOwner)
+            if (s.amVibrateToOwner) callVibration.start(waitSec + 20, scope)
             AmBridge.recStart(app, waitSec)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -609,7 +612,10 @@ class AnswerMachineService : Service() {
         val r = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) {
                 if (i.action == NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED) {
-                    if (!callVibration.dndAllowsVibration()) callVibration.stop()
+                    if (!callVibration.dndAllowsVibration()) {
+                        callVibration.stop()
+                        callAlertPeer?.let { postCallAlert(it, "Автоответчик принял звонок", alert = false) }
+                    }
                     return
                 }
                 if (i.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
@@ -636,6 +642,8 @@ class AnswerMachineService : Service() {
 
     private fun unregisterWatcher(ctx: Context) {
         callVibration.stop()
+        callAlertPeer?.let { postCallAlert(it, "Звонок обработан автоответчиком", alert = false) }
+        callAlertPeer = null
         watcher?.let { runCatching { ctx.unregisterReceiver(it) } }
         watcher = null
     }
@@ -663,6 +671,39 @@ class AnswerMachineService : Service() {
                 if (it.moveToFirst()) it.getString(0) else null
             }
         } catch (e: Exception) { null }
+    }
+
+    private fun showCallAlert(peer: String, vibrate: Boolean) {
+        // A new call is a new alert even if the previous call's card is still visible.
+        runCatching { getSystemService(NotificationManager::class.java).cancel(4712) }
+        callAlertPeer = peer
+        postCallAlert(peer, "Автоответчик принял звонок", vibrate && callVibration.dndAllowsVibration())
+    }
+
+    /** A normal notification, separate from the quiet ongoing FGS, for watch mirroring. */
+    private fun postCallAlert(peer: String, title: String, alert: Boolean) {
+        runCatching {
+            val nm = getSystemService(NotificationManager::class.java)
+            val channel = if (alert) "am_call_alert" else "am_call_info"
+            nm.createNotificationChannel(NotificationChannel(channel,
+                if (alert) "Принятые звонки: вибрация" else "Принятые звонки: тихо",
+                NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(null, android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
+                enableVibration(alert)
+                if (alert) vibrationPattern = longArrayOf(0, 300, 200, 300)
+            })
+            val open = android.app.PendingIntent.getActivity(this, 4712,
+                Intent(this, com.davnozdu.autoresponder.ui.MainActivity::class.java),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            nm.notify(4712, androidx.core.app.NotificationCompat.Builder(this, channel)
+                .setSmallIcon(android.R.drawable.sym_action_call)
+                .setContentTitle(title).setContentText(peer)
+                .setCategory(Notification.CATEGORY_EVENT)
+                .setContentIntent(open).setAutoCancel(true)
+                .setLocalOnly(false).setOnlyAlertOnce(true)
+                .setSilent(!alert).build())
+        }.onFailure { EventLog(applicationContext).add("AM: уведомление звонка недоступно (${it.message})") }
     }
 
     private fun startForegroundCompat() {
