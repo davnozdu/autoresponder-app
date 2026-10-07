@@ -4,6 +4,7 @@ import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.IBinder
+import android.os.Build
 import android.os.Process
 import android.service.notification.StatusBarNotification
 import kotlin.system.exitProcess
@@ -22,9 +23,14 @@ object MsgrAnswerDispatch {
             val service = Class.forName("android.app.INotificationManager\$Stub")
                 .getMethod("asInterface", IBinder::class.java).invoke(null, binder)
             val probe = args.contentEquals(arrayOf("--probe"))
-            require(probe || args.size == 4)
-            val packages = if (probe) IncomingCallNotification.packages else setOf(args[0])
-            require(packages.all { it in IncomingCallNotification.packages })
+            val activityProbe = args.contentEquals(arrayOf("--activity-probe"))
+            require(probe || activityProbe || args.size == 4)
+            val packages = when {
+                activityProbe -> setOf("com.android.shell", "android")
+                probe -> IncomingCallNotification.packages
+                else -> setOf(args[0])
+            }
+            require(activityProbe || packages.all { it in IncomingCallNotification.packages })
             // Targeted system API avoids ACCESS_NOTIFICATIONS AppOps attribution under UID 0.
             val notifications = packages.flatMap { pkg ->
                 val slice = Class.forName("android.app.INotificationManager")
@@ -33,7 +39,22 @@ object MsgrAnswerDispatch {
                 @Suppress("UNCHECKED_CAST")
                 (slice.javaClass.getMethod("getList").invoke(slice) as List<StatusBarNotification>)
             }
-            if (probe) {
+            if (activityProbe) {
+                val current = notifications.singleOrNull { it.tag == "autoresp-msgr-activity-probe" }
+                    ?: error("activity probe notification missing")
+                val action = current.notification.contentIntent ?: error("activity probe token missing")
+                check(action.isActivity && action.creatorUid in setOf(0, 1000, 2000))
+                val target = PendingIntent::class.java.getDeclaredMethod("getTarget")
+                    .apply { isAccessible = true }.invoke(action)
+                val original = Class.forName("android.app.IActivityManager").methods.single {
+                    it.name == "getIntentForIntentSender" && it.parameterCount == 1
+                }.invoke(activityManager(), target) as Intent
+                check(original.component?.packageName == "com.davnozdu.autoresponder" &&
+                    original.component?.className == "com.davnozdu.autoresponder.ui.SetFlagActivity" &&
+                    original.getStringExtra("key") == "__probe_noop__")
+                // This protected activity logs an unknown key and finishes; no setting changes.
+                println("ANSWER_DISPATCH ACTIVITY PROBE sendResult=${send(action)} creatorUid=${action.creatorUid}")
+            } else if (probe) {
                 // A one-shot broadcast with no receiver. Exercise the same send path without
                 // taking a call, launching UI, changing settings, or sending a message.
                 val result = send(probeToken())
@@ -74,8 +95,12 @@ object MsgrAnswerDispatch {
             .apply { isAccessible = true }.invoke(action)
         val token = PendingIntent::class.java.getDeclaredField("mWhitelistToken")
             .apply { isAccessible = true }.get(action)
-        val options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(
-            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle()
+        // Android 16 only considers sender BAL/SAW permissions in ALLOW_ALWAYS mode (3).
+        // ALLOWED is deprecated and was BAL_BLOCK even for our root sender on this phone.
+        // compileSdk 35 does not expose the new constant; gate its pinned AOSP value by API.
+        val mode = if (Build.VERSION.SDK_INT >= 36) 3
+            else ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+        val options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(mode).toBundle()
         val method = Class.forName("android.app.IActivityManager").methods.single {
             it.name == "sendIntentSender" && it.parameterCount == 9
         }

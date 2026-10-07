@@ -3,6 +3,8 @@ package com.davnozdu.autoresponder.msgrec
 import android.media.AudioRecordingConfiguration
 import android.os.IBinder
 import android.os.SystemClock
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 /** Short, metadata-only snapshots during greeting sessions. No idle polling or audio reads. */
 internal object VoipInputDiagnostics {
@@ -24,5 +26,16 @@ internal object VoipInputDiagnostics {
             println("msgrec inject input stage=$stage target=$uid elapsed=${SystemClock.elapsedRealtime()} " +
                 "recorders=${lines.joinToString("; ").ifEmpty { "none" }}")
         }.onFailure { println("msgrec inject input stage=$stage unavailable=${it.javaClass.simpleName}:${it.message}") }
+        // Keep only the latest bounded set of snapshots, including native recorders that
+        // may not appear in AudioRecordingConfiguration. Runs during this session only.
+        runCatching {
+            val file = File("/data/local/tmp/autoresp-msgr-policy-$stage.txt")
+            val process = ProcessBuilder("dumpsys", "media.audio_policy")
+                .redirectErrorStream(true).redirectOutput(file).start()
+            try {
+                check(process.waitFor(2, TimeUnit.SECONDS)) { "policy dump timed out" }
+                println("msgrec inject policy stage=$stage target=$uid path=${file.absolutePath}")
+            } finally { process.destroy() }
+        }.onFailure { println("msgrec inject policy stage=$stage unavailable=${it.message}") }
     }
 }
