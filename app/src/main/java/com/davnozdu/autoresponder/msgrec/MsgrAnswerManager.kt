@@ -103,7 +103,7 @@ object MsgrAnswerManager {
         check(file.length() in 4..(VoipAudioInjector.MAX_SESSION_CLIP_BYTES.toLong() * 2)) {
             "приветствие/ожидание длиннее допустимого"
         }
-        return GreetingPcm.mono(file.readBytes())
+        return GreetingPcm.mono(file.readBytes(), VoipAudioInjector.MAX_SESSION_CLIP_BYTES)
     }
 
     @Synchronized fun onPosted(context: Context, sbn: StatusBarNotification) {

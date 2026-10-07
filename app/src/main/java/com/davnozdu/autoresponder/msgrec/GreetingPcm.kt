@@ -2,9 +2,10 @@ package com.davnozdu.autoresponder.msgrec
 
 /** Greeting.prepare produces signed little-endian PCM16 stereo at 48 kHz. */
 internal object GreetingPcm {
-    fun mono(stereo: ByteArray): ByteArray {
+    fun mono(stereo: ByteArray, maxMonoBytes: Int = VoipAudioInjector.MAX_BYTES): ByteArray {
         require(stereo.isNotEmpty() && stereo.size % 4 == 0) { "invalid stereo PCM" }
-        require(stereo.size / 2 <= VoipAudioInjector.MAX_BYTES) { "greeting exceeds 120 seconds" }
+        require(maxMonoBytes in 2..VoipAudioInjector.MAX_SESSION_CLIP_BYTES) { "invalid PCM limit" }
+        require(stereo.size / 2 <= maxMonoBytes) { "PCM clip exceeds configured duration limit" }
         val mono = ByteArray(stereo.size / 2)
         for (frame in 0 until stereo.size / 4) {
             val p = frame * 4
