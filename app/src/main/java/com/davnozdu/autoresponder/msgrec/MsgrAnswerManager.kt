@@ -139,7 +139,9 @@ object MsgrAnswerManager {
         val token = "${sbn.key}:${sbn.notification.`when`}"
         if (busy) {
             // A new incoming call must never inherit an old voicemail timeout/hangup.
-            if (token !in attempted && token != busyLogged) {
+            // Before the line connects, WhatsApp re-posts the SAME call with a new `when` —
+            // not a second call, so only an overlap with a connected session is logged.
+            if (connected && token !in attempted && token != busyLogged) {
                 busyLogged = token
                 EventLog(context).add("MSGR AM: ${sbn.packageName} — новый звонок, пока занят прежний сеанс; пропуск")
             }
