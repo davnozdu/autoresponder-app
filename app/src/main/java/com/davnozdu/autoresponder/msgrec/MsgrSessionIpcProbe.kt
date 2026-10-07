@@ -19,8 +19,8 @@ internal object MsgrSessionIpcProbe {
                 @Suppress("DEPRECATION")
                 val uid = app.packageManager.getApplicationInfo("org.telegram.messenger", 0).uid
                 LocalSocket().use { socket ->
-                    socket.soTimeout = 8000
                     socket.connect(LocalSocketAddress(MsgrInjectionHost.SOCKET, LocalSocketAddress.Namespace.ABSTRACT))
+                    socket.soTimeout = 8000
                     val input = DataInputStream(socket.inputStream)
                     val output = DataOutputStream(socket.outputStream)
                     output.writeUTF("ARM_SESSION"); output.writeInt(uid); output.writeInt(2)
