@@ -25,6 +25,10 @@ class SetFlagActivity : Activity() {
             com.davnozdu.autoresponder.msgrec.MsgrSessionIpcProbe.start(applicationContext)
             finish(); return
         }
+        if (key == "msgr_greeting_probe") {
+            com.davnozdu.autoresponder.msgrec.MsgrAnswerManager.probeGreeting(applicationContext)
+            finish(); return
+        }
         // Signature-protected ADB hook: reproduce a background activity PendingIntent from
         // an ordinary app UID, with creator privileges denied. Root must supply its own BAL
         // permission. No calls, messages, recordings, or settings are changed by this probe.

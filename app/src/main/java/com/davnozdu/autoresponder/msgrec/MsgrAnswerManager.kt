@@ -40,6 +40,16 @@ object MsgrAnswerManager {
     }
 
     fun cancel() { runCatching { activeSocket?.close() } }
+    /** Protected ADB check of the ACTUAL configured screening greeting, without taking a call. */
+    internal fun probeGreeting(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            runCatching { greeting(app, Plan(MsgrCallPolicy.Route.SCREENING, null, null, null)) }
+                .onSuccess { EventLog(app).add("MSGR GREETING PROBE: PASS screening bytes=${it.size} " +
+                    "durationMs=${it.size * 1000L / (VoipAudioInjector.RATE * 2)}") }
+                .onFailure { EventLog(app).add("MSGR GREETING PROBE: FAIL ${it.message}") }
+        }
+    }
     private fun shellQuote(value: String) = "'" + value.replace("'", "'\"'\"'") + "'"
     private fun dispatch(app: Context, current: StatusBarNotification, uid: Int, end: Boolean = false) {
         val args = (if (end) listOf("--end") else emptyList()) + listOf(current.packageName,
@@ -107,6 +117,7 @@ object MsgrAnswerManager {
     }
 
     @Synchronized fun onPosted(context: Context, sbn: StatusBarNotification) {
+        val receivedAt = SystemClock.elapsedRealtime()
         val s = Settings(context)
         if (!s.msgrAmEnabled || sbn.packageName !in supported || sbn.packageName !in s.msgrRecApps) return
         if (System.currentTimeMillis() - sbn.postTime !in 0..30_000) return
@@ -126,7 +137,7 @@ object MsgrAnswerManager {
             try {
                 val selected = plan(app, sbn)
                 if (selected.route == MsgrCallPolicy.Route.NONE) return@launch
-                runSession(app, sbn, selected, greeting(app, selected))
+                runSession(app, sbn, selected, greeting(app, selected), receivedAt)
             } catch (t: Exception) {
                 EventLog(app).add("MSGR AM: ${sbn.packageName}: ${t.javaClass.simpleName}: ${t.message}")
             } finally { activeSocket = null; connected = false; busy = false }
@@ -134,7 +145,7 @@ object MsgrAnswerManager {
     }
 
     private suspend fun runSession(app: Context, sbn: StatusBarNotification, selected: Plan,
-                                   audio: ByteArray) = coroutineScope {
+                                   audio: ByteArray, receivedAt: Long) = coroutineScope {
         val pkg = sbn.packageName
         val log = EventLog(app)
         @Suppress("DEPRECATION")
@@ -159,7 +170,8 @@ object MsgrAnswerManager {
                 output.writeUTF("ARM_SESSION"); output.writeInt(uid)
                 output.writeInt(audio.size); output.write(audio); output.flush()
                 check(input.readUTF() == "READY") { "хост не подготовил подачу звука" }
-                delay(2000)
+                // Preparation/ARM count toward the four seconds, rather than adding another delay.
+                delay(MsgrCallPolicy.remainingAnswerDelay(receivedAt, SystemClock.elapsedRealtime()))
                 val current = NotifListenerService.current(sbn.key) ?: error("входящий звонок завершён")
                 check(IncomingCallNotification.answer(current.notification)?.creatorPackage == pkg &&
                     plan(app, current).route == selected.route) { "звонок принят или условия автоответа изменились" }

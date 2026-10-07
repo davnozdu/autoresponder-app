@@ -6,6 +6,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MsgrCallPolicyTest {
+    @Test fun preparationCountsTowardTwoRingDelayAndNeverAddsDelayWhenAlreadyLate() {
+        assertEquals(4000L, MsgrCallPolicy.remainingAnswerDelay(10_000, 10_000))
+        assertEquals(2500L, MsgrCallPolicy.remainingAnswerDelay(10_000, 11_500))
+        assertEquals(0L, MsgrCallPolicy.remainingAnswerDelay(10_000, 14_000))
+        assertEquals(0L, MsgrCallPolicy.remainingAnswerDelay(10_000, 20_000))
+    }
     private fun route(enabled: Boolean = true, paused: Boolean = false, busy: Boolean = false,
                       blacklist: Boolean? = null, skip: Boolean = false, vacation: Boolean = false,
                       dnd: Boolean = false, screening: Boolean = false, headset: Boolean = false,
