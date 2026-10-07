@@ -1,6 +1,8 @@
 package com.davnozdu.autoresponder.msgrec
 
 import android.app.ActivityOptions
+import android.app.PendingIntent
+import android.content.Intent
 import android.os.IBinder
 import android.os.Process
 import android.service.notification.StatusBarNotification
@@ -32,8 +34,10 @@ object MsgrAnswerDispatch {
                 (slice.javaClass.getMethod("getList").invoke(slice) as List<StatusBarNotification>)
             }
             if (probe) {
-                // Read-only hardware check; no names, texts, or tokens are printed.
-                println("ANSWER_DISPATCH PROBE PASS notifications=${notifications.size}")
+                // A one-shot broadcast with no receiver. Exercise the same send path without
+                // taking a call, launching UI, changing settings, or sending a message.
+                val result = send(probeToken())
+                println("ANSWER_DISPATCH PROBE PASS notifications=${notifications.size} sendResult=$result")
             } else {
                 require(args.size == 4)
                 val pkg = args[0]
@@ -47,10 +51,8 @@ object MsgrAnswerDispatch {
                 val action = IncomingCallNotification.answer(current.notification)
                     ?: error("notification is no longer an incoming voice call")
                 check(action.creatorPackage == pkg && action.creatorUid == uid) { "unexpected token creator" }
-                val options = ActivityOptions.makeBasic()
-                    .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                action.send(null, 0, null, null, null, null, options.toBundle())
-                println("ANSWER_DISPATCH SENT package=$pkg")
+                val result = send(action)
+                println("ANSWER_DISPATCH SENT package=$pkg result=$result")
             }
             exitProcess(0)
         } catch (t: Throwable) {
@@ -58,5 +60,41 @@ object MsgrAnswerDispatch {
             System.err.println("ANSWER_DISPATCH ERROR ${cause.javaClass.simpleName}: ${cause.message}")
             exitProcess(1)
         }
+    }
+
+    private fun activityManager(): Any = Class.forName("android.app.ActivityManager")
+        .getDeclaredMethod("getService").apply { isAccessible = true }.invoke(null)
+
+    /** Android 16 PendingIntent.send() unconditionally dereferences ActivityThread, which a
+     * standalone app_process does not have. Call the same Binder method with a null app thread;
+     * the kernel still supplies the actual root sender UID/PID. Preserve the target and token.
+     */
+    private fun send(action: PendingIntent): Int {
+        val target = PendingIntent::class.java.getDeclaredMethod("getTarget")
+            .apply { isAccessible = true }.invoke(action)
+        val token = PendingIntent::class.java.getDeclaredField("mWhitelistToken")
+            .apply { isAccessible = true }.get(action)
+        val options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(
+            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle()
+        val method = Class.forName("android.app.IActivityManager").methods.single {
+            it.name == "sendIntentSender" && it.parameterCount == 9
+        }
+        val result = method.invoke(activityManager(), null, target, token, 0,
+            null, null, null, null, options) as Int
+        check(result >= 0) { "answer token rejected: $result" }
+        return result
+    }
+
+    private fun probeToken(): PendingIntent {
+        val method = Class.forName("android.app.IActivityManager").methods.single {
+            it.name == "getIntentSenderWithFeature" && it.parameterCount == 11
+        }
+        val intent = Intent("com.davnozdu.autoresponder.msgrec.ANSWER_DISPATCH_PROBE_NOOP")
+            .setPackage("com.davnozdu.autoresponder")
+        val target = method.invoke(activityManager(), 1 /* INTENT_SENDER_BROADCAST */, "android",
+            null, null, null, 0, arrayOf(intent), arrayOfNulls<String>(1),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT, null, 0)
+        return PendingIntent::class.java.getDeclaredConstructor(Class.forName("android.content.IIntentSender"))
+            .apply { isAccessible = true }.newInstance(target)
     }
 }
