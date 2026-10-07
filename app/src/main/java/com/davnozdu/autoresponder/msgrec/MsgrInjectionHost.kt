@@ -29,20 +29,30 @@ internal object MsgrInjectionHost {
                             val pcm = ByteArray(length)
                             input.readFully(pcm)
                             VoipAudioInjector(uid, pcm).use { injector ->
+                                VoipInputDiagnostics.snapshot("armed", uid)
                                 output.writeUTF("READY"); output.flush()
                                 check(input.readUTF() == "PLAY")
                                 println("msgrec inject play uid=$uid bytes=$length")
+                                VoipInputDiagnostics.snapshot("play", uid)
                                 injector.play()
                                 // EOF/app death/settings disable must restore the route immediately.
                                 val disconnect = Thread({
                                     runCatching { input.readUTF() }
                                     injector.close()
                                 }, "msgr-inject-disconnect").apply { isDaemon = true; start() }
+                                val diagnose = Thread({
+                                    for (i in 1..3) {
+                                        try { Thread.sleep(2000) } catch (_: InterruptedException) { return@Thread }
+                                        VoipInputDiagnostics.snapshot("playing-$i", uid)
+                                    }
+                                }, "msgr-inject-diagnostics").apply { isDaemon = true; start() }
                                 try { injector.awaitDone() } finally {
+                                    diagnose.interrupt(); diagnose.join(1000)
                                     runCatching { socket.shutdownInput() }
                                     disconnect.join(2000)
                                 }
                             }
+                            VoipInputDiagnostics.snapshot("restored", uid)
                             // DONE means the policy is removed, not just the last write accepted.
                             output.writeUTF("DONE"); output.flush()
                             println("msgrec inject done uid=$uid; microphone restored")

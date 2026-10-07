@@ -1,13 +1,9 @@
 package com.davnozdu.autoresponder.msgrec
 
-import android.app.Notification
-import android.app.PendingIntent
-import android.app.ActivityOptions
 import android.content.Context
 import android.media.AudioManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
-import android.os.Build
 import android.service.notification.StatusBarNotification
 import com.davnozdu.autoresponder.call.Greeting
 import com.davnozdu.autoresponder.data.EventLog
@@ -24,7 +20,7 @@ import java.io.File
 
 /** Opt-in experimental answering for Telegram, WhatsApp and WhatsApp Business. */
 object MsgrAnswerManager {
-    private val supported = setOf("org.telegram.messenger", "com.whatsapp", "com.whatsapp.w4b")
+    private val supported = IncomingCallNotification.packages
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val attempted = LinkedHashSet<String>()
     @Volatile private var busy = false
@@ -32,24 +28,21 @@ object MsgrAnswerManager {
 
     fun cancel() { runCatching { activeSocket?.close() } }
 
-    private fun answer(n: Notification): PendingIntent? {
-        // Telegram sets a video title but does not set CallStyle.setIsVideo on all versions.
-        val fields = listOf(Notification.EXTRA_TITLE, Notification.EXTRA_TEXT, Notification.EXTRA_SUB_TEXT)
-            .joinToString(" ") { n.extras.getCharSequence(it)?.toString().orEmpty() }
-        val video = n.extras.getBoolean("android.callIsVideo", false)
-        if (IncomingCallPolicy.isVideo(video, fields)) return null
-        val callType = n.extras.getInt("android.callType", 0)
-        if (callType == 1) {
-            @Suppress("DEPRECATION")
-            val standard = n.extras.getParcelable<PendingIntent>("android.answerIntent")
-            return standard
-        }
-        // Both WhatsApp packages may post their own call action buttons instead of CallStyle.
-        // Require CALL + one explicit answer action + incoming metadata or a decline action.
-        val actions = n.actions ?: return null
-        val index = IncomingCallPolicy.legacyAnswerIndex(n.category == Notification.CATEGORY_CALL,
-            callType, video, fields, actions.map { it.title?.toString().orEmpty() }) ?: return null
-        return actions[index].actionIntent
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
+
+    private fun dispatchAnswer(app: Context, current: StatusBarNotification, uid: Int) {
+        val args = listOf(current.packageName, current.key, uid.toString(), current.notification.`when`.toString())
+        val command = "CLASSPATH=" + shellQuote(app.applicationInfo.sourceDir) +
+            " app_process /system/bin com.davnozdu.autoresponder.msgrec.MsgrAnswerDispatch " +
+            args.joinToString(" ") { shellQuote(it) }
+        val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+        try {
+            check(process.waitFor(8, java.util.concurrent.TimeUnit.SECONDS)) { "превышено время команды ответа" }
+            val result = process.inputStream.bufferedReader().readText().take(1500)
+            check(process.exitValue() == 0 && result.contains("ANSWER_DISPATCH SENT package=${current.packageName}")) {
+                "диспетчер ответа: $result"
+            }
+        } finally { process.destroy() }
     }
 
     @Synchronized
@@ -57,7 +50,7 @@ object MsgrAnswerManager {
         val s = Settings(context)
         if (!s.msgrAmEnabled || sbn.packageName !in supported || sbn.packageName !in s.msgrRecApps) return
         if (System.currentTimeMillis() - sbn.postTime !in 0..30_000) return
-        val action = answer(sbn.notification) ?: return
+        val action = IncomingCallNotification.answer(sbn.notification) ?: return
         if (action.creatorPackage != sbn.packageName) return
         val token = "${sbn.key}:${sbn.notification.`when`}"
         if (busy || !attempted.add(token)) return
@@ -86,22 +79,14 @@ object MsgrAnswerManager {
                     check(input.readUTF() == "READY") { "хост не подготовил подачу звука" }
                     delay(2000) // Allow the owner to answer first; then revalidate the exact notification.
                     val current = NotifListenerService.current(sbn.key)
-                    val currentAction = current?.let { answer(it.notification) }
+                    val currentAction = current?.let { IncomingCallNotification.answer(it.notification) }
                     check(Settings(app).msgrAmEnabled && currentAction != null &&
                         currentAction.creatorPackage == sbn.packageName) {
                         "входящий звонок уже завершён или принят вручную"
                     }
-                    if (Build.VERSION.SDK_INT >= 34 && currentAction.isActivity) {
-                        // Telegram and WhatsApp can answer through an internal call activity.
-                        // Android 14+ requires sender opt-in: plain send() silently BAL_BLOCKs.
-                        // Only delegate to the verified answer token from the selected messenger.
-                        val options = ActivityOptions.makeBasic()
-                            .setPendingIntentBackgroundActivityStartMode(
-                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                        currentAction.send(app, 0, null, null, null, null, options.toBundle())
-                    } else currentAction.send()
+                    dispatchAnswer(app, current!!, uid)
                     log.add("MSGR AM: команда ответа отправлена ${sbn.packageName}; " +
-                        "действие=${if (currentAction.isActivity) "activity" else "service/broadcast"}; маршрут приветствия готов")
+                        "действие=${if (currentAction.isActivity) "activity" else "service/broadcast"}; отправитель=root; маршрут приветствия готов")
                     val am = app.getSystemService(AudioManager::class.java)
                     val deadline = android.os.SystemClock.elapsedRealtime() + 20_000
                     while (am.mode != AudioManager.MODE_IN_COMMUNICATION ||
@@ -130,7 +115,7 @@ object MsgrAnswerManager {
                     try {
                         check(input.readUTF() == "DONE") { "ошибка подачи приветствия" }
                     } finally { callEnd.cancel() }
-                    log.add("MSGR AM: приветствие отправлено ${sbn.packageName}; микрофон восстановлен")
+                    log.add("MSGR AM: запись приветствия в виртуальный поток завершена ${sbn.packageName}; микрофон восстановлен")
                 }
             } catch (t: Exception) {
                 log.add("MSGR AM: ${sbn.packageName}: ${t.javaClass.simpleName}: ${t.message}")
