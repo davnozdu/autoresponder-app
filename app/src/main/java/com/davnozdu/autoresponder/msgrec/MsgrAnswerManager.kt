@@ -29,6 +29,7 @@ object MsgrAnswerManager {
     @Volatile private var busy = false
     @Volatile private var activeSocket: LocalSocket? = null
     @Volatile private var connected = false
+    @Volatile private var busyLogged: String? = null
     private data class Plan(val route: MsgrCallPolicy.Route, val peer: String?, val lang: String?, val text: String?)
     private enum class Decision { ACCEPT, DECLINE, VOICEMAIL }
     private class State {
@@ -39,7 +40,19 @@ object MsgrAnswerManager {
         @Volatile var ownerMuted = false
     }
 
-    fun cancel() { runCatching { activeSocket?.close() } }
+    fun cancel() { hangUp(activeSocket) }
+    /**
+     * close() alone is not enough: a reader blocked in readUTF() on another thread is NOT woken
+     * by close() on Linux, and the kernel keeps the socket alive (no EOF for the host) until that
+     * read returns. The session then never finished, `busy` stayed true and the NEXT incoming
+     * call was silently dropped — every other call on 2026-10-07. shutdown() wakes both sides.
+     */
+    private fun hangUp(socket: LocalSocket?) {
+        socket ?: return
+        runCatching { socket.shutdownInput() }
+        runCatching { socket.shutdownOutput() }
+        runCatching { socket.close() }
+    }
     /** Protected ADB check of the ACTUAL configured screening greeting, without taking a call. */
     internal fun probeGreeting(context: Context) {
         val app = context.applicationContext
@@ -89,8 +102,8 @@ object MsgrAnswerManager {
             headset = HeadsetPolicy.shouldForceAnswer(s.headsetForceAnswer,
                 AudioRouteUtil.isBluetoothHeadsetActive(app), skip != null),
             closed = ClosedState.isClosed(app, s), closedVoice = s.callClosedMode == 1)
-        if (route == MsgrCallPolicy.Route.NONE && skip != null)
-            EventLog(app).add("MSGR AM: ${sbn.packageName} — $skip, обычный звонок")
+        if (route == MsgrCallPolicy.Route.NONE)
+            EventLog(app).add("MSGR AM: ${sbn.packageName} — ${skip ?: "автоответ по текущим правилам не нужен"}, обычный звонок")
         return Plan(route, peer, if (route == MsgrCallPolicy.Route.BLACKLIST)
             bl?.callPromptLang?.ifBlank { null } else s.amGreetingLang.ifBlank { null },
             if (route == MsgrCallPolicy.Route.BLACKLIST) bl?.callPrompt else null)
@@ -126,6 +139,10 @@ object MsgrAnswerManager {
         val token = "${sbn.key}:${sbn.notification.`when`}"
         if (busy) {
             // A new incoming call must never inherit an old voicemail timeout/hangup.
+            if (token !in attempted && token != busyLogged) {
+                busyLogged = token
+                EventLog(context).add("MSGR AM: ${sbn.packageName} — новый звонок, пока занят прежний сеанс; пропуск")
+            }
             if (connected && token !in attempted) cancel()
             return
         }
@@ -170,13 +187,26 @@ object MsgrAnswerManager {
                 output.writeUTF("ARM_SESSION"); output.writeInt(uid)
                 output.writeInt(audio.size); output.write(audio); output.flush()
                 check(input.readUTF() == "READY") { "хост не подготовил подачу звука" }
-                // Preparation/ARM count toward the four seconds, rather than adding another delay.
+                // Preparation/ARM count toward the two seconds, rather than adding another delay.
                 delay(MsgrCallPolicy.remainingAnswerDelay(receivedAt, SystemClock.elapsedRealtime()))
                 val current = NotifListenerService.current(sbn.key) ?: error("входящий звонок завершён")
                 check(IncomingCallNotification.answer(current.notification)?.creatorPackage == pkg &&
                     plan(app, current).route == selected.route) { "звонок принят или условия автоответа изменились" }
                 dispatch(app, current, uid)
                 log.add("MSGR AM: команда ответа отправлена $pkg; режим=${selected.route}; отправитель=root")
+                val screening = selected.route == MsgrCallPolicy.Route.SCREENING
+                if (screening) {
+                    // The card goes up together with the answer command, not after the connection
+                    // wait + 2 s settle: the owner used to look at an empty screen for ~2–3 s.
+                    // A decision taken before the line connects is simply applied once it does.
+                    screeningCard = true
+                    CallerOverlay.showScreening(app, selected.peer ?: pkg, null,
+                        onAccept = { state.decision.compareAndSet(null, Decision.ACCEPT) },
+                        onDecline = { state.decision.compareAndSet(null, Decision.DECLINE) },
+                        onTransfer = { state.decision.compareAndSet(null, Decision.VOICEMAIL) })
+                    if (s.amVibrateToOwner) vibration.start(s.screeningWaitSec.coerceIn(5, 300) + 20,
+                        s.amVibrationIntervalSec, this)
+                }
                 val deadline = SystemClock.elapsedRealtime() + 20_000
                 while (am.mode != AudioManager.MODE_IN_COMMUNICATION ||
                     NotifListenerService.activeCallApp(setOf(pkg)) == null) {
@@ -203,7 +233,9 @@ object MsgrAnswerManager {
                         state.ownerMuted = false
                     }
                 }
-                reader = launch(Dispatchers.IO) {
+                // Not a child of this session: even if a read ever got stuck again, it must not keep
+                // the session (and with it `busy`) alive and swallow the next incoming call.
+                reader = scope.launch {
                     try {
                         while (true) {
                             val reply = input.readUTF()
@@ -225,9 +257,9 @@ object MsgrAnswerManager {
                         else {
                             val now = SystemClock.elapsedRealtime()
                             if (awaySince == 0L) awaySince = now
-                            if (now - awaySince >= 2500) { state.ended = true; socket.close(); break }
+                            if (now - awaySince >= 2500) { state.ended = true; hangUp(socket); break }
                         }
-                        if (!Settings(app).msgrAmEnabled) { state.ended = true; socket.close(); break }
+                        if (!Settings(app).msgrAmEnabled) { state.ended = true; hangUp(socket); break }
                         if (endToken.get() == null) endToken.compareAndSet(null, findEnd())
                         synchronized(volumeLock) {
                             if (state.ownerMuted) runCatching {
@@ -268,17 +300,7 @@ object MsgrAnswerManager {
                         waitFor(6000) { am.mode != AudioManager.MODE_IN_COMMUNICATION }
                     }
                 }
-                val screening = selected.route == MsgrCallPolicy.Route.SCREENING
                 muteOwner(screening || s.amSilentToOwner)
-                if (screening) {
-                    screeningCard = true
-                    CallerOverlay.showScreening(app, selected.peer ?: pkg, null,
-                        onAccept = { state.decision.compareAndSet(null, Decision.ACCEPT) },
-                        onDecline = { state.decision.compareAndSet(null, Decision.DECLINE) },
-                        onTransfer = { state.decision.compareAndSet(null, Decision.VOICEMAIL) })
-                    if (s.amVibrateToOwner) vibration.start(s.screeningWaitSec.coerceIn(5, 300) + 20,
-                        s.amVibrationIntervalSec, this)
-                }
                 log.add("MSGR AM: разговор подключён $pkg; приветствие ${selected.route}")
                 output.writeUTF("PLAY"); output.flush()
                 if (screening) {
@@ -321,7 +343,7 @@ object MsgrAnswerManager {
                 }
             } finally {
                 state.ended = true
-                socket.close()
+                hangUp(socket)
                 monitor?.cancel(); reader?.cancel(); vibration.stop()
                 if (screeningCard) CallerOverlay.hide(app)
                 synchronized(volumeLock) {
