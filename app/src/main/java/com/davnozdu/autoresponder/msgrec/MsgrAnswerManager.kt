@@ -34,6 +34,10 @@ object MsgrAnswerManager {
         // Android CallStyle: 1 = incoming, 2 = ongoing, 3 = screening.
         if (n.extras.getInt("android.callType", 0) != 1) return null
         if (n.extras.getBoolean("android.callIsVideo", false)) return null
+        // Telegram sets a video title but does not set CallStyle.setIsVideo on all versions.
+        val fields = listOf(Notification.EXTRA_TITLE, Notification.EXTRA_TEXT, Notification.EXTRA_SUB_TEXT)
+            .joinToString(" ") { n.extras.getCharSequence(it)?.toString().orEmpty() }.lowercase()
+        if (listOf("video", "видео", "відео").any { it in fields }) return null
         @Suppress("DEPRECATION")
         return n.extras.getParcelable<PendingIntent>("android.answerIntent")
     }
@@ -85,9 +89,24 @@ object MsgrAnswerManager {
                         delay(100)
                     }
                     delay(2000) // Audio setup can enter communication mode before the peer is connected.
+                    check(Settings(app).msgrAmEnabled) { "автоответ мессенджеров выключен" }
                     check(am.mode == AudioManager.MODE_IN_COMMUNICATION) { "звонок завершён до приветствия" }
                     output.writeUTF("PLAY"); output.flush()
-                    check(input.readUTF() == "DONE") { "ошибка подачи приветствия" }
+                    val callEnd = scope.launch {
+                        var awaySince = 0L
+                        while (activeSocket === socket) {
+                            delay(200)
+                            if (am.mode == AudioManager.MODE_IN_COMMUNICATION) awaySince = 0L
+                            else {
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (awaySince == 0L) awaySince = now
+                                if (now - awaySince >= 2500) { socket.close(); break }
+                            }
+                        }
+                    }
+                    try {
+                        check(input.readUTF() == "DONE") { "ошибка подачи приветствия" }
+                    } finally { callEnd.cancel() }
                     log.add("MSGR AM: приветствие отправлено ${sbn.packageName}; микрофон восстановлен")
                 }
             } catch (t: Exception) {
