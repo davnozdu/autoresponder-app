@@ -1,6 +1,6 @@
 # Приветствие в звонках мессенджеров — эксперимент
 
-Тестовая ветка `feat/messenger-greeting-probe`, приложение `0.29.5-msgr-test`.
+Тестовая ветка `feat/messenger-greeting-probe`, приложение `0.29.5-msgr-test2`.
 Функция по умолчанию выключена. В экране «Запись звонков в мессенджерах» появился
 отдельный переключатель «Принимать звонки и говорить приветствие».
 
@@ -59,3 +59,21 @@ CLASSPATH="$apk" app_process /system/bin com.davnozdu.autoresponder.msgrec.MsgrI
 `frameworks/base/media/java/android/media/audiopolicy/AudioPolicy.java`,
 `AudioMixingRule.java`, пример `platform/development/samples/VirtualDeviceManager/host/src/`
 `com/example/android/vdmdemo/host/AudioInjector.java`.
+
+## Результаты 2026-10-07
+
+- Аппаратный probe на OnePlus 15: амплитуда 3999.36 при заданных 4000, доля энергии
+  контрольного тона 0.99999998. Подмена входа подтверждена. После снятия политики тот же
+  AudioRecord прочитал 24000 кадров и вернулся к TYPE_BUILTIN_MIC (15).
+- Первый входящий Telegram: уведомление обнаружено, приветствие подготовлено, политика
+  зарегистрирована. Принятие не произошло. В logcat Android есть `BAL_BLOCK` для
+  `LaunchActivity` с действием `voip_answer`: Telegram 12.10.6 (targetSdk 36) использует
+  activity PendingIntent для pre-call notification, и простой `send()` из нашего фона
+  не передаёт право запуска.
+- В test2 добавлен sender opt-in `setPendingIntentBackgroundActivityStartMode(ALLOWED)`
+  для activity PendingIntent. Создатель токена должен совпадать с выбранным мессенджером.
+  Нашему приложению уже разрешён SYSTEM_ALERT_WINDOW. Повторный живой звонок требуется.
+- События «команда ответа отправлена» и «разговор подключён» разделены, чтобы отсутствие
+  исключения от PendingIntent.send() не считалось фактическим принятием звонка.
+
+Справка: https://developer.android.com/guide/components/activities/secure-bal

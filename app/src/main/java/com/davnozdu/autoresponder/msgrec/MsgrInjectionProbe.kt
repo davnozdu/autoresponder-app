@@ -69,5 +69,7 @@ object MsgrInjectionProbe {
             injector.close()
             println("INJECTION_PROBE policy removed")
         }
+        // app_process has Binder worker threads; returning from main alone leaves it alive.
+        kotlin.system.exitProcess(0)
     }
 }

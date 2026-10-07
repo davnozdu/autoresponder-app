@@ -2,10 +2,12 @@ package com.davnozdu.autoresponder.msgrec
 
 import android.app.Notification
 import android.app.PendingIntent
+import android.app.ActivityOptions
 import android.content.Context
 import android.media.AudioManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
+import android.os.Build
 import android.service.notification.StatusBarNotification
 import com.davnozdu.autoresponder.call.Greeting
 import com.davnozdu.autoresponder.data.EventLog
@@ -48,6 +50,7 @@ object MsgrAnswerManager {
         if (!s.msgrAmEnabled || sbn.packageName !in supported || sbn.packageName !in s.msgrRecApps) return
         if (System.currentTimeMillis() - sbn.postTime !in 0..30_000) return
         val action = answer(sbn.notification) ?: return
+        if (action.creatorPackage != sbn.packageName) return
         val token = "${sbn.key}:${sbn.notification.`when`}"
         if (busy || !attempted.add(token)) return
         while (attempted.size > 64) attempted.remove(attempted.first())
@@ -78,8 +81,16 @@ object MsgrAnswerManager {
                     check(Settings(app).msgrAmEnabled && current != null && answer(current.notification) != null) {
                         "входящий звонок уже завершён или принят вручную"
                     }
-                    action.send()
-                    log.add("MSGR AM: принят ${sbn.packageName}; маршрут приветствия готов")
+                    if (Build.VERSION.SDK_INT >= 34 && action.isActivity) {
+                        // Telegram's pre-call notification answers through LaunchActivity.
+                        // Android 14+ requires sender opt-in: plain send() silently BAL_BLOCKs.
+                        // Only delegate to the verified answer token from the selected messenger.
+                        val options = ActivityOptions.makeBasic()
+                            .setPendingIntentBackgroundActivityStartMode(
+                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                        action.send(app, 0, null, null, null, null, options.toBundle())
+                    } else action.send()
+                    log.add("MSGR AM: команда ответа отправлена ${sbn.packageName}; маршрут приветствия готов")
                     val am = app.getSystemService(AudioManager::class.java)
                     val deadline = android.os.SystemClock.elapsedRealtime() + 20_000
                     while (am.mode != AudioManager.MODE_IN_COMMUNICATION ||
@@ -91,6 +102,7 @@ object MsgrAnswerManager {
                     delay(2000) // Audio setup can enter communication mode before the peer is connected.
                     check(Settings(app).msgrAmEnabled) { "автоответ мессенджеров выключен" }
                     check(am.mode == AudioManager.MODE_IN_COMMUNICATION) { "звонок завершён до приветствия" }
+                    log.add("MSGR AM: разговор подключён ${sbn.packageName}; отправляем приветствие")
                     output.writeUTF("PLAY"); output.flush()
                     val callEnd = scope.launch {
                         var awaySince = 0L
