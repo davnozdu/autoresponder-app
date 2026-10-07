@@ -1,6 +1,6 @@
 # Приветствие в звонках мессенджеров — эксперимент
 
-Тестовая ветка `feat/messenger-greeting-probe`, приложение `0.29.5-msgr-test4`.
+Тестовая ветка `feat/messenger-greeting-probe`, приложение `0.29.5-msgr-test5`.
 Функция по умолчанию выключена. В экране «Запись звонков в мессенджерах» появился
 отдельный переключатель «Принимать звонки и говорить приветствие».
 
@@ -124,3 +124,22 @@ CLASSPATH="$apk" app_process /system/bin com.davnozdu.autoresponder.msgrec.MsgrI
   Telegram и пакет вне разрешённого списка отклоняются с exit 1 без отправки действия.
   После установки shell-хост автоматически перезапустился на новом APK под UID 2000;
   запись и экспериментальный автоответ остались включены.
+
+## test4: замер 12:33 и test5
+
+- 12:33:33 входящий Telegram; 12:33:36 ошибка до отправки ответа.
+  `PendingIntent.send()` на Android 16 разыменовывает
+  `ActivityThread.currentActivityThread().getApplicationThread()` даже с null Context.
+  У standalone app_process ActivityThread отсутствует: NullPointerException.
+  PCM не проигрывался; сокет закрылся, временная политика снята.
+- В test5 вызывается тот же `IActivityManager.sendIntentSender` через Binder, с null
+  IApplicationThread и исходными IIntentSender/mWhitelistToken. Фактические UID/PID
+  отправителя по-прежнему определяются Binder ядром; extras токена сохраняются.
+- Аппаратный `--probe` теперь создаёт one-shot immutable PendingIntent для
+  broadcast без получателя и отправляет через тот же путь. Не отвечает на звонки,
+  не запускает UI и не меняет настройки. Проверка получения уведомлений в test4
+  не покрывала саму отправку и не выявила этот сбой.
+- test5: CI 37608609286 прошёл (unit tests, release, debug). На телефоне
+  аппаратный `--probe` выполнил реальную отправку безопасного действия:
+  `ANSWER_DISPATCH PROBE PASS notifications=0 sendResult=0`, exit 0.
+  Прежней NullPointerException нет. Живой автоответ и слышимость проверяются отдельно.
