@@ -26,7 +26,7 @@ object MsgrAnswerDispatch {
             val activityProbe = args.contentEquals(arrayOf("--activity-probe"))
             require(probe || activityProbe || args.size == 4)
             val packages = when {
-                activityProbe -> setOf("com.android.shell", "android")
+                activityProbe -> setOf("com.davnozdu.autoresponder")
                 probe -> IncomingCallNotification.packages
                 else -> setOf(args[0])
             }
@@ -43,7 +43,9 @@ object MsgrAnswerDispatch {
                 val current = notifications.singleOrNull { it.tag == "autoresp-msgr-activity-probe" }
                     ?: error("activity probe notification missing")
                 val action = current.notification.contentIntent ?: error("activity probe token missing")
-                check(action.isActivity && action.creatorUid in setOf(0, 1000, 2000))
+                check(action.isActivity && action.creatorUid == current.uid &&
+                    action.creatorPackage == "com.davnozdu.autoresponder")
+                check(System.currentTimeMillis() - current.postTime in 0..60_000)
                 val target = PendingIntent::class.java.getDeclaredMethod("getTarget")
                     .apply { isAccessible = true }.invoke(action)
                 val original = Class.forName("android.app.IActivityManager").methods.single {
@@ -53,7 +55,8 @@ object MsgrAnswerDispatch {
                     original.component?.className == "com.davnozdu.autoresponder.ui.SetFlagActivity" &&
                     original.getStringExtra("key") == "__probe_noop__")
                 // This protected activity logs an unknown key and finishes; no setting changes.
-                println("ANSWER_DISPATCH ACTIVITY PROBE sendResult=${send(action)} creatorUid=${action.creatorUid}")
+                println("ANSWER_DISPATCH ACTIVITY PROBE sendResult=${send(action)} " +
+                    "creatorUid=${action.creatorUid} id=${original.getLongExtra("probe_id", -1)}")
             } else if (probe) {
                 // A one-shot broadcast with no receiver. Exercise the same send path without
                 // taking a call, launching UI, changing settings, or sending a message.
