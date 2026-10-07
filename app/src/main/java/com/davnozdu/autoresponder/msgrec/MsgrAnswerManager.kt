@@ -64,7 +64,7 @@ object MsgrAnswerManager {
         val number = peer?.takeIf { PhoneMask.looksLikeNumber(it) }
         val bl = HistoryDb.get(app).blacklistMatch(number, peer)
         val skip = if (number != null) SkipPolicy.reason(app, number, s, isCall = true)
-            else SkipPolicy.reasonForSender(app, peer, s)
+            else SkipPolicy.reasonForSender(app, peer, s, isCall = true)
         val am = app.getSystemService(AudioManager::class.java)
         val route = MsgrCallPolicy.route(
             enabled = s.enabled && s.respondCalls && s.msgrAmEnabled &&
@@ -148,6 +148,7 @@ object MsgrAnswerManager {
         var screeningCard = false
         var handedOff = false
         val endToken = AtomicReference<StatusBarNotification?>(null)
+        val volumeLock = Any()
         LocalSocket().use { socket ->
             activeSocket = socket
             try {
@@ -181,7 +182,7 @@ object MsgrAnswerManager {
                     IncomingCallNotification.end(it.notification)?.creatorPackage == pkg
                 }
                 endToken.set(findEnd())
-                fun muteOwner(mute: Boolean) {
+                fun muteOwner(mute: Boolean) = synchronized(volumeLock) {
                     if (mute) {
                         state.ownerMuted = true
                         runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
@@ -216,7 +217,11 @@ object MsgrAnswerManager {
                         }
                         if (!Settings(app).msgrAmEnabled) { state.ended = true; socket.close(); break }
                         if (endToken.get() == null) endToken.compareAndSet(null, findEnd())
-                        if (state.ownerMuted) muteOwner(true)
+                        synchronized(volumeLock) {
+                            if (state.ownerMuted) runCatching {
+                                am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0)
+                            }
+                        }
                     }
                 }
                 suspend fun waitFor(ms: Long, done: () -> Boolean = { false }) {
@@ -307,8 +312,11 @@ object MsgrAnswerManager {
                 socket.close()
                 monitor?.cancel(); reader?.cancel(); vibration.stop()
                 if (screeningCard) CallerOverlay.hide(app)
-                if (state.ownerMuted) runCatching {
-                    am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0)
+                synchronized(volumeLock) {
+                    if (state.ownerMuted) runCatching {
+                        am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0)
+                    }
+                    state.ownerMuted = false
                 }
                 MsgrCaptureManager.endAnswering(app, pkg, handedOff)
                 log.add("MSGR AM: $pkg — сессия завершена, временный аудиомаршрут снят")

@@ -34,7 +34,7 @@ object SkipPolicy {
      * поиск контакта по имени, чтобы переключатели «не отвечать звёздным / всем контактам»
      * действовали и здесь.
      */
-    fun reasonForSender(context: Context, sender: String?, s: Settings): String? {
+    fun reasonForSender(context: Context, sender: String?, s: Settings, isCall: Boolean = false): String? {
         val raw = sender?.trim().orEmpty()
         if (raw.isEmpty()) return null
         if (s.isFavorite(raw)) return "в Избранных"
@@ -42,10 +42,17 @@ object SkipPolicy {
         if (PhoneMask.looksLikeNumber(raw)) {
             if (s.excludeStarred && ContactUtil.isStarred(context, raw)) return "звёздный контакт"
             if (s.excludeContacts && ContactUtil.isKnownContact(context, raw)) return "контакт из книги"
+            if (isCall && s.respectDndPriority && DndPolicy.wouldPassThrough(context, raw, true))
+                return "приоритетный для DND"
             return null
         }
+        // Messenger shows a name, but the same favourite may be saved as a phone number.
+        val phones = ContactUtil.numbersForName(context, raw)
+        if (phones.any { PhoneMask.isExcluded(it, s.favorites) }) return "в Избранных (номер контакта)"
         if (s.excludeStarred && ContactUtil.isStarredName(context, raw)) return "звёздный контакт «$raw»"
         if (s.excludeContacts && ContactUtil.isKnownName(context, raw)) return "контакт из книги «$raw»"
+        if (isCall && s.respectDndPriority && phones.any { DndPolicy.wouldPassThrough(context, it, true) })
+            return "приоритетный для DND"
         return null
     }
 }
