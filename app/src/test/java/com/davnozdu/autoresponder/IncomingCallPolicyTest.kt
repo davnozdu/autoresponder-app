@@ -33,4 +33,12 @@ class IncomingCallPolicyTest {
         assertNull(IncomingCallPolicy.legacyAnswerIndex(true, 0, false,
             "Incoming call", listOf("Answer", "Accept", "Decline")))
     }
+    @Test fun hangupRequiresOngoingCallAndUniqueExplicitEndAction() {
+        assertEquals(0, IncomingCallPolicy.endIndex(true, 2, listOf("End call")))
+        assertEquals(1, IncomingCallPolicy.endIndex(true, 0, listOf("Mute", "Завершить звонок")))
+        assertNull(IncomingCallPolicy.endIndex(false, 0, listOf("End call")))
+        assertNull(IncomingCallPolicy.endIndex(true, 1, listOf("End call")))
+        assertNull(IncomingCallPolicy.endIndex(true, 0, listOf("Decline")))
+        assertNull(IncomingCallPolicy.endIndex(true, 2, listOf("End call", "Hang up")))
+    }
 }

@@ -22,4 +22,17 @@ internal object IncomingCallNotification {
             callType, video, fields, actions.map { it.title?.toString().orEmpty() }) ?: return null
         return actions[index].actionIntent
     }
+
+    fun end(n: Notification): PendingIntent? {
+        val type = n.extras.getInt("android.callType", 0)
+        if (type == 2) {
+            @Suppress("DEPRECATION")
+            n.extras.getParcelable<PendingIntent>("android.hangUpIntent")?.let { return it }
+        }
+        val ongoing = n.flags and Notification.FLAG_ONGOING_EVENT != 0
+        val actions = n.actions ?: return null
+        val index = IncomingCallPolicy.endIndex(ongoing, type,
+            actions.map { it.title?.toString().orEmpty() }) ?: return null
+        return actions[index].actionIntent
+    }
 }

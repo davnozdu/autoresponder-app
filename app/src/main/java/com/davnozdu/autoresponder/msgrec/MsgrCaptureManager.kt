@@ -31,6 +31,7 @@ object MsgrCaptureManager {
 
     @Volatile private var enabled = false
     @Volatile private var activeJob: CaptureJob? = null
+    @Volatile private var answeringPkg: String? = null
 
     // Messenger call setup briefly bounces MODE_IN_COMMUNICATION (ring -> connect); observed ~1.5 s
     // for Telegram. Tearing the session down and restarting it inside that gap spawns a second
@@ -41,12 +42,27 @@ object MsgrCaptureManager {
     private class CaptureJob(val pkg: String, val label: String, @Volatile var peer: String?) {
         val monitor = Object()
         @Volatile var stopped = false
+        @Volatile var answering = false
         lateinit var worker: Thread
     }
 
     @Synchronized
     fun refresh(context: Context) {
-        if (Settings(context).msgrRecEnabled) enable(context) else disable()
+        if (Settings(context).msgrRecEnabled || answeringPkg != null) enable(context) else disable()
+    }
+
+    @Synchronized fun beginAnswering(context: Context, pkg: String) {
+        answeringPkg = pkg
+        enable(context)
+        evaluate()
+        activeJob?.takeIf { it.pkg == pkg }?.answering = true
+    }
+
+    @Synchronized fun endAnswering(context: Context, pkg: String, handoff: Boolean) {
+        if (answeringPkg != pkg) return
+        if (handoff) activeJob?.takeIf { it.pkg == pkg }?.answering = false
+        answeringPkg = null
+        refresh(context)
     }
 
     @Synchronized
@@ -128,7 +144,7 @@ object MsgrCaptureManager {
         // free. The mode may enter IN_COMMUNICATION a beat before the notification appears — the
         // playback callback, the mode change and each notification post all re-trigger evaluate(),
         // so the start fires as soon as the notification is up.
-        val whitelist = Settings(ctx).msgrRecApps
+        val whitelist = answeringPkg?.let { setOf(it) } ?: Settings(ctx).msgrRecApps
         val pkg = NotifListenerService.activeCallApp(whitelist) ?: return
         startCurrent(ctx, pkg)
     }
@@ -155,6 +171,7 @@ object MsgrCaptureManager {
             ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString()
         }.getOrDefault(pkg.substringAfterLast('.'))
         val job = CaptureJob(pkg, label, NotifListenerService.activeCallPeer(pkg))
+        job.answering = answeringPkg == pkg
         val startedAt = System.currentTimeMillis()
         activeJob = job
         job.worker = Thread({ captureSession(ctx, job, startedAt) }, "msgr-ipc").apply { start() }
@@ -222,6 +239,8 @@ object MsgrCaptureManager {
                         MsgrRecordingRecovery.insertIfMissing(ctx,
                             "${job.label} · ${job.peer ?: "Неизвестный абонент"}",
                             segmentAt, durationMs, path)
+                        if (job.answering) com.davnozdu.autoresponder.notif.AutoNotifications.showAmRec(
+                            ctx, job.peer, null, durationMs)
                         LogFile.append("$TAG: сохранено $path (${durationMs / 1000}s, mic=$nearNonzero, far=$farNonzero) → журнал")
                     } else {
                         // Nothing worth keeping (call never really started); drop the empty file.

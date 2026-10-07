@@ -63,6 +63,11 @@ class NotifListenerService : NotificationListenerService() {
         fun current(key: String): StatusBarNotification? = try {
             instance?.activeNotifications?.firstOrNull { it.key == key }
         } catch (_: Exception) { null }
+        fun callNotifications(pkg: String): List<StatusBarNotification> = try {
+            instance?.activeNotifications?.filter {
+                it.packageName == pkg && isCallNotification(it.notification)
+            }.orEmpty()
+        } catch (_: Exception) { emptyList() }
         /** Имя собеседника из уведомления активного звонка. Может отсутствовать из-за настроек приватности. */
         fun activeCallPeer(pkg: String): String? = try {
             instance?.activeNotifications?.asSequence()

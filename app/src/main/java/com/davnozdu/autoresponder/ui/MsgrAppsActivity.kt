@@ -63,7 +63,7 @@ fun MsgrAppsScreen() {
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Принимать звонки и говорить приветствие", style = MaterialTheme.typography.bodyLarge)
-                    Text("Тест: Telegram, WhatsApp и WhatsApp Business, только голосовые входящие. Приветствие из настроек автоответчика; затем включается микрофон.",
+                    Text("Telegram, WhatsApp и WhatsApp Business: в рабочем режиме — скрининг звонка, при «Не беспокоить» — автоответчик. Общие расписания, приветствия и исключения; избранные звонят обычно.",
                         style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = answering, onCheckedChange = {

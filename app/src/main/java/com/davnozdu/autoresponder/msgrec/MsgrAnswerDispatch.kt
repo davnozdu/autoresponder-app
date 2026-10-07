@@ -24,11 +24,13 @@ object MsgrAnswerDispatch {
                 .getMethod("asInterface", IBinder::class.java).invoke(null, binder)
             val probe = args.contentEquals(arrayOf("--probe"))
             val activityProbe = args.contentEquals(arrayOf("--activity-probe"))
-            require(probe || activityProbe || args.size == 4)
+            val end = args.size == 5 && args[0] == "--end"
+            val callArgs = if (end) args.drop(1).toTypedArray() else args
+            require(probe || activityProbe || callArgs.size == 4)
             val packages = when {
                 activityProbe -> setOf("com.davnozdu.autoresponder")
                 probe -> IncomingCallNotification.packages
-                else -> setOf(args[0])
+                else -> setOf(callArgs[0])
             }
             require(activityProbe || packages.all { it in IncomingCallNotification.packages })
             // Targeted system API avoids ACCESS_NOTIFICATIONS AppOps attribution under UID 0.
@@ -63,20 +65,21 @@ object MsgrAnswerDispatch {
                 val result = send(probeToken())
                 println("ANSWER_DISPATCH PROBE PASS notifications=${notifications.size} sendResult=$result")
             } else {
-                require(args.size == 4)
-                val pkg = args[0]
+                require(callArgs.size == 4)
+                val pkg = callArgs[0]
                 require(pkg in IncomingCallNotification.packages)
-                val uid = args[2].toInt()
-                val whenMs = args[3].toLong()
-                val current = notifications.singleOrNull { it.key == args[1] && it.packageName == pkg &&
+                val uid = callArgs[2].toInt()
+                val whenMs = callArgs[3].toLong()
+                val current = notifications.singleOrNull { it.key == callArgs[1] && it.packageName == pkg &&
                     it.uid == uid && it.notification.`when` == whenMs }
                     ?: error("incoming notification changed or removed")
-                check(System.currentTimeMillis() - current.postTime in 0..30_000) { "stale incoming call" }
-                val action = IncomingCallNotification.answer(current.notification)
-                    ?: error("notification is no longer an incoming voice call")
+                check(System.currentTimeMillis() - current.postTime in 0..(if (end) 1_020_000L else 30_000L)) { "stale call" }
+                val action = (if (end) IncomingCallNotification.end(current.notification)
+                    else IncomingCallNotification.answer(current.notification))
+                    ?: error("notification has no matching call action")
                 check(action.creatorPackage == pkg && action.creatorUid == uid) { "unexpected token creator" }
                 val result = send(action)
-                println("ANSWER_DISPATCH SENT package=$pkg result=$result")
+                println("ANSWER_DISPATCH ${if (end) "ENDED" else "SENT"} package=$pkg result=$result")
             }
             exitProcess(0)
         } catch (t: Throwable) {

@@ -27,4 +27,15 @@ internal object IncomingCallPolicy {
         if (!incoming && titles.none { it in declines }) return null
         return candidates.single()
     }
+
+    fun endIndex(ongoing: Boolean, callType: Int, actionTitles: List<String>): Int? {
+        if (!ongoing || callType == 1 || callType == 3) return null
+        val ends = setOf("hang up", "hangup", "end", "end call", "disconnect", "завершить",
+            "завершить звонок", "завершить вызов", "отбой", "ukončit", "ukoncit",
+            "ukončit hovor", "ukoncit hovor", "beenden", "auflegen", "завершити")
+        val candidates = actionTitles.indices.filter {
+            actionTitles[it].lowercase(Locale.ROOT).trim().trim { c -> !c.isLetter() } in ends
+        }
+        return candidates.singleOrNull()
+    }
 }

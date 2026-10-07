@@ -13,7 +13,11 @@ import java.util.concurrent.TimeUnit
  * Uses the AOSP AudioPolicy MIX_ROLE_INJECTOR/createAudioTrackSource mechanism (hidden API).
  * Register BEFORE answering: the messenger must create its recorder on this route.
  */
-internal class VoipAudioInjector(uid: Int, private val pcm: ByteArray) : Closeable {
+internal class VoipAudioInjector(uid: Int, pcm: ByteArray,
+                                private val keepOpen: Boolean = false,
+                                private val onClipDone: (Int) -> Unit = {}) : Closeable {
+    private class Clip(val id: Int, val pcm: ByteArray) { var offset = 0 }
+    @Volatile private var clip: Clip? = Clip(0, pcm)
     private val policyClass = Class.forName("android.media.audiopolicy.AudioPolicy")
     private var policy: Any? = null
     private var track: AudioTrack? = null
@@ -25,7 +29,8 @@ internal class VoipAudioInjector(uid: Int, private val pcm: ByteArray) : Closeab
 
     init {
         require(uid >= 2000)
-        require(pcm.isNotEmpty() && pcm.size % 2 == 0 && pcm.size <= MAX_BYTES)
+        require(pcm.isNotEmpty() && pcm.size % 2 == 0 &&
+            pcm.size <= if (keepOpen) MAX_SESSION_CLIP_BYTES else MAX_BYTES)
         try {
             val ruleClass = Class.forName("android.media.audiopolicy.AudioMixingRule")
             val ruleBuilderClass = Class.forName("android.media.audiopolicy.AudioMixingRule\$Builder")
@@ -66,6 +71,14 @@ internal class VoipAudioInjector(uid: Int, private val pcm: ByteArray) : Closeab
 
     fun play() { playing = true }
 
+    /** Replace greeting/hold without removing the policy or exposing the real microphone. */
+    @Synchronized fun replace(id: Int, pcm: ByteArray) {
+        check(keepOpen && running)
+        require(id > 0 && pcm.isNotEmpty() && pcm.size % 2 == 0 && pcm.size <= MAX_SESSION_CLIP_BYTES)
+        clip = Clip(id, pcm)
+        playing = true
+    }
+
     fun awaitDone() {
         check(finished.await(125, TimeUnit.SECONDS)) { "inject playback timeout" }
         failure?.let { throw IllegalStateException("inject playback failed", it) }
@@ -73,24 +86,29 @@ internal class VoipAudioInjector(uid: Int, private val pcm: ByteArray) : Closeab
 
     private fun stream(t: AudioTrack) {
         val silence = ByteArray(960 * 2) // 20 ms; no real microphone while greeting is armed.
-        var offset = 0
         var lastProgress = SystemClock.elapsedRealtime()
-        val deadline = lastProgress + 170_000
+        val deadline = lastProgress + if (keepOpen) 1_020_000 else 170_000
         try {
             while (running) {
                 check(SystemClock.elapsedRealtime() < deadline) { "inject session expired" }
-                val speech = playing
-                if (speech && offset == pcm.size) {
+                val current = clip
+                val speech = playing && current != null
+                if (speech && current!!.offset == current.pcm.size) {
                     // Wait for buffered frames to be rendered before restoring the microphone.
                     Thread.sleep(300)
-                    return
+                    if (!keepOpen) return
+                    val completed = synchronized(this) {
+                        if (clip === current) { clip = null; true } else false
+                    }
+                    if (completed) onClipDone(current.id)
+                    continue
                 }
-                val bytes = if (speech) pcm else silence
-                val start = if (speech) offset else 0
+                val bytes = if (speech) current!!.pcm else silence
+                val start = if (speech) current!!.offset else 0
                 val n = t.write(bytes, start, minOf(silence.size, bytes.size - start), AudioTrack.WRITE_NON_BLOCKING)
                 check(n >= 0) { "inject write failed: $n" }
                 if (n > 0) {
-                    if (speech) offset += n
+                    if (speech) current!!.offset += n
                     lastProgress = SystemClock.elapsedRealtime()
                 } else {
                     check(SystemClock.elapsedRealtime() - lastProgress < 5000) { "inject source stalled" }
@@ -99,7 +117,10 @@ internal class VoipAudioInjector(uid: Int, private val pcm: ByteArray) : Closeab
             }
         } catch (t: Throwable) {
             failure = t
-        } finally { finished.countDown() }
+        } finally {
+            finished.countDown()
+            if (keepOpen && running) onClipDone(-1) // Notify IPC if a stalled/expired session dies.
+        }
     }
 
     @Synchronized override fun close() {
@@ -119,5 +140,6 @@ internal class VoipAudioInjector(uid: Int, private val pcm: ByteArray) : Closeab
     companion object {
         const val RATE = 48_000
         const val MAX_BYTES = RATE * 2 * 120
+        const val MAX_SESSION_CLIP_BYTES = RATE * 2 * 420 // greeting + configured 5-minute hold
     }
 }

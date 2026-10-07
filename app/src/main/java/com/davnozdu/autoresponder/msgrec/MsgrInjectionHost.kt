@@ -21,20 +21,58 @@ internal object MsgrInjectionHost {
                         val input = DataInputStream(socket.inputStream)
                         val output = DataOutputStream(socket.outputStream)
                         runCatching {
-                            check(input.readUTF() == "ARM")
+                            val command = input.readUTF()
+                            check(command == "ARM" || command == "ARM_SESSION")
+                            val session = command == "ARM_SESSION"
                             val uid = input.readInt()
                             require(uid >= 10_000 && uid != appUid) { "messenger UID required" }
                             val length = input.readInt()
-                            require(length in 2..VoipAudioInjector.MAX_BYTES && length % 2 == 0)
+                            val maxBytes = if (session) VoipAudioInjector.MAX_SESSION_CLIP_BYTES else VoipAudioInjector.MAX_BYTES
+                            require(length in 2..maxBytes && length % 2 == 0)
                             val pcm = ByteArray(length)
                             input.readFully(pcm)
-                            VoipAudioInjector(uid, pcm).use { injector ->
+                            fun reply(value: String) = synchronized(output) {
+                                output.writeUTF(value); output.flush()
+                            }
+                            VoipAudioInjector(uid, pcm, keepOpen = session, onClipDone = { id ->
+                                runCatching { reply(if (id < 0) "ERROR:inject session ended" else "PLAYED:$id") }
+                                if (id < 0) runCatching { socket.shutdownInput() }
+                            }).use { injector ->
                                 VoipInputDiagnostics.snapshot("armed", uid)
                                 output.writeUTF("READY"); output.flush()
                                 check(input.readUTF() == "PLAY")
                                 println("msgrec inject play uid=$uid bytes=$length")
                                 VoipInputDiagnostics.snapshot("play", uid)
                                 injector.play()
+                                if (session) {
+                                    // This reader owns the socket: EOF cancels, replacement stays
+                                    // on the SAME route. Only the audio worker reports clip completion.
+                                    socket.soTimeout = 900_000
+                                    val diagnose = Thread({
+                                        for (i in 1..3) {
+                                            try { Thread.sleep(2000) } catch (_: InterruptedException) { return@Thread }
+                                            VoipInputDiagnostics.snapshot("playing-$i", uid)
+                                        }
+                                    }, "msgr-session-diagnostics").apply { isDaemon = true; start() }
+                                    try {
+                                        var lastId = 0
+                                        while (true) {
+                                            when (input.readUTF()) {
+                                                "RELEASE" -> break
+                                                "REPLACE" -> {
+                                                    val id = input.readInt()
+                                                    val size = input.readInt()
+                                                    require(id > lastId && size in 2..maxBytes && size % 2 == 0)
+                                                    val next = ByteArray(size)
+                                                    input.readFully(next)
+                                                    injector.replace(id, next)
+                                                    lastId = id
+                                                }
+                                                else -> error("unknown inject command")
+                                            }
+                                        }
+                                    } finally { diagnose.interrupt(); diagnose.join(1000) }
+                                } else {
                                 // EOF/app death/settings disable must restore the route immediately.
                                 val disconnect = Thread({
                                     runCatching { input.readUTF() }
@@ -50,6 +88,7 @@ internal object MsgrInjectionHost {
                                     diagnose.interrupt(); diagnose.join(1000)
                                     runCatching { socket.shutdownInput() }
                                     disconnect.join(2000)
+                                }
                                 }
                             }
                             VoipInputDiagnostics.snapshot("restored", uid)
