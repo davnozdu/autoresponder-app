@@ -22,7 +22,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 
-/** Opt-in experimental answering of incoming AUDIO calls. Never triggered by restored notifications. */
+/** Opt-in experimental answering for Telegram, WhatsApp and WhatsApp Business. */
 object MsgrAnswerManager {
     private val supported = setOf("org.telegram.messenger", "com.whatsapp", "com.whatsapp.w4b")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -33,15 +33,23 @@ object MsgrAnswerManager {
     fun cancel() { runCatching { activeSocket?.close() } }
 
     private fun answer(n: Notification): PendingIntent? {
-        // Android CallStyle: 1 = incoming, 2 = ongoing, 3 = screening.
-        if (n.extras.getInt("android.callType", 0) != 1) return null
-        if (n.extras.getBoolean("android.callIsVideo", false)) return null
         // Telegram sets a video title but does not set CallStyle.setIsVideo on all versions.
         val fields = listOf(Notification.EXTRA_TITLE, Notification.EXTRA_TEXT, Notification.EXTRA_SUB_TEXT)
-            .joinToString(" ") { n.extras.getCharSequence(it)?.toString().orEmpty() }.lowercase()
-        if (listOf("video", "видео", "відео").any { it in fields }) return null
-        @Suppress("DEPRECATION")
-        return n.extras.getParcelable<PendingIntent>("android.answerIntent")
+            .joinToString(" ") { n.extras.getCharSequence(it)?.toString().orEmpty() }
+        val video = n.extras.getBoolean("android.callIsVideo", false)
+        if (IncomingCallPolicy.isVideo(video, fields)) return null
+        val callType = n.extras.getInt("android.callType", 0)
+        if (callType == 1) {
+            @Suppress("DEPRECATION")
+            val standard = n.extras.getParcelable<PendingIntent>("android.answerIntent")
+            return standard
+        }
+        // Both WhatsApp packages may post their own call action buttons instead of CallStyle.
+        // Require CALL + one explicit answer action + incoming metadata or a decline action.
+        val actions = n.actions ?: return null
+        val index = IncomingCallPolicy.legacyAnswerIndex(n.category == Notification.CATEGORY_CALL,
+            callType, video, fields, actions.map { it.title?.toString().orEmpty() }) ?: return null
+        return actions[index].actionIntent
     }
 
     @Synchronized
@@ -78,19 +86,22 @@ object MsgrAnswerManager {
                     check(input.readUTF() == "READY") { "хост не подготовил подачу звука" }
                     delay(2000) // Allow the owner to answer first; then revalidate the exact notification.
                     val current = NotifListenerService.current(sbn.key)
-                    check(Settings(app).msgrAmEnabled && current != null && answer(current.notification) != null) {
+                    val currentAction = current?.let { answer(it.notification) }
+                    check(Settings(app).msgrAmEnabled && currentAction != null &&
+                        currentAction.creatorPackage == sbn.packageName) {
                         "входящий звонок уже завершён или принят вручную"
                     }
-                    if (Build.VERSION.SDK_INT >= 34 && action.isActivity) {
-                        // Telegram's pre-call notification answers through LaunchActivity.
+                    if (Build.VERSION.SDK_INT >= 34 && currentAction.isActivity) {
+                        // Telegram and WhatsApp can answer through an internal call activity.
                         // Android 14+ requires sender opt-in: plain send() silently BAL_BLOCKs.
                         // Only delegate to the verified answer token from the selected messenger.
                         val options = ActivityOptions.makeBasic()
                             .setPendingIntentBackgroundActivityStartMode(
                                 ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                        action.send(app, 0, null, null, null, null, options.toBundle())
-                    } else action.send()
-                    log.add("MSGR AM: команда ответа отправлена ${sbn.packageName}; маршрут приветствия готов")
+                        currentAction.send(app, 0, null, null, null, null, options.toBundle())
+                    } else currentAction.send()
+                    log.add("MSGR AM: команда ответа отправлена ${sbn.packageName}; " +
+                        "действие=${if (currentAction.isActivity) "activity" else "service/broadcast"}; маршрут приветствия готов")
                     val am = app.getSystemService(AudioManager::class.java)
                     val deadline = android.os.SystemClock.elapsedRealtime() + 20_000
                     while (am.mode != AudioManager.MODE_IN_COMMUNICATION ||
