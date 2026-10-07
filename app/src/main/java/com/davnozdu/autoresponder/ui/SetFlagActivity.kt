@@ -21,6 +21,10 @@ class SetFlagActivity : Activity() {
         val log = EventLog(this)
         val key = intent?.getStringExtra("key") ?: ""
         val value = intent?.getBooleanExtra("value", false) ?: false
+        if (key == "msgr_session_probe") {
+            com.davnozdu.autoresponder.msgrec.MsgrSessionIpcProbe.start(applicationContext)
+            finish(); return
+        }
         // Signature-protected ADB hook: reproduce a background activity PendingIntent from
         // an ordinary app UID, with creator privileges denied. Root must supply its own BAL
         // permission. No calls, messages, recordings, or settings are changed by this probe.

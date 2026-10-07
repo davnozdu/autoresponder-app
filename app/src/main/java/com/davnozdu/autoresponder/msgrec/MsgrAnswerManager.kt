@@ -28,6 +28,7 @@ object MsgrAnswerManager {
     private val attempted = LinkedHashSet<String>()
     @Volatile private var busy = false
     @Volatile private var activeSocket: LocalSocket? = null
+    @Volatile private var connected = false
     private data class Plan(val route: MsgrCallPolicy.Route, val peer: String?, val lang: String?, val text: String?)
     private enum class Decision { ACCEPT, DECLINE, VOICEMAIL }
     private class State {
@@ -35,6 +36,7 @@ object MsgrAnswerManager {
         val played = AtomicInteger(-1)
         @Volatile var ended = false
         @Volatile var error: String? = null
+        @Volatile var ownerMuted = false
     }
 
     fun cancel() { runCatching { activeSocket?.close() } }
@@ -111,7 +113,12 @@ object MsgrAnswerManager {
         val action = IncomingCallNotification.answer(sbn.notification) ?: return
         if (action.creatorPackage != sbn.packageName) return
         val token = "${sbn.key}:${sbn.notification.`when`}"
-        if (busy || !attempted.add(token)) return
+        if (busy) {
+            // A new incoming call must never inherit an old voicemail timeout/hangup.
+            if (connected && token !in attempted) cancel()
+            return
+        }
+        if (!attempted.add(token)) return
         while (attempted.size > 64) attempted.remove(attempted.first())
         busy = true
         val app = context.applicationContext
@@ -122,7 +129,7 @@ object MsgrAnswerManager {
                 runSession(app, sbn, selected, greeting(app, selected))
             } catch (t: Exception) {
                 EventLog(app).add("MSGR AM: ${sbn.packageName}: ${t.javaClass.simpleName}: ${t.message}")
-            } finally { activeSocket = null; busy = false }
+            } finally { activeSocket = null; connected = false; busy = false }
         }
     }
 
@@ -138,10 +145,9 @@ object MsgrAnswerManager {
         val vibration = AnswerMachineVibration(app)
         var reader: Job? = null
         var monitor: Job? = null
-        var ownerMuted = false
         var screeningCard = false
         var handedOff = false
-        var endToken: StatusBarNotification? = null
+        val endToken = AtomicReference<StatusBarNotification?>(null)
         LocalSocket().use { socket ->
             activeSocket = socket
             try {
@@ -169,18 +175,19 @@ object MsgrAnswerManager {
                     "звонок завершён до приветствия"
                 }
                 MsgrCaptureManager.beginAnswering(app, pkg)
+                connected = true
                 com.davnozdu.autoresponder.notif.DndStats.onIncoming(app, isCall = true)
                 fun findEnd() = NotifListenerService.callNotifications(pkg).firstOrNull {
                     IncomingCallNotification.end(it.notification)?.creatorPackage == pkg
                 }
-                endToken = findEnd()
+                endToken.set(findEnd())
                 fun muteOwner(mute: Boolean) {
                     if (mute) {
-                        ownerMuted = true
+                        state.ownerMuted = true
                         runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
-                    } else if (ownerMuted) {
+                    } else if (state.ownerMuted) {
                         runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
-                        ownerMuted = false
+                        state.ownerMuted = false
                     }
                 }
                 reader = launch(Dispatchers.IO) {
@@ -208,8 +215,8 @@ object MsgrAnswerManager {
                             if (now - awaySince >= 2500) { state.ended = true; socket.close(); break }
                         }
                         if (!Settings(app).msgrAmEnabled) { state.ended = true; socket.close(); break }
-                        if (endToken == null) endToken = findEnd()
-                        if (ownerMuted) muteOwner(true)
+                        if (endToken.get() == null) endToken.compareAndSet(null, findEnd())
+                        if (state.ownerMuted) muteOwner(true)
                     }
                 }
                 suspend fun waitFor(ms: Long, done: () -> Boolean = { false }) {
@@ -221,10 +228,12 @@ object MsgrAnswerManager {
                 }
                 fun endCall() {
                     if (state.ended || am.mode != AudioManager.MODE_IN_COMMUNICATION) return
-                    val original = endToken ?: error("у мессенджера нет действия завершения звонка")
+                    val original = endToken.get() ?: error("у мессенджера нет действия завершения звонка")
                     val latest = NotifListenerService.current(original.key)
                     check(latest != null && latest.uid == uid &&
-                        latest.notification.`when` == original.notification.`when`) { "активный звонок изменился" }
+                        latest.notification.`when` == original.notification.`when` &&
+                        IncomingCallNotification.end(latest.notification) ==
+                        IncomingCallNotification.end(original.notification)) { "активный звонок изменился" }
                     dispatch(app, latest, uid, end = true)
                     log.add("MSGR AM: команда завершения $pkg отправлена")
                 }
@@ -298,7 +307,7 @@ object MsgrAnswerManager {
                 socket.close()
                 monitor?.cancel(); reader?.cancel(); vibration.stop()
                 if (screeningCard) CallerOverlay.hide(app)
-                if (ownerMuted) runCatching {
+                if (state.ownerMuted) runCatching {
                     am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0)
                 }
                 MsgrCaptureManager.endAnswering(app, pkg, handedOff)
