@@ -38,6 +38,7 @@ object MsgrShellHost {
         check(Process.myUid() == 2000) { "shell UID required" }
         cleanupOrphans()
         check(VoipAudioPolicy.arm()) { "could not arm VoIP AudioPolicy" }
+        MsgrInjectionHost.start(appUid)
         println("msgrec host ready uid=${Process.myUid()} appUid=$appUid apk=$ownApk")
         LocalServerSocket(SOCKET).use { server ->
             while (true) {

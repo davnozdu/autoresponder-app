@@ -697,6 +697,11 @@ class Settings(context: Context) {
         get() = sp.getStringSet(K_MSGR_REC_APPS, DEFAULT_APPS)!!.toSet()
         set(v) = sp.edit().putStringSet(K_MSGR_REC_APPS, v).apply()
 
+    /** Experimental audio greeting for incoming CallStyle calls in the selected messengers. */
+    var msgrAmEnabled: Boolean
+        get() = sp.getBoolean("msgr_am_enabled", false)
+        set(v) = sp.edit().putBoolean("msgr_am_enabled", v).apply()
+
     // --- SIM по умолчанию: 0=SIM1, 1=SIM2. «Системная» убрана: она отдавала отправку
     // системному выбору по умолчанию, и ответ уходил не с той карты. ---
     var smsSlot: Int

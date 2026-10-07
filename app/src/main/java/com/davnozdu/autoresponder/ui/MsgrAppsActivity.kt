@@ -34,6 +34,7 @@ fun MsgrAppsScreen() {
     val s = remember { Settings(ctx) }
     var enabled by remember { mutableStateOf(s.msgrRecEnabled) }
     var selected by remember { mutableStateOf(s.msgrRecApps) }
+    var answering by remember { mutableStateOf(s.msgrAmEnabled) }
     val apps = remember {
         val pm = ctx.packageManager
         val launch = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -59,6 +60,18 @@ fun MsgrAppsScreen() {
                 })
             }
             HorizontalDivider()
+            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Принимать звонки и говорить приветствие", style = MaterialTheme.typography.bodyLarge)
+                    Text("Тест: Telegram и WhatsApp, только голосовые входящие. Приветствие из настроек автоответчика; затем включается микрофон.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = answering, onCheckedChange = {
+                    answering = it; s.msgrAmEnabled = it
+                    if (!it) com.davnozdu.autoresponder.msgrec.MsgrAnswerManager.cancel()
+                })
+            }
+            HorizontalDivider()
             Text("Отмеченные приложения будут записываться автоматически. Запись обеих сторон, " +
                 "сохраняется в папку Messenger, доступна для расшифровки в журнале.",
                 Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
@@ -66,7 +79,7 @@ fun MsgrAppsScreen() {
                 items(apps) { a ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = a.pkg in selected, enabled = enabled, onCheckedChange = { on ->
+                        Checkbox(checked = a.pkg in selected, enabled = enabled || answering, onCheckedChange = { on ->
                             val next = selected.toMutableSet()
                             if (on) next.add(a.pkg) else next.remove(a.pkg)
                             selected = next; s.msgrRecApps = next; MsgrCaptureManager.refresh(ctx)

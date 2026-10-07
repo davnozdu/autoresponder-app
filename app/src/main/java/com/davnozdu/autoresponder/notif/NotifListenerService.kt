@@ -145,6 +145,7 @@ class NotifListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        com.davnozdu.autoresponder.msgrec.MsgrAnswerManager.onPosted(this, sbn)
         com.davnozdu.autoresponder.msgrec.MsgrCaptureManager.onNotificationEvent(sbn)
         handlePosted(sbn)
     }

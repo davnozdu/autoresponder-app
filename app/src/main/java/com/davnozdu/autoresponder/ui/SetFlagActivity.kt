@@ -28,6 +28,11 @@ class SetFlagActivity : Activity() {
             "respond_sms" -> { s.respondSms = value; true }
             "respond_calls" -> { s.respondCalls = value; true }
             "vacation_mode" -> { s.vacationModeEnabled = value; true }
+            "msgr_am_enabled" -> {
+                s.msgrAmEnabled = value
+                if (!value) com.davnozdu.autoresponder.msgrec.MsgrAnswerManager.cancel()
+                true
+            }
             else -> false
         }
         log.add(if (ok) "SETFLAG: $key = $value" else "SETFLAG: неизвестный ключ '$key'")
