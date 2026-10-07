@@ -402,8 +402,11 @@ class AnswerMachineService : Service() {
                 // тумблером «Тихий режим» = выключен. Найдено аудитом.
                 if (!s.amSilentToOwner) AmBridge.muteOut(app, false)
 
+                // То же приветствие, что у автоответчика в режиме DND (свой файл владельца или
+                // TTS общего текста), а не отдельный набор «голосовой почты»: тот был вторым
+                // пунктом на одну функцию, не был настроен и читал стандартный текст голосом.
                 val vmGreet = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
-                    Greeting.prepareVoicemail(app, s.screeningDefaultLang)
+                    Greeting.prepare(app, s.amGreetingLang.ifBlank { null })
                 }
                 if (vmGreet != null) AmBridge.play(app, vmGreet, 1)
                 else EventLog(app).add("AM: voicemail-приветствие не готово — молчим")

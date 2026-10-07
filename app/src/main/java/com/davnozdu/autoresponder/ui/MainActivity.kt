@@ -454,6 +454,8 @@ fun AppScreen() {
 
                 Spacer(Modifier.height(8.dp))
                 Text("Приветствие:", style = MaterialTheme.typography.labelMedium)
+                Text("Оно же звучит после кнопки «Автоответчик» на карточке скрининга " +
+                    "и после таймаута скрининга.", style = MaterialTheme.typography.bodySmall)
                 var greetSrc by remember { mutableStateOf(s.amGreetingSource) }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(greetSrc == 0, { greetSrc = 0; s.amGreetingSource = 0 }, { Text("Синтез (TTS)") })
@@ -912,35 +914,6 @@ fun AppScreen() {
                     s.screeningGreetingTextEn, { s.screeningGreetingTextEn = it },
                     s.screeningGreetingLangEn, { s.screeningGreetingLangEn = it },
                     s.screeningHoldFileEn, { s.screeningHoldFileEn = it })
-            }
-
-            ExpandableSection("Голосовая почта (после переброса)") {
-                Text("Приветствие, которое слышит клиент СРАЗУ после того, как вы нажали "
-                    + "«Перебросить на автоответчик» на карточке скрининга (или сработал "
-                    + "автоматический таймаут) — своё на каждый язык, без варианта «по кругу»: "
-                    + "сразу после этой фразы стартует запись.",
-                    style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(8.dp))
-                GreetingLangSlot(ctx, scope, "Чешский", "cs",
-                    s.voicemailGreetingSourceCs, { s.voicemailGreetingSourceCs = it },
-                    s.voicemailGreetingFileCs, { s.voicemailGreetingFileCs = it },
-                    s.voicemailGreetingTextCs, { s.voicemailGreetingTextCs = it },
-                    s.voicemailGreetingLangCs, { s.voicemailGreetingLangCs = it },
-                    slotPrefix = "voicemail")
-                Spacer(Modifier.height(12.dp))
-                GreetingLangSlot(ctx, scope, "Русский", "ru",
-                    s.voicemailGreetingSourceRu, { s.voicemailGreetingSourceRu = it },
-                    s.voicemailGreetingFileRu, { s.voicemailGreetingFileRu = it },
-                    s.voicemailGreetingTextRu, { s.voicemailGreetingTextRu = it },
-                    s.voicemailGreetingLangRu, { s.voicemailGreetingLangRu = it },
-                    slotPrefix = "voicemail")
-                Spacer(Modifier.height(12.dp))
-                GreetingLangSlot(ctx, scope, "English", "en",
-                    s.voicemailGreetingSourceEn, { s.voicemailGreetingSourceEn = it },
-                    s.voicemailGreetingFileEn, { s.voicemailGreetingFileEn = it },
-                    s.voicemailGreetingTextEn, { s.voicemailGreetingTextEn = it },
-                    s.voicemailGreetingLangEn, { s.voicemailGreetingLangEn = it },
-                    slotPrefix = "voicemail")
             }
 
             ExpandableSection("Управление по SMS") {

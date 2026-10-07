@@ -322,8 +322,9 @@ object MsgrAnswerManager {
                                 // Silence while TTS prepares, without recreating the microphone route.
                                 output.writeUTF("REPLACE"); output.writeInt(1); output.writeInt(2)
                                 output.write(byteArrayOf(0, 0)); output.flush()
+                                // Same greeting as the DND answering machine (owner's file or TTS).
                                 val vm = withTimeoutOrNull(15_000) {
-                                    Greeting.prepareVoicemail(app, s.screeningDefaultLang)
+                                    Greeting.prepare(app, s.amGreetingLang.ifBlank { null })
                                 } ?: error("не удалось подготовить приветствие голосовой почты")
                                 val next = pcm(vm)
                                 if (!state.ended) {
