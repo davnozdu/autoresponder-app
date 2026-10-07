@@ -50,7 +50,7 @@ internal class VoipAudioInjector(uid: Int, private val pcm: ByteArray) : Closeab
             val p = pbClass.getMethod("build").invoke(pb)
             val rc = AudioManager::class.java.getDeclaredMethod("registerAudioPolicyStatic", policyClass)
                 .apply { isAccessible = true }.invoke(null, p) as Int
-            check(rc == AudioManager.SUCCESS) { "inject policy rejected: $rc" }
+            check(rc == 0) { "inject policy rejected: $rc" } // AudioManager.SUCCESS is hidden.
             policy = p
             val t = policyClass.getMethod("createAudioTrackSource", mixClass).invoke(p, mix) as AudioTrack?
                 ?: error("inject source unavailable")

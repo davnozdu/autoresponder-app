@@ -2,6 +2,7 @@ package com.davnozdu.autoresponder.msgrec
 
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioDeviceInfo
 import android.media.MediaRecorder
 import android.os.Looper
 import android.os.Process
@@ -50,6 +51,19 @@ object MsgrInjectionProbe {
             println("INJECTION_PROBE amplitude=$amplitude purity=$purity peak=${buf.maxOf { kotlin.math.abs(it.toInt()) }}")
             check(amplitude in 3000.0..5000.0 && purity > 0.9) { "injected tone did not reach AudioRecord" }
             println("INJECTION_PROBE PASS: UID-scoped audio replacement works")
+            injector.close()
+            Thread.sleep(500)
+            var restoredFrames = 0
+            val after = ShortArray(rate / 2)
+            while (restoredFrames < after.size) {
+                val got = r.read(after, restoredFrames, after.size - restoredFrames)
+                check(got > 0) { "microphone restore read=$got (recorder recreation may be needed)" }
+                restoredFrames += got
+            }
+            val route = r.routedDevice
+            println("INJECTION_PROBE restored route=${route?.type} frames=$restoredFrames")
+            check(route != null && route.type != AudioDeviceInfo.TYPE_REMOTE_SUBMIX) { "microphone route not restored" }
+            println("INJECTION_PROBE RESTORE PASS: existing recorder returned to microphone")
         } finally {
             record?.let { runCatching { it.stop() }; it.release() }
             injector.close()
