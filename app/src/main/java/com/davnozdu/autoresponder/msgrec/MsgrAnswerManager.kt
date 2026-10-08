@@ -37,7 +37,6 @@ object MsgrAnswerManager {
         val played = AtomicInteger(-1)
         @Volatile var ended = false
         @Volatile var error: String? = null
-        @Volatile var ownerMuted = false
     }
 
     fun cancel() { hangUp(activeSocket) }
@@ -178,7 +177,6 @@ object MsgrAnswerManager {
         var screeningCard = false
         var handedOff = false
         val endToken = AtomicReference<StatusBarNotification?>(null)
-        val volumeLock = Any()
         LocalSocket().use { socket ->
             activeSocket = socket
             try {
@@ -186,7 +184,8 @@ object MsgrAnswerManager {
                 socket.soTimeout = 900_000
                 val input = DataInputStream(socket.inputStream)
                 val output = DataOutputStream(socket.outputStream)
-                output.writeUTF("ARM_SESSION"); output.writeInt(uid)
+                output.writeUTF("ARM_SESSION_V2"); output.writeInt(uid)
+                output.writeBoolean(selected.route == MsgrCallPolicy.Route.SCREENING || s.amSilentToOwner)
                 output.writeInt(audio.size); output.write(audio); output.flush()
                 check(input.readUTF() == "READY") { "хост не подготовил подачу звука" }
                 // Preparation/ARM count toward the two seconds, rather than adding another delay.
@@ -226,14 +225,8 @@ object MsgrAnswerManager {
                     IncomingCallNotification.end(it.notification)?.creatorPackage == pkg
                 }
                 endToken.set(findEnd())
-                fun muteOwner(mute: Boolean) = synchronized(volumeLock) {
-                    if (mute) {
-                        state.ownerMuted = true
-                        runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
-                    } else if (state.ownerMuted) {
-                        runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0) }
-                        state.ownerMuted = false
-                    }
+                fun muteOwner(mute: Boolean) {
+                    output.writeUTF("OWNER_SILENT"); output.writeBoolean(mute); output.flush()
                 }
                 // Not a child of this session: even if a read ever got stuck again, it must not keep
                 // the session (and with it `busy`) alive and swallow the next incoming call.
@@ -263,11 +256,6 @@ object MsgrAnswerManager {
                         }
                         if (!Settings(app).msgrAmEnabled) { state.ended = true; hangUp(socket); break }
                         if (endToken.get() == null) endToken.compareAndSet(null, findEnd())
-                        synchronized(volumeLock) {
-                            if (state.ownerMuted) runCatching {
-                                am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0)
-                            }
-                        }
                     }
                 }
                 suspend fun waitFor(ms: Long, done: () -> Boolean = { false }) {
@@ -302,7 +290,6 @@ object MsgrAnswerManager {
                         waitFor(6000) { am.mode != AudioManager.MODE_IN_COMMUNICATION }
                     }
                 }
-                muteOwner(screening || s.amSilentToOwner)
                 log.add("MSGR AM: разговор подключён $pkg; приветствие ${selected.route}")
                 output.writeUTF("PLAY"); output.flush()
                 if (screening) {
@@ -349,12 +336,6 @@ object MsgrAnswerManager {
                 hangUp(socket)
                 monitor?.cancel(); reader?.cancel(); vibration.stop()
                 if (screeningCard) CallerOverlay.hide(app)
-                synchronized(volumeLock) {
-                    if (state.ownerMuted) runCatching {
-                        am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_UNMUTE, 0)
-                    }
-                    state.ownerMuted = false
-                }
                 MsgrCaptureManager.endAnswering(app, pkg, handedOff)
                 log.add("MSGR AM: $pkg — сессия завершена, временный аудиомаршрут снят")
             }

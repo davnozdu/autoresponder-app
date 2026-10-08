@@ -23,18 +23,20 @@ internal object MsgrSessionIpcProbe {
                     socket.soTimeout = 8000
                     val input = DataInputStream(socket.inputStream)
                     val output = DataOutputStream(socket.outputStream)
-                    output.writeUTF("ARM_SESSION"); output.writeInt(uid); output.writeInt(2)
+                    output.writeUTF("ARM_SESSION_V2"); output.writeInt(uid); output.writeBoolean(true); output.writeInt(2)
                     output.write(byteArrayOf(0, 0)); output.flush()
                     check(input.readUTF() == "READY")
                     output.writeUTF("PLAY"); output.flush()
                     check(input.readUTF() == "PLAYED:0")
+                    check(app.getSystemService(AudioManager::class.java).isStreamMute(AudioManager.STREAM_VOICE_CALL))
+                    check(app.getSystemService(AudioManager::class.java).getStreamVolume(AudioManager.STREAM_VOICE_CALL) == 0)
                     output.writeUTF("REPLACE"); output.writeInt(1); output.writeInt(2)
                     output.write(byteArrayOf(0, 0)); output.flush()
                     check(input.readUTF() == "PLAYED:1")
                     output.writeUTF("RELEASE"); output.flush()
                     check(input.readUTF() == "DONE")
                 }
-                log.add("MSGR SESSION IPC PROBE: PASS READY/PLAYED:0/PLAYED:1/DONE")
+                log.add("MSGR SESSION IPC PROBE: PASS READY/muted/volume=0/PLAYED:0/PLAYED:1/DONE")
             }.onFailure { log.add("MSGR SESSION IPC PROBE: FAIL ${it.javaClass.simpleName}: ${it.message}") }
         }, "msgr-session-ipc-probe").start()
     }
