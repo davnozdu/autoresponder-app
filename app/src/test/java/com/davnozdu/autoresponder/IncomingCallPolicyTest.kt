@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class IncomingCallPolicyTest {
+    @Test fun callCopiesDoNotPreventAnsweringAndDifferentActionsStayAmbiguous() {
+        assertEquals(0, IncomingCallPolicy.answerCandidateIndex("original",
+            listOf("call-summary" to "answer", "call-child" to "answer")))
+        assertEquals(1, IncomingCallPolicy.answerCandidateIndex("original",
+            listOf("call-summary" to "answer", "original" to "answer")))
+        assertNull(IncomingCallPolicy.answerCandidateIndex("original",
+            listOf("call-a" to "answer-a", "call-b" to "answer-b")))
+        assertNull(IncomingCallPolicy.answerCandidateIndex("original", emptyList<Pair<String, String>>()))
+        assertEquals(0, IncomingCallPolicy.answerCandidateIndex("original",
+            listOf("replacement" to "answer")))
+    }
+
     @Test fun notificationReplacementMustIdentifyTheSameCaller() {
         assertTrue(IncomingCallPolicy.sameCaller("Мама", "Мама", false))
         assertFalse(IncomingCallPolicy.sameCaller("Мама", "Другой абонент", true))

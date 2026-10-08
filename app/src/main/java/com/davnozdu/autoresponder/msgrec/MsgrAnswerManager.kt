@@ -1,6 +1,5 @@
 package com.davnozdu.autoresponder.msgrec
 
-import android.app.Notification
 import android.content.Context
 import android.media.AudioManager
 import android.net.LocalSocket
@@ -133,10 +132,11 @@ object MsgrAnswerManager {
         val receivedAt = SystemClock.elapsedRealtime()
         val s = Settings(context)
         if (!s.msgrAmEnabled || sbn.packageName !in supported || sbn.packageName !in s.msgrRecApps) return
-        if (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         if (System.currentTimeMillis() - sbn.postTime !in 0..30_000) return
         val action = IncomingCallNotification.answer(sbn.notification) ?: return
         if (action.creatorPackage != sbn.packageName) return
+        // A messenger's real CallStyle can carry GROUP_SUMMARY on this ROM. Its validated
+        // answer action is authoritative; a message-summary filter must not suppress calls.
         val token = "${sbn.key}:${sbn.notification.`when`}"
         if (busy) {
             // A new incoming call must never inherit an old voicemail timeout/hangup.
@@ -151,6 +151,8 @@ object MsgrAnswerManager {
         }
         if (!attempted.add(token)) return
         while (attempted.size > 64) attempted.remove(attempted.first())
+        EventLog(context).add("MSGR AM: входящий ${sbn.packageName}; key=${sbn.key}; " +
+            "flags=${sbn.notification.flags}; type=${sbn.notification.extras.getInt("android.callType", 0)}")
         busy = true
         val app = context.applicationContext
         scope.launch {
@@ -180,13 +182,18 @@ object MsgrAnswerManager {
                 .filter { current ->
                     val answer = IncomingCallNotification.answer(current.notification)
                     current.packageName == original.packageName && current.uid == original.uid &&
-                        current.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 &&
                         current.postTime >= original.postTime &&
                         System.currentTimeMillis() - current.postTime in 0..30_000 &&
                         answer?.creatorPackage == original.packageName &&
                         IncomingCallPolicy.sameCaller(peer, NotifListenerService.callPeer(current), answer == action)
-                }
-            candidates.singleOrNull()?.let { current ->
+                }.sortedByDescending { it.postTime }
+            // Prefer the original live notification. CallStyle/group copies with the SAME
+            // PendingIntent are one call, not an ambiguity; distinct answer tokens are rejected.
+            val index = IncomingCallPolicy.answerCandidateIndex(original.key, candidates.map {
+                it.key to IncomingCallNotification.answer(it.notification)
+            })
+            val current = index?.let { candidates[it] }
+            current?.let {
                 synchronized(this) { attempted.add("${current.key}:${current.notification.`when`}") }
                 if (current.key != original.key || current.notification.`when` != original.notification.`when`)
                     EventLog(app).add("MSGR AM: ${original.packageName} — обновлено уведомление того же звонящего перед ответом")

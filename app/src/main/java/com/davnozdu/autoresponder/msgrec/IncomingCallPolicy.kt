@@ -10,6 +10,13 @@ internal object IncomingCallPolicy {
         return sameAnswerAction
     }
 
+    /** Candidates are newest first; identical action tokens are copies of one incoming call. */
+    fun <T> answerCandidateIndex(originalKey: String, candidates: List<Pair<String, T>>): Int? {
+        val exact = candidates.indexOfFirst { it.first == originalKey }
+        if (exact >= 0) return exact
+        return 0.takeIf { candidates.isNotEmpty() && candidates.map { it.second }.distinct().size == 1 }
+    }
+
     private val answers = setOf("answer", "accept", "answer call", "accept call", "ответить", "принять",
         "ответить на звонок", "принять звонок", "přijmout", "prijmout", "odpovědět", "prijať",
         "відповісти", "прийняти", "annehmen")
