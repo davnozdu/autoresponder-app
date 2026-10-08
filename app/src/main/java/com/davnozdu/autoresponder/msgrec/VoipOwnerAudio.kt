@@ -49,9 +49,10 @@ internal class VoipOwnerAudio : Closeable {
         .invoke(service, AudioManager.STREAM_VOICE_CALL) as Int
 
     private fun adjustMute(mute: Boolean) {
-        val args = arrayOf<Any?>(AudioManager.STREAM_VOICE_CALL,
+        val args = mutableListOf<Any?>(AudioManager.STREAM_VOICE_CALL,
             if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, 0, "com.android.shell")
-        adjust.invoke(service, *(if (adjust.parameterCount == 5) args + arrayOf<Any?>(null) else args))
+        if (adjust.parameterCount == 5) args.add(null)
+        adjust.invoke(service, *args.toTypedArray())
     }
 
     @Synchronized fun setSilent(silent: Boolean) {
