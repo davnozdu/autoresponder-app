@@ -4,6 +4,12 @@ import java.util.Locale
 
 /** Conservative fallback for messenger call notifications without standard CallStyle extras. */
 internal object IncomingCallPolicy {
+    /** A notification replacement may change its action, but must still identify the caller. */
+    fun sameCaller(original: String?, current: String?, sameAnswerAction: Boolean): Boolean {
+        if (original != null && current != null) return original == current
+        return sameAnswerAction
+    }
+
     private val answers = setOf("answer", "accept", "answer call", "accept call", "ответить", "принять",
         "ответить на звонок", "принять звонок", "přijmout", "prijmout", "odpovědět", "prijať",
         "відповісти", "прийняти", "annehmen")

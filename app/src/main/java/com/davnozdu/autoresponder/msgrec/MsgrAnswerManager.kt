@@ -1,5 +1,6 @@
 package com.davnozdu.autoresponder.msgrec
 
+import android.app.Notification
 import android.content.Context
 import android.media.AudioManager
 import android.net.LocalSocket
@@ -132,6 +133,7 @@ object MsgrAnswerManager {
         val receivedAt = SystemClock.elapsedRealtime()
         val s = Settings(context)
         if (!s.msgrAmEnabled || sbn.packageName !in supported || sbn.packageName !in s.msgrRecApps) return
+        if (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         if (System.currentTimeMillis() - sbn.postTime !in 0..30_000) return
         val action = IncomingCallNotification.answer(sbn.notification) ?: return
         if (action.creatorPackage != sbn.packageName) return
@@ -159,6 +161,39 @@ object MsgrAnswerManager {
             } catch (t: Exception) {
                 EventLog(app).add("MSGR AM: ${sbn.packageName}: ${t.javaClass.simpleName}: ${t.message}")
             } finally { activeSocket = null; connected = false; busy = false }
+        }
+    }
+
+    private suspend fun awaitIncoming(app: Context, original: StatusBarNotification): StatusBarNotification {
+        val action = IncomingCallNotification.answer(original.notification)
+        val peer = NotifListenerService.callPeer(original)
+        val deadline = SystemClock.elapsedRealtime() + 1200
+        val am = app.getSystemService(AudioManager::class.java)
+        while (true) {
+            check(am.mode != AudioManager.MODE_IN_CALL && am.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                "звонок уже принят"
+            }
+            // WhatsApp can remove/re-post the incoming notification while ARM is preparing audio.
+            // Re-read live notifications; never dispatch the original, potentially cancelled action.
+            val candidates = (listOfNotNull(NotifListenerService.current(original.key)) +
+                NotifListenerService.callNotifications(original.packageName)).distinctBy { it.key }
+                .filter { current ->
+                    val answer = IncomingCallNotification.answer(current.notification)
+                    current.packageName == original.packageName && current.uid == original.uid &&
+                        current.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 &&
+                        current.postTime >= original.postTime &&
+                        System.currentTimeMillis() - current.postTime in 0..30_000 &&
+                        answer?.creatorPackage == original.packageName &&
+                        IncomingCallPolicy.sameCaller(peer, NotifListenerService.callPeer(current), answer == action)
+                }
+            candidates.singleOrNull()?.let { current ->
+                synchronized(this) { attempted.add("${current.key}:${current.notification.`when`}") }
+                if (current.key != original.key || current.notification.`when` != original.notification.`when`)
+                    EventLog(app).add("MSGR AM: ${original.packageName} — обновлено уведомление того же звонящего перед ответом")
+                return current
+            }
+            check(SystemClock.elapsedRealtime() < deadline) { "входящий звонок завершён или не удалось подтвердить звонящего" }
+            delay(100)
         }
     }
 
@@ -190,7 +225,7 @@ object MsgrAnswerManager {
                 check(input.readUTF() == "READY") { "хост не подготовил подачу звука" }
                 // Preparation/ARM count toward the two seconds, rather than adding another delay.
                 delay(MsgrCallPolicy.remainingAnswerDelay(receivedAt, SystemClock.elapsedRealtime()))
-                val current = NotifListenerService.current(sbn.key) ?: error("входящий звонок завершён")
+                val current = awaitIncoming(app, sbn)
                 check(IncomingCallNotification.answer(current.notification)?.creatorPackage == pkg &&
                     plan(app, current).route == selected.route) { "звонок принят или условия автоответа изменились" }
                 // Mark the call BEFORE answering, so capture never opens the headset mic.

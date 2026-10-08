@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class IncomingCallPolicyTest {
+    @Test fun notificationReplacementMustIdentifyTheSameCaller() {
+        assertTrue(IncomingCallPolicy.sameCaller("Мама", "Мама", false))
+        assertFalse(IncomingCallPolicy.sameCaller("Мама", "Другой абонент", true))
+        assertTrue(IncomingCallPolicy.sameCaller(null, null, true))
+        assertFalse(IncomingCallPolicy.sameCaller(null, null, false))
+        assertFalse(IncomingCallPolicy.sameCaller("Мама", null, false))
+        assertFalse(IncomingCallPolicy.sameCaller(null, "Мама", false))
+    }
+
     @Test fun acceptsWhatsappVoiceAnswerWithDeclineInEitherOrder() {
         assertEquals(1, IncomingCallPolicy.legacyAnswerIndex(true, 0, false,
             "Voice call", listOf("Decline", "Answer")))
