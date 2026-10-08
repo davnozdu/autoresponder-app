@@ -35,7 +35,7 @@ internal object MsgrInjectionHost {
                             fun reply(value: String) = synchronized(output) {
                                 output.writeUTF(value); output.flush()
                             }
-                            VoipOwnerAudio().use { ownerAudio ->
+                            VoipOwnerAudio(uid).use { ownerAudio ->
                                 // ARM before answering: no early burst of peer audio in a headset.
                                 ownerAudio.setSilent(silentOwner)
                                 VoipAudioInjector(uid, pcm, keepOpen = session, onClipDone = { id ->

@@ -5,14 +5,12 @@ import android.os.IBinder
 import android.os.Process
 import java.io.Closeable
 
-/** Session-owned output mute under shell, which holds MODIFY_PHONE_STATE. Android 16 silently
- * ignores the ordinary app's call-volume adjustments. Mute leaves each route's saved index
- * intact and also applies when switching between the phone, USB and Bluetooth headsets.
- * Hardware mic mute prevents headset sidetone. REMOTE_SUBMIX injection keeps working while
- * hardware microphones are muted (verified on this ROM). Closing IPC restores both, including
- * app death, without changing the user's saved stream indices.
+/** Session audio guard in the root module's shell host. Stream mute alone can leave SCO
+ * audible on this ROM, so VoipOwnerOutput also prevents physical render. Hardware microphones
+ * are muted while REMOTE_SUBMIX injection remains available. IPC cleanup restores routing,
+ * mute and microphone state without changing per-device volume indices.
  */
-internal class VoipOwnerAudio : Closeable {
+internal class VoipOwnerAudio(private val uid: Int = 2000) : Closeable {
     private val serviceClass = Class.forName("android.media.IAudioService")
     private val service = Class.forName("android.media.IAudioService\$Stub")
         .getMethod("asInterface", IBinder::class.java).invoke(null,
@@ -23,6 +21,7 @@ internal class VoipOwnerAudio : Closeable {
     } ?: serviceClass.getMethod("adjustStreamVolume", Int::class.javaPrimitiveType,
         Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java)
     private var previousMute: Boolean? = null
+    private var output: VoipOwnerOutput? = null
     private val previousMicMute: Boolean
     private val setMic = serviceClass.methods.single {
         it.name == "setMicrophoneMute" && it.parameterCount in 3..4
@@ -83,6 +82,7 @@ internal class VoipOwnerAudio : Closeable {
         check(!closed)
         if (silent) {
             if (previousMute == null) previousMute = isMuted()
+            if (output == null) output = VoipOwnerOutput(uid)
             adjustMute(true)
             check(isMuted() && volume() == 0) { "call output was not silenced" }
         } else restore()
@@ -93,6 +93,8 @@ internal class VoipOwnerAudio : Closeable {
         val saved = previousMute ?: return
         adjustMute(saved)
         check(isMuted() == saved) { "call output mute was not restored" }
+        output?.close()
+        output = null
         previousMute = null
     }
 

@@ -154,6 +154,11 @@ internal object VoipAudioPolicy {
     fun createSink(): AudioRecord? {
         val p = policy ?: run { Log.w(TAG, "createSink with no armed policy"); return null }
         val m = mix ?: return null
+        return createSink(p, m)
+    }
+
+    /** Same attribution and vendor compatibility for session-owned playback policies. */
+    internal fun createSink(p: Any, m: Any): AudioRecord? {
         val normal = runCatching {
             val policyCls = Class.forName("android.media.audiopolicy.AudioPolicy")
             val mixCls = Class.forName("android.media.audiopolicy.AudioMix")
