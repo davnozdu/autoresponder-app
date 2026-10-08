@@ -8,8 +8,9 @@ import java.io.Closeable
 /** Session-owned output mute under shell, which holds MODIFY_PHONE_STATE. Android 16 silently
  * ignores the ordinary app's call-volume adjustments. Mute leaves each route's saved index
  * intact and also applies when switching between the phone, USB and Bluetooth headsets.
- * The microphone stays isolated by VoipAudioInjector; global mic mute would silence greeting
- * injection too. Closing the IPC session restores both independently, including app death.
+ * Hardware mic mute prevents headset sidetone. REMOTE_SUBMIX injection keeps working while
+ * hardware microphones are muted (verified on this ROM). Closing IPC restores both, including
+ * app death, without changing the user's saved stream indices.
  */
 internal class VoipOwnerAudio : Closeable {
     private val serviceClass = Class.forName("android.media.IAudioService")
@@ -22,13 +23,20 @@ internal class VoipOwnerAudio : Closeable {
     } ?: serviceClass.getMethod("adjustStreamVolume", Int::class.javaPrimitiveType,
         Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java)
     private var previousMute: Boolean? = null
+    private val previousMicMute: Boolean
+    private val setMic = serviceClass.methods.single {
+        it.name == "setMicrophoneMute" && it.parameterCount in 3..4
+    }
     private var closed = false
     private val worker = Thread({
         try {
             while (!Thread.currentThread().isInterrupted) {
                 Thread.sleep(200)
                 synchronized(this) {
-                    if (previousMute != null && !closed && !isMuted()) adjustMute(true)
+                    if (!closed) {
+                        if (!isMicMuted()) muteMic(true)
+                        if (previousMute != null && !isMuted()) adjustMute(true)
+                    }
                 }
             }
         } catch (_: InterruptedException) {
@@ -39,6 +47,14 @@ internal class VoipOwnerAudio : Closeable {
 
     init {
         check(Process.myUid() == 2000) { "shell audio owner required" }
+        previousMicMute = isMicMuted()
+        try {
+            muteMic(true)
+            check(isMicMuted()) { "hardware microphone was not muted" }
+        } catch (t: Exception) {
+            runCatching { muteMic(previousMicMute) }
+            throw t
+        }
         worker.start()
     }
 
@@ -47,6 +63,14 @@ internal class VoipOwnerAudio : Closeable {
 
     fun volume(): Int = serviceClass.getMethod("getStreamVolume", Int::class.javaPrimitiveType)
         .invoke(service, AudioManager.STREAM_VOICE_CALL) as Int
+
+    fun isMicMuted(): Boolean = serviceClass.getMethod("isMicrophoneMuted").invoke(service) as Boolean
+
+    private fun muteMic(muted: Boolean) {
+        val args = mutableListOf<Any?>(muted, "com.android.shell", 0)
+        if (setMic.parameterCount == 4) args.add(null)
+        setMic.invoke(service, *args.toTypedArray())
+    }
 
     private fun adjustMute(mute: Boolean) {
         val args = mutableListOf<Any?>(AudioManager.STREAM_VOICE_CALL,
@@ -62,6 +86,7 @@ internal class VoipOwnerAudio : Closeable {
             adjustMute(true)
             check(isMuted() && volume() == 0) { "call output was not silenced" }
         } else restore()
+        println("msgrec owner audio silent=$silent muted=${isMuted()} volume=${volume()} micMuted=${isMicMuted()}")
     }
 
     private fun restore() {
@@ -75,7 +100,11 @@ internal class VoipOwnerAudio : Closeable {
         worker.interrupt()
         synchronized(this) {
             closed = true
-            restore()
+            try { restore() } finally {
+                muteMic(previousMicMute)
+                check(isMicMuted() == previousMicMute) { "hardware microphone was not restored" }
+                println("msgrec owner audio restored muted=${isMuted()} volume=${volume()} micMuted=${isMicMuted()}")
+            }
         }
         worker.join(1000)
     }

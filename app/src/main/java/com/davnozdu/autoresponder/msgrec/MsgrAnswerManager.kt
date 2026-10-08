@@ -193,6 +193,8 @@ object MsgrAnswerManager {
                 val current = NotifListenerService.current(sbn.key) ?: error("входящий звонок завершён")
                 check(IncomingCallNotification.answer(current.notification)?.creatorPackage == pkg &&
                     plan(app, current).route == selected.route) { "звонок принят или условия автоответа изменились" }
+                // Mark the call BEFORE answering, so capture never opens the headset mic.
+                MsgrCaptureManager.beginAnswering(app, pkg)
                 dispatch(app, current, uid)
                 log.add("MSGR AM: команда ответа отправлена $pkg; режим=${selected.route}; отправитель=root")
                 val screening = selected.route == MsgrCallPolicy.Route.SCREENING
@@ -218,7 +220,6 @@ object MsgrAnswerManager {
                 check(am.mode == AudioManager.MODE_IN_COMMUNICATION && Settings(app).msgrAmEnabled) {
                     "звонок завершён до приветствия"
                 }
-                MsgrCaptureManager.beginAnswering(app, pkg)
                 connected = true
                 com.davnozdu.autoresponder.notif.DndStats.onIncoming(app, isCall = true)
                 fun findEnd() = NotifListenerService.callNotifications(pkg).firstOrNull {

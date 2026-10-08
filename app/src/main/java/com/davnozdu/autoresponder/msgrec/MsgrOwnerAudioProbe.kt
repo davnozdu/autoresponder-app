@@ -12,7 +12,7 @@ object MsgrOwnerAudioProbe {
             repeat(2) {
                 VoipOwnerAudio().use { audio ->
                     audio.setSilent(true)
-                    check(audio.isMuted() && audio.volume() == 0)
+                    check(audio.isMuted() && audio.volume() == 0 && audio.isMicMuted())
                     Thread.sleep(300)
                     audio.setSilent(false)
                     check(audio.isMuted() == beforeMute && audio.volume() == beforeVolume)

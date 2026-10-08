@@ -60,7 +60,12 @@ object MsgrCaptureManager {
 
     @Synchronized fun endAnswering(context: Context, pkg: String, handoff: Boolean) {
         if (answeringPkg != pkg) return
-        if (handoff) activeJob?.takeIf { it.pkg == pkg }?.answering = false
+        if (handoff) activeJob?.takeIf { it.pkg == pkg }?.let { job ->
+            synchronized(job.monitor) {
+                job.answering = false
+                job.monitor.notifyAll()
+            }
+        }
         answeringPkg = null
         refresh(context)
     }
@@ -215,13 +220,23 @@ object MsgrCaptureManager {
                     socket.soTimeout = 20_000
                     val out = DataOutputStream(socket.outputStream)
                     val input = DataInputStream(socket.inputStream)
-                    out.writeUTF("START")
+                    var micEnabled = !job.answering
+                    out.writeUTF("START_V2")
                     out.writeUTF(job.label)
                     out.writeLong(segmentAt)
+                    out.writeBoolean(micEnabled)
                     out.flush()
                     check(input.readUTF() == "READY") { "shell-хост не принял запись" }
                     synchronized(job.monitor) {
-                        while (!job.stopped) job.monitor.wait()
+                        while (!job.stopped) {
+                            if (!micEnabled && !job.answering) {
+                                // Handoff keeps the existing far-party sink and recording.
+                                out.writeUTF("MIC"); out.flush()
+                                check(input.readUTF() == "MIC_READY") { "микрофон записи не восстановлен" }
+                                micEnabled = true
+                            }
+                            job.monitor.wait()
+                        }
                     }
                     // Last chance to name the caller if the call notification posted late or was
                     // missed at start (we now start on the mode change, before it appears).

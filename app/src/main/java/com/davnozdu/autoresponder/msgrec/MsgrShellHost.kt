@@ -64,7 +64,8 @@ object MsgrShellHost {
     private fun handle(socket: LocalSocket) {
         val input = DataInputStream(socket.inputStream)
         val output = DataOutputStream(socket.outputStream)
-        when (input.readUTF()) {
+        val command = input.readUTF()
+        when (command) {
             "HELLO" -> {
                 val appApk = runCatching { input.readUTF() }.getOrNull()
                 val stale = ownApk != null && appApk != null && appApk != ownApk
@@ -75,18 +76,28 @@ object MsgrShellHost {
                 }
                 return
             }
-            "START" -> Unit
+            "START", "START_V2" -> Unit
             else -> return
         }
         val label = input.readUTF()
         val startedAt = input.readLong()
+        val micEnabled = command == "START" || input.readBoolean()
         val session = Session(label, startedAt)
-        session.start()
+        session.start(micEnabled)
         output.writeUTF("READY")
         output.flush()
         var peer = ""
         try {
-            if (input.readUTF() == "STOP") peer = input.readUTF()
+            while (true) {
+                when (input.readUTF()) {
+                    "MIC" -> {
+                        session.enableMic()
+                        output.writeUTF("MIC_READY"); output.flush()
+                    }
+                    "STOP" -> { peer = input.readUTF(); break }
+                    else -> error("unknown capture command")
+                }
+            }
         } finally {
             val result = session.finish(peer)
             println("msgrec saved ${result.path} ${result.durationMs}ms mic=${result.nearNonzero} far=${result.farNonzero}")
@@ -109,16 +120,27 @@ object MsgrShellHost {
         private val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date(startedAt))
         private val dir = File(DIR)
 
-        fun start() {
-            dir.mkdirs()
-            val farRecord = VoipAudioPolicy.createSink() ?: error("far-party sink unavailable")
+        private fun nearReader(enabled: Boolean): Reader {
+            if (!enabled) return Reader(null, File(dir, ".$stamp.near.raw"), "mic")
             val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(4096)
-            val nearRecord = AudioRecord(MediaRecorder.AudioSource.MIC, RATE,
+            val record = AudioRecord(MediaRecorder.AudioSource.MIC, RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, min * 2)
-            check(nearRecord.state == AudioRecord.STATE_INITIALIZED) { "MIC not initialised" }
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                record.release()
+                error("MIC not initialised")
+            }
+            return Reader(record, File(dir, ".$stamp.near.raw"), "mic")
+        }
+
+        fun start(micEnabled: Boolean) {
+            dir.mkdirs()
+            val farRecord = VoipAudioPolicy.createSink() ?: error("far-party sink unavailable")
             far = Reader(farRecord, File(dir, ".$stamp.far.raw"), "far")
-            near = Reader(nearRecord, File(dir, ".$stamp.near.raw"), "mic")
+            try { near = nearReader(micEnabled) } catch (t: Exception) {
+                farRecord.release()
+                throw t
+            }
             far.start(); near.start()
             try {
                 far.awaitStarted(); near.awaitStarted()
@@ -126,6 +148,15 @@ object MsgrShellHost {
                 far.finish(); near.finish()
                 throw error
             }
+            println("msgrec capture started hardwareMic=$micEnabled")
+        }
+
+        fun enableMic() {
+            if (near.record != null) return
+            near.finish()
+            near = nearReader(true)
+            near.start(); near.awaitStarted()
+            println("msgrec capture hardware microphone restored on handoff")
         }
 
         fun finish(peer: String): Result {
@@ -139,7 +170,7 @@ object MsgrShellHost {
         }
     }
 
-    private class Reader(val record: AudioRecord, val file: File, name: String) {
+    private class Reader(val record: AudioRecord?, val file: File, name: String) {
         @Volatile private var running = true
         @Volatile var frames = 0L
         @Volatile var nonzero = 0L
@@ -148,24 +179,30 @@ object MsgrShellHost {
         private val started = CountDownLatch(1)
         private val thread = Thread({ run() }, "msgrec-$name")
 
-        fun start() = thread.start()
+        fun start() {
+            if (record == null) {
+                file.writeBytes(ByteArray(0))
+                started.countDown()
+            } else thread.start()
+        }
         fun awaitStarted() {
             check(started.await(5, TimeUnit.SECONDS)) { "audio source did not start" }
             failure?.let { throw IllegalStateException("audio source failed to start", it) }
         }
 
         private fun run() {
+            val source = record ?: return
             val buf = ShortArray(2048)
             val bytes = ByteArray(buf.size * 2)
             try {
                 file.outputStream().buffered().use { output ->
-                    record.startRecording()
-                    check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    source.startRecording()
+                    check(source.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                         "AudioRecord did not enter RECORDING"
                     }
                     started.countDown()
                     while (running) {
-                        val n = record.read(buf, 0, buf.size)
+                        val n = source.read(buf, 0, buf.size)
                         if (n < 0) error("AudioRecord.read failed: $n")
                         if (n == 0) continue
                         if (firstFrameNanos == 0L) firstFrameNanos = System.nanoTime() - n * 1_000_000_000L / RATE
@@ -184,8 +221,8 @@ object MsgrShellHost {
                 System.err.println("msgrec reader failed: ${error.javaClass.simpleName}: ${error.message}")
             } finally {
                 started.countDown()
-                runCatching { record.stop() }
-                record.release()
+                runCatching { source.stop() }
+                source.release()
             }
         }
 
@@ -193,7 +230,7 @@ object MsgrShellHost {
             running = false
             thread.join(3000)
             if (thread.isAlive) {
-                runCatching { record.stop() }
+                runCatching { record?.stop() }
                 thread.join(3000)
             }
             check(!thread.isAlive) { "audio reader did not stop" }
