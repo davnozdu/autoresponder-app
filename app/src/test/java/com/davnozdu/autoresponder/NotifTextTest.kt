@@ -46,6 +46,30 @@ class NotifTextTest {
         assertFalse(NotifText.isReaction("Добрый день, как там компьютер?"))
     }
 
+    @Test fun `голосовое распознаётся во всех видах, в которых его присылают мессенджеры`() {
+        // WhatsApp — с длительностью; 25.10 именно такие строки уходили в LLM как обычный текст.
+        assertTrue(NotifText.isVoice("🎤 Голосовое сообщение (0:15)"))
+        assertTrue(NotifText.isVoice("🎤 Голосовое сообщение (0:07)"))
+        assertTrue(NotifText.isVoice("🎤 Voice message (1:02)"))
+        assertTrue(NotifText.isVoice("🎤 Hlasová zpráva (0:35)"))
+        assertTrue(NotifText.isVoice("🎤 Голосове повідомлення (0:12)"))
+        assertTrue(NotifText.isVoice("🎤 Voice message (1:02:03)"))
+        // Telegram — без длительности и без значка.
+        assertTrue(NotifText.isVoice("Голосовое сообщение"))
+        assertTrue(NotifText.isVoice("Voice message"))
+        assertTrue(NotifText.isVoice("Igor прислал(а) вам голосовое сообщение"))
+        assertTrue(NotifText.isVoice("Sent you a voice message"))
+    }
+
+    @Test fun `фраза про голосовое голосовым не считается`() {
+        assertFalse(NotifText.isVoice("Я отправил голосовое сообщение, послушайте пожалуйста"))
+        assertFalse(NotifText.isVoice("Голосовое сообщение не работает, что делать?"))
+        assertFalse(NotifText.isVoice("📷 Photo"))
+        assertFalse(NotifText.isVoice(""))
+        // Вложение без подписи по-прежнему вложение — отвечать на него решает isVoice, не это.
+        assertTrue(NotifText.isNotAMessage("Голосовое сообщение"))
+    }
+
     @Test fun `счётчик непрочитанных содержания не несёт`() {
         assertTrue(NotifText.isBundleCount("3 new messages"))
         assertTrue(NotifText.isBundleCount("2 messages"))

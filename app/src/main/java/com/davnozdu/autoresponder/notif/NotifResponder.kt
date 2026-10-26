@@ -36,6 +36,7 @@ object NotifResponder {
                channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean,
                senderUris: List<String> = emptyList(), ts: Long = System.currentTimeMillis()) {
         val app = context.applicationContext
+        sbn.notification?.let { n -> replyAction(n)?.let { rememberAction(sbn.key, sender, it) } }
         EventQueue.submitMsg {
             com.davnozdu.autoresponder.respond.Handoff.bind(app, sender, tag, senderUris)
             val payload = org.json.JSONObject().put("key", sbn.key).put("sender", sender).put("text", text)
@@ -43,37 +44,88 @@ object NotifResponder {
                 .put("uris", org.json.JSONArray(senderUris))
             // Сборка сообщений (batchWaitMs, см. Responder.handle) — ttl с запасом над окном
             // тишины, иначе задержанное сообщение истечёт раньше своей очереди.
+            //
+            // Запас — 15 минут, как у SMS, а не 5: 25.10 у спящего телефона отложенный запуск
+            // очереди опоздал больше чем на пять минут, и голосовое клиента истекло, так и не
+            // начав обрабатываться. Ответ с опозданием лучше, чем никакого.
             val batchMs = Settings(app).batchWaitMs
-            val ttl = maxOf(Settings(app).notifMaxAgeMin.coerceAtLeast(1) * 60_000L, batchMs + 5 * 60_000L)
+            val ttl = maxOf(Settings(app).notifMaxAgeMin.coerceAtLeast(1) * 60_000L, batchMs + 15 * 60_000L)
             EventQueue.enqueue(app, com.davnozdu.autoresponder.respond.Handoff.key(app, sender, tag),
                 "notification", payload, EventQueue.token("${sbn.packageName}:$sender:$ts:$text"),
                 ttl, batchMs)
         }
     }
 
-    internal suspend fun replay(context: Context, payload: org.json.JSONObject, jobId: Long, receivedAt: Long) {
-        val sbn = NotifListenerService.current(payload.getString("key"))
-        val current = sbn?.notification?.let { extract(it) }
-        if (sbn == null || current == null || current.sender != payload.getString("sender") || current.text != payload.getString("text")) {
-            com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId, "expired", "Уведомление удалено или сообщение изменилось")
-            return
-        }
-        val uris = payload.optJSONArray("uris")
-        process(context, sbn, current.sender, current.text, Channel.valueOf(payload.getString("channel")),
-            payload.getString("tag"), payload.optBoolean("group"),
-            sbn.notification.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true,
-            if (uris == null) emptyList() else (0 until uris.length()).map { uris.getString(it) },
-            payload.getLong("ts"), jobId, receivedAt)
+    /**
+     * Кнопка «Ответить», снятая с уведомления в момент его прихода.
+     *
+     * Ответ уходит не сразу, а после окна тишины (batchWaitMs, по умолчанию 3 минуты). За это
+     * время уведомление часто исчезает: владелец открыл чат на телефоне или в WhatsApp на
+     * компьютере — и мессенджер снимает уведомление. Раньше задание тогда молча истекало
+     * («Уведомление удалено»), и клиент оставался без ответа: 25.10 так пропал клиент,
+     * написавший в воскресенье. Само действие ответа (PendingIntent) живёт дольше уведомления,
+     * поэтому держим его здесь и отвечаем через него, если уведомления уже нет.
+     *
+     * Только память процесса: после перезапуска кнопки нет, и задание честно истекает с
+     * записью в журнал событий.
+     */
+    private class SavedAction(val sender: String, val action: Notification.Action, val at: Long)
+    private val savedActions = java.util.concurrent.ConcurrentHashMap<String, SavedAction>()
+    private const val SAVED_ACTION_TTL_MS = 60 * 60_000L
+
+    private fun rememberAction(key: String, sender: String, action: Notification.Action) {
+        val now = System.currentTimeMillis()
+        savedActions.entries.removeAll { now - it.value.at > SAVED_ACTION_TTL_MS }
+        savedActions[key] = SavedAction(sender, action, now)
     }
 
-    private suspend fun process(context: Context, sbn: StatusBarNotification, sender: String,
+    private fun replyAction(n: Notification): Notification.Action? =
+        n.actions?.firstOrNull { !it.remoteInputs.isNullOrEmpty() }
+
+    internal suspend fun replay(context: Context, payload: org.json.JSONObject, jobId: Long, receivedAt: Long) {
+        val key = payload.getString("key")
+        val sender = payload.getString("sender")
+        val text = payload.getString("text")
+        val tag = payload.getString("tag")
+        val uris = payload.optJSONArray("uris")
+        val uriList = if (uris == null) emptyList() else (0 until uris.length()).map { uris.getString(it) }
+        val channel = Channel.valueOf(payload.getString("channel"))
+        val sbn = NotifListenerService.current(key)
+        if (sbn == null) {
+            val saved = savedActions[key]?.takeIf { it.sender == sender }
+            if (saved == null) {
+                com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId, "expired", "Уведомление удалено")
+                EventLog(context).add("NOTIF[$tag] ${sender.take(16)} — уведомление удалено, кнопки «Ответить» нет, ответ не отправлен")
+                return
+            }
+            EventLog(context).add("NOTIF[$tag] ${sender.take(16)} — уведомление уже снято, отвечаем через сохранённую кнопку")
+            process(context, key, saved.action, sender, text, channel, tag, payload.optBoolean("group"),
+                true, uriList, payload.getLong("ts"), jobId, receivedAt)
+            return
+        }
+        val current = sbn.notification?.let { extract(it) }
+        if (current == null || current.sender != sender || current.text != text) {
+            // Новое сообщение в том же чате заводит своё задание и ответит за оба — это не потеря.
+            com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId, "expired", "Сообщение изменилось")
+            EventLog(context).add("NOTIF[$tag] ${sender.take(16)} — в уведомлении уже другое сообщение, ответит следующее задание")
+            return
+        }
+        val action = replyAction(sbn.notification)
+        if (action != null) rememberAction(key, sender, action)
+        process(context, key, action, current.sender, current.text, channel,
+            tag, payload.optBoolean("group"), action != null,
+            uriList, payload.getLong("ts"), jobId, receivedAt)
+    }
+
+    private suspend fun process(context: Context, notifKey: String, action: Notification.Action?, sender: String,
                         text: String, channel: Channel, tag: String, isGroup: Boolean, hasReply: Boolean,
                         senderUris: List<String>, msgTs: Long, jobId: Long, receivedAt: Long) {
         val s = Settings(context)
         val log = EventLog(context)
         if (!s.enabled || !s.respondSms) return
         if (AutoReplyState.isPaused(context)) return
-        if (text.isBlank() || isPlaceholder(text)) {
+        val voice = NotifText.isVoice(text)
+        if (text.isBlank() || (!voice && isPlaceholder(text))) {
             log.add("NOTIF[$tag] ${sender.take(16)} — заглушка/пустой текст, пропуск"); return
         }
         // Страховка от петли: мессенджер может вернуть наш собственный ответ как входящее
@@ -188,11 +240,11 @@ object NotifResponder {
                     log.add("NOTIF[$tag] $key — лимит/таймаут, ответ по CRM пропущен"); return@withKey
                 }
                 val outText = Responder.finish(s, crmReply)
-                if (EventQueue.beforeSend(context, jobId) && tryRemoteInputReply(context, sbn, outText)) {
+                if (EventQueue.beforeSend(context, jobId) && tryRemoteInputReply(context, action, outText)) {
                     store0(context).markReplied(key, s.timeoutHours)
                     recordOut(context, inId, inCh, outText)
                     DndStats.onAutoReply(context)
-                    NotifListenerService.dismiss(sbn.key)
+                    NotifListenerService.dismiss(notifKey)
                     com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"submitted","CRM: передано кнопке Reply")
                     log.add("NOTIF[$tag] $key — ответ по CRM: $outText")
                 } else {
@@ -238,7 +290,10 @@ object NotifResponder {
 
             HandoffNotifications.show(context, histKeyEarly, inCh)
             val returning = store.everReplied(key)
-            val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null, histKey, warn)
+            // Голосовое робот не слышит: модель по промпту благодарит и обещает прослушать
+            // (см. Responder.buildPrompt), а без модели уходит готовая фраза, а не общий шаблон.
+            val reply = Responder.composeReply(context, s, text, Kind.SMS, returning, override, closedReason != null, histKey, warn,
+                fallbackText = if (voice) voiceFallback(s.defaultLang) else null)
 
             // Слово в слово то же самое, что уже ушло минуту назад, второй раз не отправляем.
             //
@@ -253,7 +308,7 @@ object NotifResponder {
             // Ответ через кнопку уведомления (в тот же тред: RCS/WhatsApp/Telegram).
             if (!Settings(context).enabled || AutoReplyState.isPaused(context) ||
                 com.davnozdu.autoresponder.respond.Handoff.blocked(context, histKeyEarly, inCh, receivedAt) ||
-                !NotifListenerService.current(sbn.key)?.notification?.extras
+                !NotifListenerService.current(notifKey)?.notification?.extras
                     ?.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY).isNullOrEmpty()) {
                 log.add("NOTIF[$tag] — пауза или ручной ответ во время подготовки, ответ отменён"); return@withKey
             }
@@ -266,11 +321,11 @@ object NotifResponder {
                     log.add("NOTIF[$tag] — вы уже ответили сами, автоответ отменён"); return@withKey
                 }
                 val notice = "Ответили вам в ${com.davnozdu.autoresponder.respond.Responder.channelLabel(humanCh)}."
-                if (EventQueue.beforeSend(context, jobId) && tryRemoteInputReply(context, sbn, notice)) {
+                if (EventQueue.beforeSend(context, jobId) && tryRemoteInputReply(context, action, notice)) {
                     store.markReplied(key, s.timeoutHours)
                     recordOut(context, inId, inCh, notice)
                     DndStats.onAutoReply(context)
-                    NotifListenerService.dismiss(sbn.key)
+                    NotifListenerService.dismiss(notifKey)
                     log.add("NOTIF[$tag] $key — короткое уведомление (уже ответили в $humanCh): $notice")
                     return@withKey
                 }
@@ -286,12 +341,12 @@ object NotifResponder {
             }
             if (!EventQueue.beforeSend(context, jobId)) return@withKey
             val transportId = com.davnozdu.autoresponder.respond.Outgoing.startRemote(context, histKeyEarly, inCh, reply, jobId)
-            if (tryRemoteInputReply(context, sbn, reply)) {
+            if (tryRemoteInputReply(context, action, reply)) {
                 com.davnozdu.autoresponder.respond.Outgoing.remoteResult(context, transportId, true)
                 store.markReplied(key, s.timeoutHours)
                 recordOut(context, inId, inCh, reply)
                 DndStats.onAutoReply(context)
-                NotifListenerService.dismiss(sbn.key)
+                NotifListenerService.dismiss(notifKey)
                 log.add("NOTIF[$tag] $key — ответ (#${store.count(key, s.timeoutHours)}/${s.maxReplies}): $reply")
                 return@withKey
             }
@@ -344,10 +399,17 @@ object NotifResponder {
         HistoryLogger.record(context, inId, channel, "out", text, auto = true)
     }
 
-    private fun tryRemoteInputReply(context: Context, sbn: StatusBarNotification, text: String): Boolean {
+    /** Ответ на голосовое без LLM. Языка клиента из голосового не узнать — берём язык по умолчанию. */
+    private fun voiceFallback(lang: String): String = when (lang) {
+        "cs" -> "Děkujeme! Vaši hlasovou zprávu si poslechneme a ozveme se vám."
+        "uk" -> "Дякуємо! Ми прослухаємо ваше голосове повідомлення і відповімо вам."
+        "en" -> "Thank you! We will listen to your voice message and get back to you."
+        else -> "Спасибо! Мы прослушаем ваше голосовое сообщение и ответим вам."
+    }
+
+    private fun tryRemoteInputReply(context: Context, action: Notification.Action?, text: String): Boolean {
         return try {
-            val n = sbn.notification ?: return false
-            val action = n.actions?.firstOrNull { !it.remoteInputs.isNullOrEmpty() } ?: return false
+            if (action == null) return false
             val inputs = action.remoteInputs ?: return false
             val intent = Intent()
             val results = Bundle()
@@ -490,10 +552,12 @@ object NotifResponder {
         val who = ex.sender.trim()
         if (who.isEmpty() || isServiceNotification(who, ex.text)) return
         val app = context.applicationContext
-        // В журнале — только текст. Вложение («Фото», «Voice message») текстом не является:
-        // ни ответить по нему, ни понять из него что-либо LLM не может. Счётчик непрочитанных
-        // («3 new messages») — тем более: содержания в нём нет, а ветку он засоряет.
-        val body = if (isPlaceholder(ex.text)) "" else ex.text
+        // В журнале — только текст. Вложение («Фото») текстом не является: ни ответить по нему,
+        // ни понять из него что-либо LLM не может. Счётчик непрочитанных («3 new messages») —
+        // тем более: содержания в нём нет, а ветку он засоряет. Голосовое — исключение: модели
+        // надо видеть в разговоре, что клиент его присылал, иначе она не пообещает прослушать.
+        val body = if (NotifText.isVoice(ex.text)) ex.text.trim()
+                   else if (isPlaceholder(ex.text)) "" else ex.text
         if (body.isNotEmpty() &&
             Dedup.claim("hist:$tag:${who.lowercase()}:${body.trim()}")) {
             HistoryLogger.record(app, who, tag, "in", body, ts = ex.ts)

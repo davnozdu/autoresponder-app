@@ -47,7 +47,10 @@ object EventQueue {
                     val job = db.next(active.map { db.canonical(it) }.toSet(), NotifListenerService.isConnected)
                     if (job == null) {
                         val wait=db.nextDelay()
-                        if(wait>0) { wake?.cancel(); wake=scope.launch { delay(wait); kick(app) } }
+                        if(wait>0) {
+                            wake?.cancel(); wake=scope.launch { delay(wait); kick(app) }
+                            scheduleWake(app, wait)
+                        }
                         break
                     }
                     active.add(job.who)
@@ -71,6 +74,28 @@ object EventQueue {
             }
         }
     }
+    const val ACTION_WAKE = "com.davnozdu.autoresponder.QUEUE_WAKE"
+
+    /**
+     * Страховка для корутинного таймера выше: у спящего телефона процесс замораживается, и
+     * `delay` просыпается с опозданием. 25.10 запуск, назначенный на 08:55, случился только
+     * после 09:00, когда задание уже истекло, — голосовое клиента не обработалось. Будильник
+     * с allowWhileIdle будит процесс сам. Неточный (точный требует отдельного разрешения),
+     * но TTL заданий рассчитан с запасом. Лишний kick безвреден: очередь просто ничего не найдёт.
+     */
+    private fun scheduleWake(context: Context, wait: Long) {
+        try {
+            val am = context.getSystemService(android.app.AlarmManager::class.java) ?: return
+            val pi = android.app.PendingIntent.getBroadcast(context, 31,
+                android.content.Intent(context, com.davnozdu.autoresponder.notif.NotifActionReceiver::class.java)
+                    .setAction(ACTION_WAKE),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + wait + 1_000L, pi)
+        } catch (e: Exception) {
+            EventLog(context).add("QUEUE: будильник не поставлен: ${e.message}")
+        }
+    }
+
     fun defer(context: Context, id: Long) { RuntimeDb.get(context).defer(id,10_000) }
     fun beforeSend(context: Context, job: Long): Boolean {
         val db = RuntimeDb.get(context)

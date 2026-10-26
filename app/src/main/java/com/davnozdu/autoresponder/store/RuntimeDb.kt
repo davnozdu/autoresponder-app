@@ -52,6 +52,15 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
     }
     @Synchronized fun next(excluded: Set<String>, notificationsReady: Boolean): ReplyJob? {
         val now = System.currentTimeMillis()
+        // Истечение раньше оседало только здесь, и в журнале событий сообщение клиента просто
+        // обрывалось — без причины (так выглядело голосовое 25.10). Пишем каждое.
+        readableDatabase.rawQuery("SELECT id,kind,payload FROM jobs WHERE state='queued' AND expires < ?", arrayOf(now.toString())).use { c ->
+            while (c.moveToNext()) {
+                val who = try { org.json.JSONObject(c.getString(2)).let { it.optString("sender").ifBlank { it.optString("number") } } }
+                          catch (_: Exception) { "" }
+                com.davnozdu.autoresponder.data.EventLog().add("QUEUE #${c.getLong(0)} (${c.getString(1)}) ${who.take(16)} — истёк, так и не начав обрабатываться, ответа нет")
+            }
+        }
         writableDatabase.execSQL("UPDATE jobs SET state='expired',detail='Истёк срок актуальности' WHERE state='queued' AND expires < ?", arrayOf(now))
         val seen=excluded.toMutableSet()
         readableDatabase.rawQuery("SELECT id,who,kind,payload,created,expires,available FROM jobs WHERE state='queued' ORDER BY id", null).use { c ->

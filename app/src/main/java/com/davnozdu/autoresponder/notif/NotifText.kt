@@ -90,6 +90,28 @@ object NotifText {
         "^(reacted(?!$W)|отреагировал|поставил[аи]?\\s+реакц|liked(?!$W)|понравилось(?!$W))" +
         "|^[^\\p{L}\\s]{1,3}\\s+(to|на)\\s+[\"«]")
 
+    /**
+     * Голосовое сообщение — вложение, но отвечать на него НАДО: клиент что-то сказал, и
+     * молчать в ответ нельзя. Робот его не слышит, поэтому благодарит и обещает прослушать.
+     *
+     * WhatsApp пишет длительность («🎤 Голосовое сообщение (0:15)»), и с ней строка не
+     * подходила под [ATTACHMENT] — уходила в LLM как обычный текст, и ответ зависел от того,
+     * поймёт ли модель, что это такое. Telegram длительность не пишет («Голосовое сообщение»)
+     * — такое считалось вложением, и клиент не получал ответа вовсе (25.10).
+     */
+    private val VOICE = ci(
+        "^(" +
+            "(voice|audio)\\s+(message|note)" +
+            "|голосов$W*(\\s+(сообщени|повідомленн|запис)$W*)?" +
+            "|аудиосообщени$W*|аудіоповідомленн$W*" +
+            "|hlasov$W+\\s+zpráv$W*" +
+        ")(\\s*\\(\\d{1,2}(:\\d{2}){1,2}\\))?\\.{0,3}$")
+
+    /** «Имя прислал(а) вам голосовое сообщение» — так подписывает Telegram. */
+    private val VOICE_TAIL = ci(
+        "(прислал|отправил|послал)(а|\\(а\\))?\\s+(вам\\s+)?(голосов$W*\\s+сообщени$W*|аудиосообщени$W*)\\s*$" +
+        "|sent\\s+(you\\s+)?an?\\s+(voice|audio)\\s+(message|note)\\s*$")
+
     /** Счётчик непрочитанных вместо текста: содержания в нём нет. */
     private val BUNDLE_COUNT = ci(
         "^\\d+\\s+(new\\s+)?(messages?|сообщени$W+)$|^new message$|^новое сообщение$")
@@ -102,6 +124,12 @@ object NotifText {
         val c = core(text)
         if (c.isEmpty()) return false
         return ATTACHMENT.matches(c) || ATTACHMENT_TAIL.containsMatchIn(c)
+    }
+
+    fun isVoice(text: String): Boolean {
+        val c = core(text)
+        if (c.isEmpty()) return false
+        return VOICE.matches(c) || VOICE_TAIL.containsMatchIn(c)
     }
 
     /**
@@ -122,5 +150,5 @@ object NotifText {
      */
     internal val patternSources: List<String>
         get() = listOf(LEAD_ICON.pattern, ATTACHMENT.pattern, ATTACHMENT_TAIL.pattern,
-            REACTION.pattern, BUNDLE_COUNT.pattern)
+            REACTION.pattern, BUNDLE_COUNT.pattern, VOICE.pattern, VOICE_TAIL.pattern)
 }
