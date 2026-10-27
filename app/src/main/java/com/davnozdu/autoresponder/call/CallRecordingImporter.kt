@@ -26,7 +26,12 @@ object CallRecordingImporter {
         "/sdcard/Music/Recordings/Call Recordings",
         "/storage/emulated/0/Music/Recordings/Call Recordings",
         "/sdcard/MIUI/sound_recorder/call_rec",
+        RESCUED_DIR,
     )
+    // Our own call recording that the app never collected (crash/kill mid-call): the module's
+    // rec_guard.sh moves the RAM buffer here as "own-recording-yyMMddHHmm.wav" to free memory.
+    // The daemon does not know the caller, so the row gets a readable label and stays "new".
+    private const val RESCUED_DIR = "/sdcard/AutoResponder/recordings/rescued"
     private val AUDIO_EXT = setOf("mp3", "m4a", "amr", "aac", "wav", "ogg")
     // Two dialer name shapes seen on this device:
     //   OxygenOS:  "<caller>-2609291314"          (hyphen, yyMMddHHmm)
@@ -51,8 +56,9 @@ object CallRecordingImporter {
                 if (db.amRecHasFile(file.absolutePath)) continue    // already imported
                 val (caller, ts) = parse(file)
                 val duration = RecordingLinker.durationMs(file.absolutePath)
-                val (name, number) = splitCaller(caller)
-                if (db.amRecInsert(number, name, ts, duration, file.absolutePath, "call", heard = true) > 0)
+                val rescued = dirPath == RESCUED_DIR
+                val (name, number) = if (rescued) "Запись звонка (восстановлена)" to null else splitCaller(caller)
+                if (db.amRecInsert(number, name, ts, duration, file.absolutePath, "call", heard = !rescued) > 0)
                     added++
             }
         }
