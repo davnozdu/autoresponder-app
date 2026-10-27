@@ -124,7 +124,7 @@ class AnswerMachineService : Service() {
         registerWatcher(app)
         try {
             // 1) Ответить.
-            answerCall(app)
+            answerCall(app, start)
             if (!offhook) {
                 // Клиент положил трубку раньше, чем мы ответили, или acceptRingingCall не
                 // сработал (гонка/особенности прошивки). Строку в журнал НЕ создаём — иначе
@@ -296,7 +296,7 @@ class AnswerMachineService : Service() {
 
         registerWatcher(app)
         try {
-            answerCall(app)
+            answerCall(app, start)
             if (!offhook) {
                 EventLog(app).add("AM: не ответили вовремя ${number ?: "?"} — пропуск")
                 return
@@ -313,7 +313,10 @@ class AnswerMachineService : Service() {
             val waitSec = s.screeningWaitSec.coerceIn(5, 300)
             showCallAlert(name ?: number ?: "Неизвестный абонент", s.amVibrateToOwner)
             if (s.amVibrateToOwner) callVibration.start(waitSec + 20, s.amVibrationIntervalSec, scope)
-            AmBridge.recStart(app, waitSec)
+            // Буфер с запасом на ВЕСЬ разговор, а не только на ожидание решения: после
+            // «Ответить» запись продолжается до отбоя (см. ветку accepted) — штатный рекордер
+            // мог этот звонок не подхватить, и тогда разговор остался бы вовсе без записи.
+            AmBridge.recStart(app, CALL_REC_MAX_SEC)
 
             val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             runCatching { am.isMicrophoneMute = true }
@@ -376,13 +379,7 @@ class AnswerMachineService : Service() {
                 AmBridge.muteOut(app, false)
                 EventLog(app).add("AM: скрининг — владелец принял ${number ?: "?"}")
                 com.davnozdu.autoresponder.notif.CallerOverlay.hide(app)
-                // Дальше это обычный разговор — штатная запись звонилки (если включена)
-                // продолжает сама, как у любого вручную принятого звонка. Свой буфер
-                // (pal_record) тут не нужен — отбрасываем, а не сохраняем: сохранённый файл
-                // содержал бы только приветствие+зуммер до момента ответа, не сам разговор, и
-                // создавать под него запись в журнале (которую нечем будет проиграть) незачем.
-                AmBridge.recStop(app)
-                AmBridge.recDiscard(app)
+                finishAcceptedCall(app, number, name, start, ownRecPath)
                 return
             }
 
@@ -508,6 +505,38 @@ class AnswerMachineService : Service() {
         }
     }
 
+    /**
+     * Владелец принял звонок с карточки скрининга — дальше обычный разговор. Своя запись
+     * (pal_record, тот же incall-тап обеих сторон, что у штатного рекордера) идёт до отбоя:
+     * штатный рекордер OxygenOS не подхватывает часть авто-отвеченных звонков вовсе — без
+     * ошибки и без файла (живой случай 27.10 14:50, трёхминутный разговор пропал целиком,
+     * потому что буфер здесь раньше стирался сразу после «Ответить»). После отбоя: файл
+     * звонилки нашёлся — свой буфер стираем, флеш не трогаем; нет — сохраняем свой и
+     * кладём его в журнал как обычный звонок.
+     */
+    private suspend fun finishAcceptedCall(app: Context, number: String?, name: String?,
+                                           start: Long, ownRecPath: String) {
+        waitIdleOr(CALL_REC_MAX_SEC * 1000L)
+        AmBridge.recStop(app)
+        delay(500)                                         // дать демону дописать WAV-заголовок
+        val oem = RecordingLinker.awaitOemRecording(number, start, waitMs = 20_000L)
+        if (oem != null) {
+            AmBridge.recDiscard(app)
+            runCatching { CallRecordingImporter.run(app) }
+            EventLog(app).add("AM: скрининг — разговор ${number ?: "?"} записан звонилкой (${oem.name})")
+            return
+        }
+        AmBridge.recSave(app, ownRecPath)
+        val ownFile = java.io.File(ownRecPath)
+        if (RecordingLinker.awaitStable(ownFile)) {
+            val dur = RecordingLinker.durationMs(ownFile.absolutePath)
+            HistoryDb.get(app).amRecInsert(number, name, start, dur, ownFile.absolutePath, "call", heard = true)
+            EventLog(app).add("AM запись: штатный рекордер не записал разговор ${number ?: "?"} — сохранена своя запись (${dur / 1000}s)")
+        } else {
+            EventLog(app).add("AM запись: разговор ${number ?: "?"} НЕ сохранён — нет ни штатной, ни своей записи")
+        }
+    }
+
     private suspend fun waitScreeningDecision(budgetMs: Long, am: AudioManager) {
         val deadline = System.currentTimeMillis() + budgetMs
         while (System.currentTimeMillis() < deadline && !idle && !accepted && !declined && !transferred) {
@@ -530,9 +559,15 @@ class AnswerMachineService : Service() {
     }
 
     @android.annotation.SuppressLint("MissingPermission")
-    private suspend fun answerCall(ctx: Context) {
+    private suspend fun answerCall(ctx: Context, ringStartMs: Long) {
         val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         val telephony = ctx.getSystemService(TelephonyManager::class.java)
+        // Не отвечать мгновенно: звонилке (incallui) нужно время «оттаять» и принять звонок
+        // как входящий — её автозапись стартует на переходе «звонит → разговор». Живой случай
+        // 27.10 14:50: ответ через 88мс после SET_RINGING, окно звонилки создалось уже ПОСЛЕ
+        // ответа, её уведомление о звонке так и не появилось, записи нет. У всех звонков,
+        // которые записались, ответ шёл через 300–380мс; порог взят с запасом.
+        while (!idle && System.currentTimeMillis() < ringStartMs + ANSWER_MIN_DELAY_MS) delay(100)
         val deadline = System.currentTimeMillis() + 6_000L
         // Тоже выходим по idle: если клиент положил трубку раньше, чем мы успели ответить,
         // не стоит долбить acceptRingingCall() ещё несколько секунд впустую.
@@ -780,6 +815,11 @@ class AnswerMachineService : Service() {
     companion object {
         private const val CH = "answer_machine"
         private const val NOTIF_ID = 4711
+        /** Минимальная пауза от начала звонка до программного ответа — см. answerCall. */
+        private const val ANSWER_MIN_DELAY_MS = 1_500L
+        /** Потолок своей записи разговора: 3 ч. WAV 48кГц стерео ≈ 11,5 МБ/мин ≈ 2,1 ГБ —
+         *  под него в модуле поднят размер ОЗУ-буфера (tmpfs моста, bridge.sh RAM_SIZE). */
+        private const val CALL_REC_MAX_SEC = 3 * 60 * 60
         const val EX_NUMBER = "num"
         const val EX_NAME = "name"
         const val EX_REASON = "reason"

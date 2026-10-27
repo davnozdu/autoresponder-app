@@ -34,19 +34,8 @@ object RecordingLinker {
      */
     fun linkLatest(ctx: Context, number: String?, sinceMs: Long, waitMs: Long = 12_000L): Pair<String, Long>? {
         val app = ctx.applicationContext
-        val digits = number?.filter { it.isDigit() }?.takeLast(9) ?: ""
-        val deadline = System.currentTimeMillis() + waitMs
-        var found: File? = null
-        while (System.currentTimeMillis() < deadline) {
-            found = pickRecording(digits, sinceMs)
-            if (found != null && found.length() > 0) {
-                // файл может ещё дописываться — подождём стабилизации размера
-                val sz1 = found.length(); Thread.sleep(600)
-                if (found.length() == sz1) break
-            }
-            Thread.sleep(500)
-        }
-        val src = found ?: run { EventLog(app).add("AM запись: файл не найден"); return null }
+        val src = awaitOemRecording(number, sinceMs, waitMs)
+            ?: run { EventLog(app).add("AM запись: файл не найден"); return null }
         return try {
             val dstDir = File(DEST).apply { mkdirs() }
             val ext = src.extension.ifBlank { "mp3" }
@@ -66,6 +55,40 @@ object RecordingLinker {
         } catch (e: Exception) {
             EventLog(app).add("AM запись: не скопировал (${e.message})"); null
         }
+    }
+
+    /**
+     * Ждёт, пока звонилка допишет свою запись звонка, начавшегося в [sinceMs], и возвращает
+     * сам оригинал (без копии) — или null, если штатный рекордер этот звонок не записал.
+     */
+    fun awaitOemRecording(number: String?, sinceMs: Long, waitMs: Long = 12_000L): File? {
+        val digits = number?.filter { it.isDigit() }?.takeLast(9) ?: ""
+        val deadline = System.currentTimeMillis() + waitMs
+        var found: File? = null
+        while (System.currentTimeMillis() < deadline) {
+            found = pickRecording(digits, sinceMs)
+            if (found != null && found.length() > 0) {
+                // файл может ещё дописываться — подождём стабилизации размера
+                val sz1 = found.length(); Thread.sleep(600)
+                if (found.length() == sz1) return found
+            }
+            Thread.sleep(500)
+        }
+        return found?.takeIf { it.length() > 0 }
+    }
+
+    /** Ждёт, пока размер файла перестанет расти (демон мог не успеть докопировать большой
+     *  буфер за время ack-таймаута recsave). true — файл есть и больше одного WAV-заголовка. */
+    fun awaitStable(f: File, waitMs: Long = 60_000L): Boolean {
+        val deadline = System.currentTimeMillis() + waitMs
+        var last = -1L
+        while (System.currentTimeMillis() < deadline) {
+            val sz = if (f.exists()) f.length() else -1L
+            if (sz > 44 && sz == last) return true
+            last = sz
+            Thread.sleep(700)
+        }
+        return f.exists() && f.length() > 44
     }
 
     private fun pickRecording(digits: String, sinceMs: Long): File? {

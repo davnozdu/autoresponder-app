@@ -3,4 +3,6 @@
     <cache-path name="cache" path="." />
     <external-cache-path name="ext_cache" path="." />
     <files-path name="files" path="." />
+    <!-- Записи звонков/автоответчика на общем хранилище: делимся файлом на месте, без копии. -->
+    <external-path name="external" path="." />
 </paths>

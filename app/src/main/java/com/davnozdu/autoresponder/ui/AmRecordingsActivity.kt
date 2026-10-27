@@ -5,8 +5,13 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import android.media.MediaScannerConnection
+import android.os.Environment
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -99,7 +104,7 @@ private fun sourceColor(key: Int): Color = when (key) {
     else -> Color(0xFF9E9E9E) // автоответчик — серый
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun AmRecordingsScreen() {
     val ctx = LocalContext.current
@@ -300,9 +305,16 @@ fun AmRecordingsScreen() {
                                     if (!r.heard) {
                                         Badge(Modifier.padding(end = 6.dp)) { Text("новое") }
                                     }
+                                    // Длинное имя (мессенджер + собеседник) не влезает между
+                                    // кнопками — у выбранной записи прокручивается бегущей
+                                    // строкой, у остальных обрезается многоточием.
                                     Text(
                                         r.name ?: r.number ?: "Неизвестный",
-                                        style = MaterialTheme.typography.titleSmall
+                                        style = MaterialTheme.typography.titleSmall,
+                                        maxLines = 1,
+                                        overflow = if (selectedId == r.id) TextOverflow.Clip else TextOverflow.Ellipsis,
+                                        modifier = if (selectedId == r.id)
+                                            Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
                                     )
                                 }
                                 Text(
@@ -317,6 +329,20 @@ fun AmRecordingsScreen() {
                                     "Дешифровка не удалась: ${transcribeError?.second}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.error)
+                            }
+                            IconButton(onClick = { shareAudio(ctx, r) }, enabled = hasFile) {
+                                Icon(Icons.Filled.Share, contentDescription = "Поделиться записью")
+                            }
+                            IconButton(onClick = {
+                                scope.launch {
+                                    val res = withContext(Dispatchers.IO) { runCatching { downloadAudio(ctx, r) } }
+                                    Toast.makeText(ctx,
+                                        res.fold({ "Сохранено в Загрузки: ${it.name}" },
+                                                 { "Не удалось сохранить: ${it.message}" }),
+                                        Toast.LENGTH_LONG).show()
+                                }
+                            }, enabled = hasFile) {
+                                Icon(Icons.Filled.Download, contentDescription = "Скачать запись")
                             }
                         }
                         if (selectedId == r.id && hasFile) {
@@ -406,6 +432,55 @@ private fun saveTranscript(ctx: Context, rec: AmRec) {
     }.onFailure {
         Toast.makeText(ctx, "Не удалось сохранить: ${it.message}", Toast.LENGTH_LONG).show()
     }
+}
+
+private fun audioMime(file: File): String = when (file.extension.lowercase(Locale.US)) {
+    "mp3" -> "audio/mpeg"
+    "wav" -> "audio/wav"
+    "m4a", "aac" -> "audio/mp4"
+    "ogg", "opus" -> "audio/ogg"
+    "amr" -> "audio/amr"
+    else -> "audio/*"
+}
+
+/** ASCII-only file name for an exported recording, same scheme as transcripts. */
+private fun audioExportName(rec: AmRec, src: File): String =
+    "${transcriptBaseName(rec)}.${src.extension.ifBlank { "mp3" }}"
+
+/**
+ * Share the recording itself through the system sheet — to a messenger, or "Save to…" a
+ * location of choice. The file is served in place through the FileProvider (external-path):
+ * call recordings can be tens of megabytes, a copy into cache for every share would only
+ * waste flash.
+ */
+private fun shareAudio(ctx: Context, rec: AmRec) {
+    val path = rec.file ?: return
+    runCatching {
+        val file = File(path)
+        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file,
+            audioExportName(rec, file))
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = audioMime(file)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newRawUri(null, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        ctx.startActivity(Intent.createChooser(send, "Поделиться записью")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.onFailure {
+        Toast.makeText(ctx, "Не удалось поделиться: ${it.message}", Toast.LENGTH_LONG).show()
+    }
+}
+
+/** Copy the recording to Download/AutoResponder and index it so it shows up in Files/Downloads. */
+private fun downloadAudio(ctx: Context, rec: AmRec): File {
+    val src = File(rec.file ?: error("нет файла"))
+    val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+        "AutoResponder").apply { mkdirs() }
+    val dst = File(dir, audioExportName(rec, src))
+    src.copyTo(dst, overwrite = true)
+    MediaScannerConnection.scanFile(ctx, arrayOf(dst.absolutePath), arrayOf(audioMime(dst)), null)
+    return dst
 }
 
 /** Share the transcript as a .txt attachment (works for long texts and forwards cleanly to Telegram). */
