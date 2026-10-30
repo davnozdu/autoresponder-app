@@ -342,7 +342,8 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
      * Вызывается из ежедневного прохода (Backup.run), то есть не на горячем пути.
      */
     fun pruneEvents(days: Int = 365): Int = runCatching {
-        val n = writableDatabase.delete("events", "ts < ?", arrayOf(System.currentTimeMillis() - days * 86_400_000L))
+        val before = (System.currentTimeMillis() - days * 86_400_000L).toString()
+        val n = writableDatabase.delete("events", "ts < ?", arrayOf(before))
         if (n > 0) { keysCache = null; PersonThreads.invalidate() }
         n
     }.getOrDefault(0)
