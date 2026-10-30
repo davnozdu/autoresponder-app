@@ -43,6 +43,14 @@ class RuntimeDb internal constructor(context: Context, name: String = "runtime.d
         lastPruneAt = now
         runCatching {
             writableDatabase.delete("jobs", "created < ? AND state NOT IN ('queued','running','sending')", arrayOf((now - 7 * 86_400_000L).toString()))
+            // Задания, застрявшие в «передано на отправку», чей срок истёк больше часа назад:
+            // процесс, который их вёл, умер (перезагрузка, LMK), и подтверждения уже не будет.
+            // Час запаса — чтобы не тронуть задание, которое прямо сейчас отправляется.
+            // На телефоне так висели 4 задания от 26–28.10 в состоянии «Передано на отправку».
+            writableDatabase.execSQL(
+                "UPDATE jobs SET state='uncertain',detail='Результат неизвестен: приложение закрылось до подтверждения' " +
+                    "WHERE state IN ('sending','submitted') AND expires < ?",
+                arrayOf(now - 60 * 60_000L))
             writableDatabase.execSQL("DELETE FROM segments WHERE outgoing IN (SELECT id FROM outgoing WHERE created < ?)", arrayOf(now - 30 * 86_400_000L))
             writableDatabase.delete("outgoing", "created < ?", arrayOf((now - 30 * 86_400_000L).toString()))
         }
