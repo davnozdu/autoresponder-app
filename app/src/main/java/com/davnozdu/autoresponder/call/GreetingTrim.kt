@@ -133,10 +133,11 @@ object GreetingTrim {
         val greetEnv = envelope(greetAtRecRate, frameLen)
         if (recEnv.isEmpty() || greetEnv.isEmpty() || greetEnv.size >= recEnv.size) return null
 
-        // Скользящие суммы: mean, дисперсия окна и Σ(x·g) считаются за O(1) на шаг, без копии
-        // окна и без нормализации на каждом смещении. Раньше на каждое смещение создавались
-        // два DoubleArray размера эталона (copyOfRange + normalize): для пятиминутной записи
-        // это порядка 2·10⁸ умножений и гигабайты мусора в GC — минуты CPU.
+        // Сумма и сумма квадратов окна обновляются скользяще (O(1) на шаг), а скалярное
+        // произведение считается честно по окну: обновлять его инкрементально нельзя — эталон
+        // не сдвигается вместе с окном, и парность всех отсчётов меняется. Раньше на каждое
+        // смещение создавались два DoubleArray размера эталона (copyOfRange + normalize) —
+        // для пятиминутной записи это десятки мегабайт мусора в GC и минуты работы.
         val n = greetEnv.size
         var gMean = 0.0
         for (v in greetEnv) gMean += v
@@ -148,11 +149,7 @@ object GreetingTrim {
 
         var sumX = 0.0
         var sumX2 = 0.0
-        var sumXG = 0.0
-        for (i in 0 until n) {
-            val x = recEnv[i]
-            sumX += x; sumX2 += x * x; sumXG += x * greetEnv[i]
-        }
+        for (i in 0 until n) { val x = recEnv[i]; sumX += x; sumX2 += x * x }
         var bestOffset = -1
         var bestScore = Double.NEGATIVE_INFINITY
         val lastOffset = recEnv.size - n
@@ -162,13 +159,14 @@ object GreetingTrim {
                 val inn = recEnv[offset + n - 1]
                 sumX += inn - out
                 sumX2 += inn * inn - out * out
-                sumXG += inn * greetEnv[n - 1] - out * greetEnv[0]
             }
+            var dot = 0.0
+            for (i in 0 until n) dot += recEnv[offset + i] * greetEnv[i]
             val mx = sumX / n
             val varX = sumX2 / n - mx * mx
-            if (varX <= 1e-12) continue
-            val cov = sumXG / n - mx * gMean
-            val score = cov / (sqrt(varX) * gStd)
+            // Постоянное окно (тишина) раньше после normalize превращалось в нули и давало
+            // корреляцию 0 — сохраняем именно это, чтобы выбор лучшего смещения не менялся.
+            val score = if (varX <= 1e-12) 0.0 else (dot / n - mx * gMean) / (sqrt(varX) * gStd)
             if (score > bestScore) { bestScore = score; bestOffset = offset }
         }
         if (bestOffset < 0 || bestScore < MIN_CORRELATION) return null
