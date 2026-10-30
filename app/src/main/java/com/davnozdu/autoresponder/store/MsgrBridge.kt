@@ -172,6 +172,34 @@ object MsgrBridge {
      * Messages весит 17 МБ, а нужна редко — когда RCS-отправитель пришёл без номера.
      */
     /**
+     * Умеет ли установленный модуль метку `now`.
+     *
+     * Старый `bridge.sh` (до v0.4.2) трактует второе поле запроса как имя базы: на
+     * `"<epoch> now"` он не найдёт такой метки и не скопирует НИЧЕГО. Поэтому метку шлём только
+     * модулю, который её понимает, — версию берём из `files/module-health`, который пишет
+     * watchdog. Пока модуль не обновлён, приложение работает по-старому (просто без
+     * принудительного обновления).
+     */
+    @Volatile private var nowSupportAt = 0L
+    @Volatile private var nowSupport = false
+    private fun supportsNow(context: Context): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - nowSupportAt < 10 * 60_000L) return nowSupport
+        nowSupportAt = now
+        nowSupport = try {
+            val health = File(context.filesDir, "module-health")
+            val line = health.readLines().firstOrNull { it.startsWith("Модуль") }
+            val m = Regex("v?(\\d+)\\.(\\d+)\\.(\\d+)").find(line.orEmpty())
+            if (m == null) false else {
+                val (a, b, c) = m.destructured
+                val code = a.toInt() * 10000 + b.toInt() * 100 + c.toInt()
+                code >= 402
+            }
+        } catch (_: Exception) { false }
+        return nowSupport
+    }
+
+    /**
      * Текст просьбы: `<epoch>` — обычный прогон, `<epoch> now` — «прошу прямо сейчас»
      * (обходит троттлинг MIN_GAP в bridge.sh), `<epoch> now <метки>` — принудительно и только
      * названные базы.
@@ -241,8 +269,11 @@ object MsgrBridge {
         // ЗАПИСЬ, а не setLastModified: тот на части файловых систем молча возвращает false,
         // и просьба не уходила бы вовсе.
         val req = File(d, "request")
+        // Метку `now` шлём только модулю, который её понимает (см. supportsNow): старый
+        // bridge.sh принял бы её за имя базы и не скопировал бы ничего.
+        val useNow = force && supportsNow(app)
         val asked = try {
-            req.writeText(ask(emptyArray(), force))
+            req.writeText(ask(emptyArray(), useNow))
             true
         } catch (e: Exception) {
             log.add("Мост: не удалось попросить обновление (${e.message})"); false
