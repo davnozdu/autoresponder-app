@@ -143,6 +143,9 @@ object MsgrCaptureManager {
         // leave it running for the whole call, so a mid-call track drop cannot spawn a second one.
         cancelStop()
         if (activeJob != null) return
+        // Пока предыдущий воркер доживает (join в отдельном потоке), вторую сессию не поднимаем:
+        // иначе две записи приходят на один сокет хоста, а он однопоточный.
+        if (pendingStopJoin != null) return
         // Which messenger is calling: the app that has posted an ongoing CALL notification. The
         // notification's package is authoritative (it is WHICH app posted it), needs no privileged
         // permission, and a SIM call posts none from a whitelisted messenger, so it is excluded for
@@ -207,12 +210,26 @@ object MsgrCaptureManager {
             job.stopped = true
             job.monitor.notifyAll()
         }
-        runCatching { job.worker.join(15_000) }
         activeJob = null
+        // join(15 с) НЕ на вызывающем потоке: stopCurrent зовётся из refresh() в
+        // onListenerConnected (главный поток слушателя) и из UI — пятнадцать секунд там это ANR.
+        // Ждём в отдельном потоке и только потом разрешаем новый старт: пока воркер жив,
+        // evaluate() не должен поднимать вторую сессию поверх первой (хост однопоточный,
+        // получались висящий клиент, фантомные сессии и дубли записей).
+        pendingStopJoin = Thread {
+            runCatching { job.worker.join(15_000) }
+            synchronized(joinLock) { if (pendingStopJoin === Thread.currentThread()) pendingStopJoin = null }
+            evaluate()
+        }.apply { name = "msgr-stop-join"; isDaemon = true; start() }
     }
+
+    @Volatile private var pendingStopJoin: Thread? = null
+    private val joinLock = Any()
 
     private fun captureSession(ctx: Context, job: CaptureJob, startedAt: Long) {
         var segmentAt = startedAt
+        var backoffMs = 1_000L
+        var retries = 0
         while (true) {
             val result = runCatching {
                 LocalSocket().use { socket ->
@@ -268,12 +285,19 @@ object MsgrCaptureManager {
             LogFile.append("$TAG: shell-хост: ${error?.javaClass?.simpleName}: ${error?.message}")
             // The host may have finished the WAV just as the socket broke. The recordings
             // screen performs the same recovery when opened, so a late file is not lost.
-            runCatching { MsgrRecordingRecovery.run(ctx) }
+            //
+            // Бэкофф: если хоста нет вовсе (модуль не установлен, root отозван), connect падает
+            // мгновенно, и раньше цикл каждую секунду писал в лог и заново обходил каталог
+            // /sdcard/Music/Recordings/Messenger с SQL-запросом на каждый файл — 3600 обходов
+            // в час. Recovery нужен только когда набор файлов мог измениться.
+            retries++
+            if (retries == 1 || retries % 30 == 0) runCatching { MsgrRecordingRecovery.run(ctx) }
             synchronized(job.monitor) {
                 if (job.stopped) return
-                job.monitor.wait(1000)
+                job.monitor.wait(backoffMs)
                 if (job.stopped) return
             }
+            backoffMs = (backoffMs * 2).coerceAtMost(8_000L)
             segmentAt = System.currentTimeMillis()
         }
     }

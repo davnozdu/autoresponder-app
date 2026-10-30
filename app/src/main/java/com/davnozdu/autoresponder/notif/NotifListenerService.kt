@@ -48,7 +48,7 @@ class NotifListenerService : NotificationListenerService() {
         // watchdog'ом, перезагрузка) — на переподключении система НЕ переигрывает onNotificationPosted,
         // поэтому активно подхватываем ещё свежие непрочитанные. Возрастной фильтр (5 мин) внутри
         // handlePosted отсекает старьё, а персистентный ReplyStore не даёт ответить повторно.
-        try { activeNotifications?.forEach { handlePosted(it) } } catch (_: Exception) {}
+        try { activeNotifications?.forEach { sbn -> com.davnozdu.autoresponder.respond.EventQueue.submitMsg { handlePosted(sbn) } } } catch (_: Exception) {}
     }
     override fun onListenerDisconnected() {
         instance = null
@@ -152,7 +152,10 @@ class NotifListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         com.davnozdu.autoresponder.msgrec.MsgrAnswerManager.onPosted(this, sbn)
         com.davnozdu.autoresponder.msgrec.MsgrCaptureManager.onNotificationEvent(sbn)
-        handlePosted(sbn)
+        // Разбор, запись в журнал, проверка «это бот» (открывает копию cache4.db и сканирует
+        // таблицу users), решения и постановка задания уходят в полосу журнала. На главном
+        // потоке слушателя это стоило дорого и задерживало обработку следующих уведомлений.
+        com.davnozdu.autoresponder.respond.EventQueue.submitMsg { handlePosted(sbn) }
     }
 
     private fun handlePosted(sbn: StatusBarNotification) {

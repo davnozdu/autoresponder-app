@@ -290,10 +290,20 @@ object AudioConvert {
     }
 
     private fun writeLe16(outPath: String, samples: ShortArray) {
-        val bytes = ByteArray(samples.size * 2)
-        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-        for (s in samples) bb.putShort(s)
-        File(outPath).apply { parentFile?.mkdirs() }.writeBytes(bytes)
+        // Пишем блоками по 64 КБ: прежний вариант держал в памяти ByteArray на весь файл
+        // (5-минутное приветствие — 57 МБ) на каждую конвертацию.
+        val f = File(outPath).apply { parentFile?.mkdirs() }
+        java.io.BufferedOutputStream(f.outputStream(), 1 shl 16).use { out ->
+            val chunk = ByteBuffer.allocate(1 shl 16).order(ByteOrder.LITTLE_ENDIAN)
+            var i = 0
+            while (i < samples.size) {
+                chunk.clear()
+                val n = minOf(samples.size - i, chunk.capacity() / 2)
+                chunk.asShortBuffer().put(samples, i, n)
+                out.write(chunk.array(), 0, n * 2)
+                i += n
+            }
+        }
     }
 
     /** Записывает PCM16 моно как обычный WAV (44-байтный заголовок) — нужен там, где на выходе

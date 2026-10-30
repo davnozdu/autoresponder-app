@@ -40,7 +40,14 @@ class SmsReceiver : BroadcastReceiver() {
         // Команда с доверенного номера обрабатывается ДО истории и автоответа: она не
         // переписка с клиентом, ей нечего делать ни в контексте LLM, ни в лимитах.
         if (SmsCommands.handle(context, sender, body, subId)) return
-        HistoryLogger.record(context, sender, "sms", "in", body)
-        Responder.handle(context, sender, body, Kind.SMS, subId, messages[0].timestampMillis)
+        // Дальше — запись в журнал и постановка задания: книга контактов, PersonThreads,
+        // existsNear. У SMS_RECEIVED бюджет около 10 секунд, и на холодном старте с большой
+        // базой приёмник рисковал не уложиться. Уносим в полосу журнала — порядок «сначала
+        // записали, потом ответили» та же полоса и сохраняет.
+        val ts = messages[0].timestampMillis
+        com.davnozdu.autoresponder.respond.EventQueue.submitMsg {
+            HistoryLogger.record(context.applicationContext, sender, "sms", "in", body)
+            Responder.handle(context.applicationContext, sender, body, Kind.SMS, subId, ts)
+        }
     }
 }

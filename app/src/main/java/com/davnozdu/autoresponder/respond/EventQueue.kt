@@ -21,7 +21,19 @@ object EventQueue {
     @Volatile private var started = false
     // Short history imports only. Network calls never run in this lane.
     private val history = Channel<suspend () -> Unit>(Channel.UNLIMITED)
-    init { scope.launch { for (job in history) try { job() } catch (e: Exception) { if (e is CancellationException) throw e } } }
+    init {
+        scope.launch {
+            // Внешний while обязателен: раньше CancellationException от одного блока рвала цикл
+            // `for` вместе с корутиной, канал оставался открытым, и submitMsg продолжал
+            // принимать задачи в никуда — без единой строки в журнале.
+            while (true) {
+                val job = history.receiveCatching().getOrNull() ?: break
+                try { job() }
+                catch (e: kotlinx.coroutines.CancellationException) { /* отменили один блок — полоса жива */ }
+                catch (e: Exception) { EventLog().add("QUEUE(hist): ${e.javaClass.simpleName}: ${e.message}") }
+            }
+        }
+    }
     fun submitMsg(block: suspend () -> Unit) { history.trySend(block) }
     fun submit(block: suspend () -> Unit) { scope.launch { block() } }
 
@@ -49,7 +61,10 @@ object EventQueue {
                         val wait=db.nextDelay()
                         if(wait>0) {
                             wake?.cancel(); wake=scope.launch { delay(wait); kick(app) }
-                            scheduleWake(app, wait)
+                            // Будильник — страховка на случай, когда процесс заморожен Doze и
+                            // корутинный delay просыпается с опозданием. Для коротких пауз он
+                            // не нужен: два пробуждения на одно и то же время только зря будят.
+                            if (wait > 60_000L) scheduleWake(app, wait)
                         }
                         break
                     }

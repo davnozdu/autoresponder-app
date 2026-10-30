@@ -37,6 +37,9 @@ object NotifResponder {
                senderUris: List<String> = emptyList(), ts: Long = System.currentTimeMillis()) {
         val app = context.applicationContext
         sbn.notification?.let { n -> replyAction(n)?.let { rememberAction(sbn.key, sender, it) } }
+        // Переписку из баз подтягиваем сейчас, пока идёт окно склейки: раньше это делалось
+        // на пути ответа и стоило 4–7 с.
+        com.davnozdu.autoresponder.store.MsgrBridge.prewarm(app)
         EventQueue.submitMsg {
             com.davnozdu.autoresponder.respond.Handoff.bind(app, sender, tag, senderUris)
             val payload = org.json.JSONObject().put("key", sbn.key).put("sender", sender).put("text", text)
@@ -340,7 +343,8 @@ object NotifResponder {
                 return@withKey
             }
             if (!EventQueue.beforeSend(context, jobId)) return@withKey
-            val transportId = com.davnozdu.autoresponder.respond.Outgoing.startRemote(context, histKeyEarly, inCh, reply, jobId)
+            val transportId = com.davnozdu.autoresponder.respond.Outgoing.startRemote(
+                context, histKeyEarly, inCh, reply, jobId, limitKey = key)
             if (tryRemoteInputReply(context, action, reply)) {
                 com.davnozdu.autoresponder.respond.Outgoing.remoteResult(context, transportId, true)
                 store.markReplied(key, s.timeoutHours)
@@ -587,6 +591,10 @@ object NotifResponder {
         val s = sender.trim().lowercase()
         val t = text.trim().lowercase()
         if (s.startsWith("backup ") || s.startsWith("резервное копирование")) return true
+        // WhatsApp подписывает ход резервной копии «Выполняется резервное копирование…» —
+        // проверка startsWith его не ловила, уведомление заводило задание и отдельную «ветку»
+        // в журнале переписки (в базе набралось 21 такое задание). Смотрим вхождение.
+        if (s.contains("резервное копирование") || s.contains("backup in progress")) return true
         val junk = listOf(
             "missed voice call", "missed video call", "пропущенный звонок",
             "sensitive notification content hidden", "содержимое уведомления скрыто",

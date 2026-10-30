@@ -76,20 +76,27 @@ object SmsWatcher {
     fun drain(context: Context) {
         val app = context.applicationContext
         try {
-            val p = prefs(app)
-            val wm = p.getLong(K_WM, 0L)
-            val since = if (wm > 0) (wm - OVERLAP_MS).coerceAtLeast(0L) else
-                System.currentTimeMillis() - FIRST_RUN_DAYS * 86_400_000L
-            val n = Importer.importSmsSince(app, since)
-            // Знак двигаем на момент чтения, а не на время последней записи: SMS могло
-            // не быть вовсе, и тогда каждый проход перебирал бы весь месяц заново.
-            p.edit().putLong(K_WM, System.currentTimeMillis()).apply()
-            if (n > 0) {
-                PersonThreads.invalidate()
-                EventLog(app).add("Журнал SMS: добавлено $n записей")
+            // Проходов может быть несколько одновременно (ContentObserver, heartbeat, путь
+            // ответа, реакция на DND), и раньше они гонялись параллельно: дублирующая работа
+            // и водяной знак, который более поздний проход двигал по своему «сейчас».
+            synchronized(LOCK) {
+                val p = prefs(app)
+                val wm = p.getLong(K_WM, 0L)
+                val since = if (wm > 0) (wm - OVERLAP_MS).coerceAtLeast(0L) else
+                    System.currentTimeMillis() - FIRST_RUN_DAYS * 86_400_000L
+                val n = Importer.importSmsSince(app, since)
+                // Знак двигаем на момент чтения, а не на время последней записи: SMS могло
+                // не быть вовсе, и тогда каждый проход перебирал бы весь месяц заново.
+                p.edit().putLong(K_WM, System.currentTimeMillis()).apply()
+                if (n > 0) {
+                    PersonThreads.invalidate()
+                    EventLog(app).add("Журнал SMS: добавлено $n записей")
+                }
             }
         } catch (e: Exception) {
             EventLog(app).add("Журнал SMS: ошибка добора (${e.message})")
         }
     }
+
+    private val LOCK = Any()
 }

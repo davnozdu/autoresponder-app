@@ -57,6 +57,10 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         )
         db.execSQL("CREATE INDEX idx_num ON events(number)")
         db.execSQL("CREATE INDEX idx_ts ON events(ts)")
+        // Составной индекс под главный горячий запрос: `WHERE number IN (...) ORDER BY ts DESC`.
+        // С одним idx_num SQLite читает все строки ветки и строит временное B-дерево на
+        // сортировку; на живой базе EXPLAIN показывал именно USE TEMP B-TREE FOR ORDER BY.
+        db.execSQL("CREATE INDEX idx_num_ts ON events(number, ts)")
         createBlacklist(db)
         createQa(db)
         createBlPending(db)
@@ -239,6 +243,8 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
         // "Имя(номер)_дата"). Убираем ещё не расшифрованные "call"-строки, чтобы они
         // переимпортировались с чистым именем контакта и номером. Расшифрованные сохраняем.
         if (oldV < 14) runCatching { db.execSQL("DELETE FROM am_rec WHERE reason='call' AND transcript IS NULL") }
+        // Составной индекс под выборку контекста; на существующих базах его не было вовсе.
+        if (oldV < 15) runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_num_ts ON events(number, ts)") }
     }
 
     /** Восстановление из бэкапа может подсунуть БД более старой схемы — не падаем, а до-мигрируем.
@@ -273,6 +279,16 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
             put("direction", direction); put("body", body); put("ts", ts); put("auto", if (auto) 1 else 0)
         }
         writableDatabase.insert("events", null, cv)
+        keysAdd(number)
+    }
+
+    // Список веток кэшируется: PersonThreads при каждом промахе своего кэша перечитывал ВСЮ
+    // таблицу (SELECT DISTINCT number). Список пополняем при вставке, чтобы кэш не сбрасывался
+    // на каждое сообщение (иначе он бесполезен — импорт и переписка идут постоянно).
+    @Volatile private var keysCache: MutableList<String>? = null
+    private fun keysAdd(number: String) {
+        val c = keysCache ?: return
+        synchronized(c) { if (!c.contains(number)) c.add(number) }
     }
 
     /** Кол-во авто-ответов (out, auto=1) по каналам с момента from. */
@@ -314,8 +330,22 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
 
     fun clearEvents() {
         writableDatabase.delete("events", null, null)
+        keysCache = null
         PersonThreads.invalidate()   // кэш склейки веток ссылается на ключи, которых больше нет
     }
+
+    /**
+     * Ретеншн: удалить события старше [days] суток.
+     *
+     * Политики хранения не было вовсе — таблица только росла, импорт забирает 120 дней, а от
+     * размера зависят и полный скан distinctKeys, и выборка контекста, и ежедневный бэкап.
+     * Вызывается из ежедневного прохода (Backup.run), то есть не на горячем пути.
+     */
+    fun pruneEvents(days: Int = 365): Int = runCatching {
+        val n = writableDatabase.delete("events", "ts < ?", arrayOf(System.currentTimeMillis() - days * 86_400_000L))
+        if (n > 0) { keysCache = null; PersonThreads.invalidate() }
+        n
+    }.getOrDefault(0)
 
     fun existsAt(number: String, ts: Long, direction: String): Boolean {
         readableDatabase.rawQuery(
@@ -397,9 +427,11 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
 
     /** Все ключи веток (значения events.number) — для склейки истории одного человека. */
     fun distinctKeys(): List<String> {
+        keysCache?.let { c -> synchronized(c) { return c.toList() } }
         val res = ArrayList<String>()
         readableDatabase.rawQuery("SELECT DISTINCT number FROM events", null)
             .use { c -> while (c.moveToNext()) res.add(c.getString(0)) }
+        keysCache = res
         return res
     }
 
@@ -658,7 +690,7 @@ class HistoryDb internal constructor(context: Context, name: String = "history.d
     companion object {
         /** Версия схемы — сверяется в [com.davnozdu.autoresponder.store.Backup.validate], чтобы
          *  не разойтись с магическим числом там при следующем изменении схемы. */
-        const val DB_VERSION = 14
+        const val DB_VERSION = 15
 
         /**
          * Окно сверки дублей для мессенджеров. Отметка времени у мессенджера серверная, а

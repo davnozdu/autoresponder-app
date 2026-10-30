@@ -69,6 +69,11 @@ class AnswerMachineService : Service() {
         }
         busy = true
         active = this
+        // Флаги сессии обнуляем: они поля экземпляра, и если новый звонок приходит в окно
+        // между busy=false и onDestroy, onStartCommand выполняется на ТОМ ЖЕ экземпляре со
+        // stale idle=true — answerCall пропускал паузу, waitIdleKeepingSilent выходил сразу,
+        // и абонент получал мгновенный отбой.
+        idle = false; offhook = false; accepted = false; declined = false; transferred = false
         scope.launch {
             try {
                 when (reason) {
@@ -76,6 +81,9 @@ class AnswerMachineService : Service() {
                     "screening" -> runScreeningFlow(number, name)
                     else -> runFlow(number, name, reason, lang, text)
                 }
+            }
+            catch (e: kotlinx.coroutines.CancellationException) {
+                // Штатное завершение (onDestroy → scope.cancel()) не должно выглядеть сбоем.
             }
             catch (e: Exception) { EventLog(applicationContext).add("AM: сбой (${e.message})") }
             finally { callVibration.stop(); busy = false; stopSelfSafe() }
@@ -236,6 +244,9 @@ class AnswerMachineService : Service() {
                 AmBridge.recSave(app, ownRecPath)
                 val ownFile = java.io.File(ownRecPath)
                 if (ownFile.exists() && ownFile.length() > 44) {
+                    // Демон дописывает WAV-заголовок до 15 с после recstop, а сюда доходили
+                    // через фиксированные 500 мс: durationMs читалась из нулевого заголовка.
+                    RecordingLinker.awaitStable(ownFile)
                     val dur = RecordingLinker.durationMs(ownFile.absolutePath)
                     db.amRecSetFile(recId, ownFile.absolutePath, dur)
                     savedFile = ownFile.absolutePath; savedDur = dur
@@ -475,6 +486,9 @@ class AnswerMachineService : Service() {
                 AmBridge.recSave(app, ownRecPath)
                 val ownFile = java.io.File(ownRecPath)
                 if (ownFile.exists() && ownFile.length() > 44) {
+                    // Демон дописывает WAV-заголовок до 15 с после recstop, а сюда доходили
+                    // через фиксированные 500 мс: durationMs читалась из нулевого заголовка.
+                    RecordingLinker.awaitStable(ownFile)
                     val dur = RecordingLinker.durationMs(ownFile.absolutePath)
                     db.amRecSetFile(recId, ownFile.absolutePath, dur)
                     savedFile = ownFile.absolutePath; savedDur = dur
@@ -603,7 +617,28 @@ class AnswerMachineService : Service() {
 
     private suspend fun waitIdleOr(budgetMs: Long) {
         val deadline = System.currentTimeMillis() + budgetMs
-        while (System.currentTimeMillis() < deadline && !idle) delay(300)
+        val tm = app.getSystemService(android.telephony.TelephonyManager::class.java)
+        val am = app.getSystemService(android.media.AudioManager::class.java)
+        var lastProbe = 0L
+        while (System.currentTimeMillis() < deadline && !idle) {
+            delay(300)
+            // Broadcast PHONE_STATE — единственный критерий, и на части прошивок IDLE до
+            // RECEIVER_NOT_EXPORTED не доходит (это же зафиксировано в комментарии у answerCall).
+            // Тогда busy держался до трёх часов: следующие звонки уходили в «параллельный вызов
+            // пропущен», мьют и запись висели. Дублируем опросом состояния линии.
+            val now = System.currentTimeMillis()
+            if (now - lastProbe < 1_500L) continue
+            lastProbe = now
+            runCatching {
+                val state = tm?.callState
+                val inCall = am?.mode == android.media.AudioManager.MODE_IN_CALL ||
+                    am?.mode == android.media.AudioManager.MODE_IN_COMMUNICATION
+                if (state == android.telephony.TelephonyManager.CALL_STATE_IDLE && !inCall) {
+                    idle = true; offhook = false
+                    EventLog(applicationContext).add("AM: отбой определён опросом линии (broadcast IDLE не пришёл)")
+                }
+            }
+        }
     }
 
     /** Как [waitIdleOr], но на каждом тике переустанавливает мьют/громкость — что-то сбрасывает
@@ -622,7 +657,11 @@ class AnswerMachineService : Service() {
             // привязан к конкретному аудио-маршруту (earpiece/speaker/bt_sco/...), а флаг мьюта
             // нет, так что повторный вызов безопасен независимо от того, куда уехал маршрут.
             if (silentToOwner) runCatching { am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, AudioManager.ADJUST_MUTE, 0) }
-            delay(30)
+            // 30 мс были нужны подсветке, которую теперь держит redim_loop.sh в демоне; за этим
+            // циклом остался мьют. 100 мс — компромисс: за пятиминутный звонок ~3000
+            // binder-вызовов вместо ~10000. Поведение мьюта при таком тике ещё нужно проверить
+            // на живом звонке; если система начнёт отпускать звук — вернуть 30 мс.
+            delay(100)
         }
     }
 
@@ -817,9 +856,12 @@ class AnswerMachineService : Service() {
         private const val NOTIF_ID = 4711
         /** Минимальная пауза от начала звонка до программного ответа — см. answerCall. */
         private const val ANSWER_MIN_DELAY_MS = 1_500L
-        /** Потолок своей записи разговора: 3 ч. WAV 48кГц стерео ≈ 11,5 МБ/мин ≈ 2,1 ГБ —
-         *  под него в модуле поднят размер ОЗУ-буфера (tmpfs моста, bridge.sh RAM_SIZE). */
-        private const val CALL_REC_MAX_SEC = 3 * 60 * 60
+        // Потолок своей записи. Раньше было 3 часа = до 2,1 ГБ WAV в tmpfs (WAV 48кГц стерео
+        // ≈ 11,5 МБ/мин): владелец принял звонок и говорит 40 минут — в ОЗУ 460 МБ, и LMK
+        // может убить и автоответчик, и мессенджер, который ведёт звонок. Своя запись — резерв
+        // на случай, если штатный рекордер не подхватился; 40 минут покрывают реальные
+        // разговоры. Потолок tmpfs моста (bridge.sh RAM_SIZE=3G) остаётся с большим запасом.
+        private const val CALL_REC_MAX_SEC = 40 * 60
         const val EX_NUMBER = "num"
         const val EX_NAME = "name"
         const val EX_REASON = "reason"

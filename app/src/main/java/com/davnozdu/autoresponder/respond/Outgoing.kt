@@ -28,7 +28,15 @@ object Outgoing {
         } finally { db.endTransaction() }
         return id
     }
-    fun startRemote(context: Context, who: String, channel: String, text: String, job: Long) = create(context, who, channel, text, 0, job)
+    /**
+     * @param limitKey ключ лимита/анти-флуда. Раньше здесь оставался пустой (значение по
+     *   умолчанию у create), а pending() фильтрует по `limit_key=?` — поэтому на пути
+     *   мессенджеров проверка «предыдущая отправка ещё не подтверждена» не работала никогда:
+     *   одновременный ответ по двум каналам одному человеку этим механизмом не ловился.
+     */
+    fun startRemote(context: Context, who: String, channel: String, text: String, job: Long,
+                    limitKey: String = "") =
+        create(context, who, channel, text, 0, job, limitKey = limitKey)
     @Synchronized fun remoteResult(context: Context, id: String, ok: Boolean) {
         update(context, id, if (ok) "submitted" else "failed", if (ok) "Передано кнопке Reply; доставка не подтверждена" else "Кнопка Reply недоступна")
     }

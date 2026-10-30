@@ -46,6 +46,11 @@ object MsgrShellHost {
                     if (socket.peerCredentials.uid == appUid) {
                         runCatching { handle(socket) }
                             .onFailure { System.err.println("msgrec session: ${it.javaClass.simpleName}: ${it.message}") }
+                    } else {
+                        // Раньше отказ был молчаливым: после переустановки приложения (uid может
+                        // смениться) хост превращался в «глухой» сервер — соединения принимались
+                        // и рвались, и в журнале не было ни строки.
+                        System.err.println("msgrec session rejected: uid=${socket.peerCredentials.uid} expected=$appUid")
                     }
                 }
             }
@@ -64,7 +69,15 @@ object MsgrShellHost {
     private fun handle(socket: LocalSocket) {
         val input = DataInputStream(socket.inputStream)
         val output = DataOutputStream(socket.outputStream)
-        val command = input.readUTF()
+        // Таймаут только на первое сообщение: подключившийся и молчащий клиент иначе держит
+        // единственный accept-цикл вечно — новые сессии и HELLO (после обновления APK) не
+        // обслуживаются, AudioRecord и submix остаются захваченными. В активной сессии команд
+        // может не быть минутами, там таймаут снимаем.
+        socket.soTimeout = 15_000
+        val command = try { input.readUTF() } catch (e: java.io.IOException) {
+            System.err.println("msgrec: нет HELLO/START за 15 с — соединение закрыто")
+            return
+        }
         when (command) {
             "HELLO" -> {
                 val appApk = runCatching { input.readUTF() }.getOrNull()
@@ -84,6 +97,7 @@ object MsgrShellHost {
         val micEnabled = command == "START" || input.readBoolean()
         val session = Session(label, startedAt)
         session.start(micEnabled)
+        socket.soTimeout = 0   // сессия пошла — таймаут больше не нужен и только мешает
         output.writeUTF("READY")
         output.flush()
         var peer = ""

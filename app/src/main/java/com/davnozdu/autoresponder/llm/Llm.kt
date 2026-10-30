@@ -17,15 +17,40 @@ object Llm {
         return c.get(java.util.Calendar.YEAR) * 1000 + c.get(java.util.Calendar.DAY_OF_YEAR)
     }
 
-    /** Атомарно проверяет и расходует дневной лимит. true — можно обращаться к LLM. */
-    private fun consumeQuota(s: Settings): Boolean {
+    /** Атомарно проверяет дневной лимит. true — можно обращаться к LLM. */
+    private fun hasQuota(s: Settings): Boolean {
         if (s.llmDailyCap <= 0) return true  // 0 — без лимита и без счётчика
         synchronized(quotaLock) {
             val today = localDay()
             if (s.llmDay != today) { s.llmDay = today; s.llmCount = 0 }
-            if (s.llmCount >= s.llmDailyCap) return false
-            s.llmCount = s.llmCount + 1
-            return true
+            return s.llmCount < s.llmDailyCap
+        }
+    }
+
+    /**
+     * Списывает один вызов. Раньше счётчик тратился ДО запроса, поэтому таймауты, 429 и пустые
+     * ответы съедали дневной лимит наравне с удачными ответами.
+     */
+    private fun spendQuota(s: Settings) {
+        if (s.llmDailyCap <= 0) return
+        synchronized(quotaLock) { s.llmCount = s.llmCount + 1 }
+    }
+
+    /**
+     * Один повтор на «мягких» отказах: 429, 5xx, обрыв соединения.
+     *
+     * Ретраев не было вовсе — единственный 429 сразу уводил клиента на офлайн-шаблон, хотя
+     * через полсекунды тот же запрос обычно проходит. На 4xx (кроме 429) не повторяем: это
+     * ошибка конфигурации, второй попытки не заслуживает.
+     */
+    private fun withRetry(block: () -> String?): String? {
+        try { return block() } catch (e: Exception) {
+            val msg = (e.message ?: "").lowercase()
+            val retryable = msg.contains("429") || Regex("http 5\\d\\d").containsMatchIn(msg) ||
+                e is java.io.IOException
+            if (!retryable) throw e
+            Thread.sleep(700)
+            return block()
         }
     }
 
@@ -50,7 +75,7 @@ object Llm {
         if (!s.llmEnabled || (mode == "local" && !localReady)) return null
         // Нечего спрашивать — не трогаем счётчик вообще.
         if (!primary && !backup && !localReady) return null
-        if (!consumeQuota(s)) return null
+        if (!hasQuota(s)) return null
 
         if (mode == "local") return runLocal(context, prompt, system)
 
@@ -62,10 +87,13 @@ object Llm {
         // Основной канал.
         if (primary) {
             try {
-                val out = LlmFactory.create(
-                    LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
-                ).generate(prompt, maxChars, s.llmThink, system)
+                val out = withRetry {
+                    LlmFactory.create(
+                        LlmConfig(s.llmProvider, s.llmBaseUrl, s.llmApiKey, s.llmModel)
+                    ).generate(prompt, maxChars, s.llmThink, system)
+                }
                 if (!out.isNullOrBlank()) {
+                    spendQuota(s)
                     retryCloudAt = 0L
                     LocalTextModel.releaseIfIdle()
                     return out
@@ -79,10 +107,13 @@ object Llm {
         // Резервный канал.
         if (backup) {
             try {
-                val out = LlmFactory.create(
-                    LlmConfig(s.llm2Provider, s.llm2BaseUrl, s.llm2ApiKey, s.llm2Model)
-                ).generate(prompt, maxChars, s.llmThink, system)
+                val out = withRetry {
+                    LlmFactory.create(
+                        LlmConfig(s.llm2Provider, s.llm2BaseUrl, s.llm2ApiKey, s.llm2Model)
+                    ).generate(prompt, maxChars, s.llmThink, system)
+                }
                 if (!out.isNullOrBlank()) {
+                    spendQuota(s)
                     retryCloudAt = 0L
                     LocalTextModel.releaseIfIdle()
                     return out

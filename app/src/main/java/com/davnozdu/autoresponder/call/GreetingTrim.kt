@@ -133,13 +133,42 @@ object GreetingTrim {
         val greetEnv = envelope(greetAtRecRate, frameLen)
         if (recEnv.isEmpty() || greetEnv.isEmpty() || greetEnv.size >= recEnv.size) return null
 
-        val greetNorm = normalize(greetEnv)
+        // Скользящие суммы: mean, дисперсия окна и Σ(x·g) считаются за O(1) на шаг, без копии
+        // окна и без нормализации на каждом смещении. Раньше на каждое смещение создавались
+        // два DoubleArray размера эталона (copyOfRange + normalize): для пятиминутной записи
+        // это порядка 2·10⁸ умножений и гигабайты мусора в GC — минуты CPU.
+        val n = greetEnv.size
+        var gMean = 0.0
+        for (v in greetEnv) gMean += v
+        gMean /= n
+        var gVar = 0.0
+        for (v in greetEnv) { val d = v - gMean; gVar += d * d }
+        val gStd = sqrt(gVar / n)
+        if (gStd < 1e-9) return null
+
+        var sumX = 0.0
+        var sumX2 = 0.0
+        var sumXG = 0.0
+        for (i in 0 until n) {
+            val x = recEnv[i]
+            sumX += x; sumX2 += x * x; sumXG += x * greetEnv[i]
+        }
         var bestOffset = -1
         var bestScore = Double.NEGATIVE_INFINITY
-        val lastOffset = recEnv.size - greetEnv.size
+        val lastOffset = recEnv.size - n
         for (offset in 0..lastOffset) {
-            val segment = recEnv.copyOfRange(offset, offset + greetEnv.size)
-            val score = normalizedCorrelation(normalize(segment), greetNorm)
+            if (offset > 0) {
+                val out = recEnv[offset - 1]
+                val inn = recEnv[offset + n - 1]
+                sumX += inn - out
+                sumX2 += inn * inn - out * out
+                sumXG += inn * greetEnv[n - 1] - out * greetEnv[0]
+            }
+            val mx = sumX / n
+            val varX = sumX2 / n - mx * mx
+            if (varX <= 1e-12) continue
+            val cov = sumXG / n - mx * gMean
+            val score = cov / (sqrt(varX) * gStd)
             if (score > bestScore) { bestScore = score; bestOffset = offset }
         }
         if (bestOffset < 0 || bestScore < MIN_CORRELATION) return null

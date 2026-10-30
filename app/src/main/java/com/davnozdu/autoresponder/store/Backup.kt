@@ -72,6 +72,11 @@ object Backup {
             val dir = File(DIR); check(dir.exists() || dir.mkdirs()) { "Не удалось создать папку бэкапов" }
             val dst = File(dir, "$PREFIX${stampFmt().format(Date())}$SUFFIX")
             val tmp = File(dir, ".${dst.name}.${System.nanoTime()}.tmp"); temporary = tmp
+            // Ретеншн в том же ежедневном проходе: год переписки — это уже не контекст для
+            // ответа, а лишний вес базы, бэкапа и каждой выборки. Делается до снимка, чтобы
+            // старые строки не попадали и в бэкап.
+            val pruned = HistoryDb.get(context).pruneEvents()
+            if (pruned > 0) EventLog(context).add("Журнал: удалено $pruned событий старше года")
             snapshot(context, tmp)
             check(tmp.renameTo(dst)) { "Не удалось завершить запись бэкапа" }
             val now = System.currentTimeMillis()

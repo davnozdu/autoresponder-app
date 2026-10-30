@@ -43,6 +43,9 @@ object Responder {
         // так и не дождавшись своей очереди.
         val batchMs = if (kind == Kind.SMS) Settings(app).batchWaitMs else 0L
         val ttl = maxOf(15 * 60_000L, batchMs + 5 * 60_000L)
+        // Переписку подтягиваем заранее, пока идёт окно склейки: на пути ответа импорт баз
+        // стоил 4–7 с (замерено), а здесь его никто не ждёт.
+        MsgrBridge.prewarm(app)
         EventQueue.enqueue(app, Handoff.key(app, who, "sms"), kind.name, payload,
             EventQueue.token("${kind.name}:$who:$eventAt:${incomingText.orEmpty()}"), ttl, batchMs)
     }
@@ -118,7 +121,11 @@ object Responder {
         val norm = PhoneMask.normalize(number) ?: run { log.add("$tag $from — нет номера, пропуск"); return }
 
         // Чёрный список обходит маску стран и SkipPolicy (контакт выбран явно).
-        val bl = HistoryDb.get(context).blacklistMatch(norm, null)
+        // Чёрный список обходит маску стран и SkipPolicy (контакт выбран явно). Имя передаём
+        // тоже: запись ЧС, заведённая по имени, раньше не срабатывала на SMS/звонке — путь
+        // уведомлений имя передавал, а этот нет, и один и тот же человек обрабатывался по-разному.
+        val bl = HistoryDb.get(context).blacklistMatch(
+            norm, com.davnozdu.autoresponder.rules.ContactUtil.nameFor(context, norm))
         if (bl == null) {
             if (!PhoneMask.matches(number, s.allowedPrefixes)) {
                 log.add("$tag $from — не подходит под маску стран, пропуск"); return
@@ -169,6 +176,13 @@ object Responder {
             }
             // CRM: статус заказа по номеру. Отвечает и в рабочее время, если это
             // разрешено тумблером, — поэтому проверяется ДО гейта «сейчас открыто».
+            //
+            // «Владелец сам отвечает» проверяем ПЕРЕД CRM: раньше ответ по статусу уходил
+            // даже когда человек уже написал клиенту руками — проверка стояла ниже и была
+            // недостижима из-за return в CRM-ветке.
+            if (Handoff.blocked(context, norm, "sms", receivedAt)) {
+                log.add("$tag $norm — отвечает владелец, автоответ отменён"); return@withKey
+            }
             val crmPhones = com.davnozdu.autoresponder.crm.CrmGate.phonesFor(context, norm, null)
             com.davnozdu.autoresponder.store.RuntimeDb.get(context).state(jobId,"external","Обработка CRM")
             val crmReply = if (kind == Kind.SMS)
@@ -198,9 +212,6 @@ object Responder {
                 return@withKey
             }
 
-            if (Handoff.blocked(context, norm, "sms", receivedAt)) {
-                log.add("$tag $norm — отвечает владелец, автоответ отменён"); return@withKey
-            }
             // Гейт «сейчас открыто» — раньше ожидания подтверждения: то, на что робот всё равно
             // не ответит, незачем откладывать по 10 секунд до истечения срока задания.
             if (!forceReply && closedReason == null) { log.add("$tag $from — открыто, пропуск"); return@withKey }
@@ -362,7 +373,10 @@ object Responder {
             // действительно нужна, — вот этот, и бюджет ожидания короткий: копии лежат в ОЗУ,
             // обновляется только изменившееся. Не успел — отвечаем по тому, что есть.
             SmsWatcher.drain(context)
-            MsgrBridge.sync(context, force = true, waitMs = MsgrBridge.replyWaitMs())
+            // Только просьба обновить копии и короткое ожидание: импорт баз идёт в
+            // MsgrBridge.prewarm() при приходе сообщения, а не здесь (на телефоне это 4–7 с
+            // на каждый ответ и транзакция history.db на всё время импорта).
+            MsgrBridge.sync(context, force = true, waitMs = MsgrBridge.replyWaitMs(), import = false)
             val db = HistoryDb.get(context)
             val keys = PersonThreads.keysFor(context, key)
             var items = db.threadTail(keys, limit, skipCalls = true)

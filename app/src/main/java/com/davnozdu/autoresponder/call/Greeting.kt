@@ -413,7 +413,11 @@ object Greeting {
             // быстрее нормальной речи. Фиксируем нормальный темп независимо от системных настроек.
             tts.setSpeechRate(1.0f)
             tts.setPitch(1.0f)
-            val wav = File(ctx.cacheDir, "am_tts.wav")
+            // Уникальное имя на вызов: раньше ВСЕ синтезы писались в один cacheDir/am_tts.wav,
+            // а идут они из разных корутин (screening-сценарий и автоответчик мессенджеров) —
+            // второй перетирал первый, и в линию уходило чужое приветствие либо конвертация
+            // падала с «не сконвертировал TTS».
+            val wav = File.createTempFile("am_tts_", ".wav", ctx.cacheDir)
             val done = CompletableDeferred<Boolean>()
             tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) {}
@@ -424,7 +428,9 @@ object Greeting {
             val res = tts.synthesizeToFile(text, Bundle(), wav, "greet")
             if (res != TextToSpeech.SUCCESS) done.complete(false)
             val ok = withTimeoutOrNull(TTS_SYNTH_TIMEOUT_MS) { done.await() } ?: false
-            return if (ok && wav.exists() && wav.length() > 0) wav else null
+            if (ok && wav.exists() && wav.length() > 0) return wav
+            runCatching { wav.delete() }   // временный файл не нужен — не оставляем мусор в кэше
+            return null
         } finally {
             runCatching { tts.shutdown() }
         }

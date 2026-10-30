@@ -5,7 +5,7 @@ import java.util.concurrent.ConcurrentHashMap
 /** Анти-дубль между путями SMS и уведомлений (в пределах процесса). */
 object Dedup {
     private val seen = ConcurrentHashMap<String, Long>()
-    private const val TTL = 90_000L
+    private const val TTL = 20_000L
 
     // Схлопывание пробелов: SMS-путь и путь уведомления дают один и тот же текст с разной
     // разбивкой пробелов/переводов строк — без нормализации ключи расходятся и дубль проходит.

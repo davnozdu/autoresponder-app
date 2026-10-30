@@ -57,11 +57,12 @@ object MsgrBridge {
     /**
      * Сколько ждём на пути ответа клиенту.
      *
-     * Там ожидание идёт поверх запроса к LLM, поэтому бюджет отдельный и короткий: копии
-     * теперь лежат в ОЗУ и обновляются только по изменившимся файлам, обычный прогон
-     * укладывается в доли секунды. Не успел — отвечаем по тому, что есть, как и раньше.
+     * Там ожидание идёт поверх запроса к LLM. Импорт оттуда убран (его делает prewarm() при
+     * приходе сообщения), осталась только просьба демону переписать изменившиеся файлы:
+     * копии лежат в ОЗУ, обычный прогон укладывается в доли секунды. Полторы секунды — с
+     * запасом; не успел — отвечаем по тому, что есть.
      */
-    private const val REPLY_WAIT_MS = 4_000L
+    private const val REPLY_WAIT_MS = 1_500L
 
     /**
      * Фоновый проход — не чаще раза в час.
@@ -134,7 +135,7 @@ object MsgrBridge {
         try {
             val resp = File(d, "response")
             val before = resp.lastModifiedSafe()
-            try { File(d, "request").writeText(ask(tags)) }
+            try { File(d, "request").writeText(ask(tags, false)) }
             catch (e: Exception) {
                 EventLog(app).add("Мост: не удалось попросить обновление (${e.message})"); return
             }
@@ -143,14 +144,49 @@ object MsgrBridge {
     }
 
     /**
+     * Обновить копии и втянуть новое заранее — пока клиенту ещё не отвечаем.
+     *
+     * Раньше импорт шёл на пути ответа (`historyBlock` → `sync`), и на телефоне это стоило
+     * 4–7 с на каждый ответ внутри транзакции history.db. Теперь он делается здесь: сообщение
+     * только что пришло, впереди окно склейки в несколько минут, и этой работы никто не ждёт.
+     * Повторные вызовы в пределах [PREWARM_GAP_MS] схлопываются — на серию сообщений от одного
+     * клиента достаточно одного прохода.
+     */
+    @Volatile private var lastPrewarmAt = 0L
+    private const val PREWARM_GAP_MS = 30_000L
+
+    fun prewarm(context: Context) {
+        val app = context.applicationContext
+        val now = System.currentTimeMillis()
+        if (now - lastPrewarmAt < PREWARM_GAP_MS) return
+        lastPrewarmAt = now
+        com.davnozdu.autoresponder.respond.EventQueue.submitMsg {
+            sync(app, force = true, waitMs = WAIT_MS, import = true)
+        }
+    }
+
+    /**
      * Текст просьбы: `<epoch>` — обычный прогон, `<epoch> <метки>` — только названные базы.
      *
      * Адресность нужна тяжёлым базам, которые в обычный прогон не входят: копия Google
      * Messages весит 17 МБ, а нужна редко — когда RCS-отправитель пришёл без номера.
      */
-    private fun ask(tags: Array<out String>): String {
+    /**
+     * Текст просьбы: `<epoch>` — обычный прогон, `<epoch> now` — «прошу прямо сейчас»
+     * (обходит троттлинг MIN_GAP в bridge.sh), `<epoch> now <метки>` — принудительно и только
+     * названные базы.
+     *
+     * Метка `now` появилась из-за реального дефекта: приложение просит обновление перед
+     * КАЖДЫМ ответом клиенту, а демон видел в такой просьбе обычную и отбрасывал её по
+     * MIN_GAP=60. Приложение ждало свой таймаут впустую и оставалось со старыми копиями.
+     */
+    private fun ask(tags: Array<out String>, force: Boolean): String {
         val now = System.currentTimeMillis()
-        return if (tags.isEmpty()) now.toString() else "$now ${tags.joinToString(" ")}"
+        val parts = ArrayList<String>(tags.size + 2)
+        parts.add(now.toString())
+        if (force) parts.add("now")
+        tags.forEach { parts.add(it) }
+        return parts.joinToString(" ")
     }
 
     /**
@@ -171,7 +207,7 @@ object MsgrBridge {
      * @return число добавленных записей, -1 если моста нет.
      */
     fun sync(context: Context, force: Boolean = false, wait: Boolean = true,
-             waitMs: Long = WAIT_MS): Int {
+             waitMs: Long = WAIT_MS, import: Boolean = true): Int {
         // Раньше здесь был безусловный lock.lock() — если этот вызов застаёт занятой
         // блокировку (например, тот же mетод уже идёт в другом потоке — фоновый форс-синк
         // после ре-бинда слушателя, реакция на смену DND и т.п.), он ждал БЕЗ ограничения по
@@ -185,11 +221,11 @@ object MsgrBridge {
         val locked = if (wait) lock.tryLock(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) else lock.tryLock()
         if (!locked) return 0
         try {
-            return syncLocked(context, force, wait, waitMs)
+            return syncLocked(context, force, wait, waitMs, import)
         } finally { lock.unlock() }
     }
 
-    private fun syncLocked(context: Context, force: Boolean, wait: Boolean, waitMs: Long): Int {
+    private fun syncLocked(context: Context, force: Boolean, wait: Boolean, waitMs: Long, import: Boolean): Int {
         val app = context.applicationContext
         val log = EventLog(app)
         val d = dir(app)
@@ -206,7 +242,7 @@ object MsgrBridge {
         // и просьба не уходила бы вовсе.
         val req = File(d, "request")
         val asked = try {
-            req.writeText(now.toString())
+            req.writeText(ask(emptyArray(), force))
             true
         } catch (e: Exception) {
             log.add("Мост: не удалось попросить обновление (${e.message})"); false
@@ -214,9 +250,15 @@ object MsgrBridge {
         if (asked && wait) waitForResponse(resp, before, waitMs)
 
         var total = 0
-        importOne(app, File(d, "whatsapp/msgstore.db"), "whatsapp", K_WA, p)?.let { total += it }
-        importOne(app, File(d, "whatsapp2/msgstore.db"), "whatsapp", K_WA2, p)?.let { total += it }
-        importTelegram(app, File(d, "telegram/cache4.db"), p)?.let { total += it }
+        // Импорт — самая дорогая часть прохода (на телефоне замерено 4–7 с: до 4000 строк
+        // на базу и 2–3 запроса в history.db на строку). На пути ответа клиенту он не нужен:
+        // там важны только уже перенесённые сообщения, а свежие подтягивает prewarm() в
+        // фоновой полосе, пока идёт окно склейки.
+        if (import) {
+            importOne(app, File(d, "whatsapp/msgstore.db"), "whatsapp", K_WA, p)?.let { total += it }
+            importOne(app, File(d, "whatsapp2/msgstore.db"), "whatsapp", K_WA2, p)?.let { total += it }
+            importTelegram(app, File(d, "telegram/cache4.db"), p)?.let { total += it }
+        }
 
         // Модуль ответил — значит копии свежие, и целый час трогать его незачем. Не ответил
         // (не запущен, раздел ещё не расшифрован, просьба не записалась) — пробуем снова
