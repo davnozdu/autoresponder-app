@@ -616,6 +616,7 @@ class AnswerMachineService : Service() {
     }
 
     private suspend fun waitIdleOr(budgetMs: Long) {
+        val app = applicationContext
         val deadline = System.currentTimeMillis() + budgetMs
         val tm = app.getSystemService(android.telephony.TelephonyManager::class.java)
         val am = app.getSystemService(android.media.AudioManager::class.java)
