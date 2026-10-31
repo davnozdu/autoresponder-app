@@ -149,7 +149,13 @@ class CallScreeningServiceImpl : CallScreeningService() {
             respondToCall(callDetails, CallResponse.Builder().setSilenceCall(true).build())
             EventLog(this).add("CALL ${number ?: "?"} — гарнитура → автоответчик")
             AnswerMachineService.start(this, number, null, "headset", s.amGreetingLang.ifBlank { null }, null)
-        } else if (closedReason != null && matches && !skip) {
+        } else if (closedReason != null && !skip && (s.callClosedMode == 1 || matches)) {
+            // Маска стран сюда примешивается только в режиме SMS. В режиме голосового
+            // автоответчика трубку берём ЛЮБОМУ номеру: 31.10 13:49 при включённом DND
+            // звонил +1 73x…, маска +420 его отсекла, и звонок просто звонил и пропал —
+            // без записи, без приветствия, без следа в журнале, кроме строки «входящий».
+            // Маска отвечает на другой вопрос: каким клиентам мы пишем в ответ (SMS,
+            // мессенджеры), и в SMS-ветке ниже она остаётся обязательной.
             if (s.callClosedMode == 1 && alreadyInCall) {
                 // Та же причина, что у ЧС выше и у screening/headset: голосовой автоответчик
                 // ответил бы НА ВТОРУЮ линию поверх текущего разговора владельца. Тумблер
