@@ -286,9 +286,28 @@ object MsgrBridge {
         // там важны только уже перенесённые сообщения, а свежие подтягивает prewarm() в
         // фоновой полосе, пока идёт окно склейки.
         if (import) {
-            importOne(app, File(d, "whatsapp/msgstore.db"), "whatsapp", K_WA, p)?.let { total += it }
-            importOne(app, File(d, "whatsapp2/msgstore.db"), "whatsapp", K_WA2, p)?.let { total += it }
-            importTelegram(app, File(d, "telegram/cache4.db"), p)?.let { total += it }
+            val wa1 = File(d, "whatsapp/msgstore.db")
+            val wa2 = File(d, "whatsapp2/msgstore.db")
+            val tg = File(d, "telegram/cache4.db")
+            val r1 = importOne(app, wa1, "whatsapp", K_WA, p)
+            val r2 = importOne(app, wa2, "whatsapp", K_WA2, p)
+            val r3 = importTelegram(app, tg, p)
+            r1?.let { total += it }; r2?.let { total += it }; r3?.let { total += it }
+            // null значит «копии нет или она не открылась». Первое — уборка в простое
+            // (bridge.sh удаляет тяжёлые снимки после 15 минут тишины), второе — снимок снят
+            // на живой базе. И то и другое лечится одной повторной просьбой: мост снимет
+            // свежую копию, второй импорт обычно проходит (31.10 07:27: «файла нет»).
+            fun configured(f: File) = f.parentFile?.isDirectory == true
+            val retry = (r1 == null && configured(wa1)) || (r2 == null && configured(wa2)) ||
+                (r3 == null && configured(tg))
+            if (retry) {
+                val before2 = resp.lastModifiedSafe()
+                val asked2 = runCatching { req.writeText(ask(emptyArray(), supportsNow(app))) }.isSuccess
+                if (asked2 && wait) waitForResponse(resp, before2, waitMs)
+                if (r1 == null && configured(wa1)) importOne(app, wa1, "whatsapp", K_WA, p)?.let { total += it }
+                if (r2 == null && configured(wa2)) importOne(app, wa2, "whatsapp", K_WA2, p)?.let { total += it }
+                if (r3 == null && configured(tg)) importTelegram(app, tg, p)?.let { total += it }
+            }
         }
 
         // Модуль ответил — значит копии свежие, и целый час трогать его незачем. Не ответил
