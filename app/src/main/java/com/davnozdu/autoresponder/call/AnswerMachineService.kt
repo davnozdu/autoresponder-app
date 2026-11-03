@@ -355,7 +355,9 @@ class AnswerMachineService : Service() {
             // под нашим контролем.
             scope.launch {
                 val lookup = runCatching {
-                    com.davnozdu.autoresponder.crm.CrmFlow.lookup(app, listOf(normNumber))
+                    // Только чтение: имя — из скачанного справочника, работы — из кеша.
+                    // В CRM на звонок не ходим (см. CrmFlow.callerCard).
+                    com.davnozdu.autoresponder.crm.CrmFlow.callerCard(app, listOf(normNumber))
                 }.getOrNull()
                 // CRM-запрос (сеть + CrmRoster.sync) может занять до нескольких секунд — за это
                 // время владелец уже мог нажать «Ответить»/«Отклонить», либо абонент сам положил

@@ -18,11 +18,16 @@ import java.io.File
 object CrmRoster {
 
     private const val FILE = "crm_roster.txt"
+    private const val NAMES = "crm_names.txt"
     private const val FRESH_MS = 60 * 60_000L        // час
     private const val SYNC_EVERY_MS = 15 * 60_000L   // как часто пытаемся обновить
 
     // Номер -> отпечаток состояния его записей в CRM (пустая строка, если CRM старая).
     @Volatile private var cache: Map<String, String>? = null
+
+    // Номер -> имя клиента. Скачивается тем же ответом реестра, что и отпечатки, — по нему
+    // карточка звонящего узнаёт клиента с закрытыми заказами, ничего не спрашивая при звонке.
+    @Volatile private var nameCache: Map<String, String>? = null
 
     /**
      * Когда реестр в последний раз подтверждён — в ОЗУ, а не в настройках. Раньше это
@@ -64,6 +69,46 @@ object CrmRoster {
             cache = map
         } catch (e: Exception) {
             EventLog(context).add("CRM реестр: не удалось сохранить (${e.message})")
+        }
+    }
+
+    /* ---------------- Справочник имён ---------------- */
+
+    private fun namesFile(context: Context) = File(context.applicationContext.filesDir, NAMES)
+
+    /**
+     * Номер -> имя для ВСЕХ клиентов CRM, а не только тех, у кого есть работа в процессе.
+     *
+     * Приходит в том же ответе, что и реестр, поэтому лишних запросов не добавляет. Нужен
+     * карточке звонящего: мастер должен видеть, кто звонит, и когда заказ уже закрыт.
+     * На флеш попадают только имена и номера клиентов (как и реестр) — в приватный каталог
+     * приложения, не в /sdcard.
+     */
+    private fun names(context: Context): Map<String, String> {
+        nameCache?.let { return it }
+        val map = try {
+            val f = namesFile(context)
+            if (!f.exists()) emptyMap()
+            else f.readLines().mapNotNull { line ->
+                val i = line.indexOf('\t')
+                if (i <= 0) null else line.substring(0, i) to line.substring(i + 1)
+            }.toMap()
+        } catch (_: Exception) { emptyMap() }
+        nameCache = map
+        return map
+    }
+
+    /** Имя клиента по номеру. Пусто — CRM этого номера не знает либо справочник ещё не скачан. */
+    fun nameFor(context: Context, phone: String): String = names(context)[key(phone)].orEmpty()
+
+    fun namedCount(context: Context): Int = names(context).size
+
+    private fun saveNames(context: Context, names: Map<String, String>) {
+        try {
+            namesFile(context).writeText(names.entries.joinToString("\n") { (k, v) -> "$k\t$v" })
+            nameCache = names
+        } catch (e: Exception) {
+            EventLog(context).add("CRM справочник: не удалось сохранить (${e.message})")
         }
     }
 
@@ -154,9 +199,13 @@ object CrmRoster {
                 old.keys.filterNot { it in res.stamps.keys || it in res.phones }
                     .forEach { CrmFlow.invalidate(it) }   // заказ закрыт — номер выпал из реестра
                 save(context, res.phones, res.stamps)
+                // Справочник имён приходит тем же ответом. Пустой не сохраняем: у CRM старой
+                // версии его нет вовсе, и затирать уже скачанный справочник незачем.
+                if (res.names.isNotEmpty()) saveNames(context, res.names)
                 s.crmRosterEtag = res.etag
                 confirm(context)
-                EventLog(context).add("CRM реестр: ${res.phones.size} номеров с активными записями")
+                EventLog(context).add("CRM реестр: ${res.phones.size} номеров с активными записями" +
+                    if (res.names.isNotEmpty()) ", имён в справочнике: ${res.names.size}" else "")
                 true
             }
             RosterResult.NotModified -> {
@@ -189,6 +238,7 @@ object CrmRoster {
         return when (val res = CrmApi.roster(context, "")) {
             is RosterResult.Ok -> {
                 save(context, res.phones, res.stamps)
+                if (res.names.isNotEmpty()) saveNames(context, res.names)
                 s.crmRosterEtag = res.etag
                 confirm(context)
                 CrmFlow.invalidateAll()
@@ -234,7 +284,9 @@ object CrmRoster {
 
     fun clear(context: Context) {
         try { file(context).delete() } catch (_: Exception) {}
+        try { namesFile(context).delete() } catch (_: Exception) {}
         cache = null
+        nameCache = null
         confirmedAt = 0L
         Settings(context).let { it.crmRosterAt = 0L; it.crmRosterEtag = "" }
     }

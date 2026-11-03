@@ -99,12 +99,23 @@ object CrmApi {
                             val it2 = j.keys()
                             while (it2.hasNext()) { val k = it2.next(); stamps[k] = j.optString(k) }
                         }
+                        // Справочник имён для карточки звонящего: номер -> имя клиента.
+                        // Приходит в этом же ответе, чтобы при звонке не было запроса в CRM.
+                        val names = HashMap<String, String>()
+                        o.optJSONObject("names")?.let { j ->
+                            val it2 = j.keys()
+                            while (it2.hasNext()) {
+                                val k = it2.next()
+                                val v = j.optString(k).trim()
+                                if (v.isNotEmpty()) names[k] = v
+                            }
+                        }
                         // ETag берём из тела, если заголовок не дошёл: перед CRM стоит
                         // Cloudflare, и он ETag ответа срезает — условный запрос при этом
                         // работает, но телефону нечего было отправить обратно, и полный
                         // реестр качался каждые 15 минут.
                         val etag = r.header("ETag").orEmpty().ifBlank { o.optString("etag") }
-                        RosterResult.Ok(list, etag, stamps)
+                        RosterResult.Ok(list, etag, stamps, names)
                     }
                 }
             }
@@ -182,7 +193,9 @@ object CrmApi {
 
 sealed class RosterResult {
     data class Ok(val phones: List<String>, val etag: String,
-                  val stamps: Map<String, String> = emptyMap()) : RosterResult()
+                  val stamps: Map<String, String> = emptyMap(),
+                  /** Номер -> имя клиента для карточки звонящего (CRM новее v1.25). */
+                  val names: Map<String, String> = emptyMap()) : RosterResult()
     object NotModified : RosterResult()
     data class Error(val why: String) : RosterResult()
 }

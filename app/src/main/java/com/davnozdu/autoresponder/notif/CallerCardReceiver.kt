@@ -28,7 +28,7 @@ class CallerCardReceiver : BroadcastReceiver() {
                 Thread {
                     try {
                         CallerCardNotifier.show(app, number,
-                            runCatching { CrmFlow.lookup(app, listOf(number)) }.getOrNull(),
+                            runCatching { CrmFlow.callerCard(app, listOf(number)) }.getOrNull(),
                             confirming = true)
                     } finally { pending.finish() }
                 }.start()

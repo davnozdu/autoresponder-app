@@ -10,10 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.text.HtmlCompat
 import com.davnozdu.autoresponder.crm.CrmFlow
 import com.davnozdu.autoresponder.crm.CrmLookup
-import com.davnozdu.autoresponder.crm.CrmRoster
 import com.davnozdu.autoresponder.data.Settings
-import com.davnozdu.autoresponder.crm.CrmSyncPolicy
-import com.davnozdu.autoresponder.respond.NetworkUtil
 import com.davnozdu.autoresponder.rules.PhoneMask
 
 /**
@@ -38,23 +35,12 @@ object CallerCardNotifier {
         val number = PhoneMask.normalize(rawNumber) ?: return
         val s = Settings(context)
         if (!s.crmReady) return
-        // Номера нет в реестре — это ещё не «не клиент»: реестр обновляется раз в 15 минут,
-        // а клиента могли завести минуту назад. Именно на этом карточка не появилась в первый
-        // раз на живом звонке. Обходим порог, но не ETag: неизменившийся реестр вернётся 304.
-        if (CrmSyncPolicy.shouldRefreshForCall(
-                online = NetworkUtil.isOnline(context),
-                inRoster = CrmRoster.contains(context, number),
-                sinceLastMs = CrmRoster.sinceConfirmed(),
-                minGapMs = 60_000L)) {
-            CrmRoster.sync(context, ignoreThrottle = true)
-        }
-        if (!CrmRoster.shouldAsk(context, listOf(number))) return
-
         // Сначала заглушка с номером — она появляется мгновенно и не ждёт ничего.
         show(context, number, null)
-        // Кеш прогрет при запуске, поэтому обычно возвращается сразу; холодный стоит
-        // одного похода, и карточка дополнится, когда он закончится.
-        val lookup = runCatching { CrmFlow.lookup(context, listOf(number)) }.getOrNull()
+        // Имя берётся из справочника, скачанного вместе с реестром, работы — из кеша ответов:
+        // на звонок в CRM не ходим. Справочник содержит ВСЕХ клиентов, поэтому узнаётся и тот,
+        // у кого нет работы в процессе, — раньше он показывался как «Звонит клиент».
+        val lookup = runCatching { CrmFlow.callerCard(context, listOf(number)) }.getOrNull()
         if (lookup != null) show(context, number, lookup)
         // Окно поверх экрана звонка — там же, на тех же данных. Если модуль ещё не выдал
         // разрешение, окно молча не появится, а карточка в шторке останется.

@@ -142,19 +142,54 @@ object CrmFlow {
         CrmRoster.sync(context)
         if (!CrmRoster.shouldAsk(context, phones)) return null
 
+        // Найденный клиент без активных записей — тоже ответ: карточке звонящего нужно имя.
+        // Раньше он выбрасывался (условие требовало непустой список работ), хотя поле name
+        // в CrmLookup заведено ровно для этого, и из кеша тот же ответ имя возвращал —
+        // ветки расходились. Держим запасным: если у другого номера работы есть, покажем их.
+        var nameOnly: CrmLookup? = null
         for (p in phones) {
             val key = p.filter { it.isDigit() }.takeLast(9)
             if (key.length < 6) continue
             val stamp = CrmRoster.stampFor(context, p)
+            var answeredFromCache = false
             cache[key]?.let { c ->
                 val age = System.currentTimeMillis() - c.at
                 val fresh = if (stamp.isNotEmpty() && c.stamp == stamp) age < CACHE_STAMPED_MS
                             else age < CACHE_MS
-                if (fresh) return if (c.value.found) c.value else null
+                if (fresh) {
+                    answeredFromCache = true
+                    if (c.value.found) {
+                        if (c.value.records.isNotEmpty()) return c.value
+                        if (nameOnly == null) nameOnly = c.value
+                    }
+                }
             }
+            // Свежий ответ «не найден» — не повод бросать остальные номера человека.
+            if (answeredFromCache) continue
             val res = CrmApi.lookup(context, p) ?: continue
             cache[key] = Cached(System.currentTimeMillis(), stamp, res)
-            if (res.found && res.records.isNotEmpty()) return res
+            if (res.found) {
+                if (res.records.isNotEmpty()) return res
+                if (nameOnly == null) nameOnly = res
+            }
+        }
+        return nameOnly
+    }
+
+    /**
+     * Данные для карточки звонящего.
+     *
+     * Имя берётся из скачанного справочника (crm_names.txt), работы — из кеша ответов.
+     * На сам звонок в CRM не ходим вовсе: телефон раз в 15 минут забирает всё нужное
+     * одним запросом реестра и во время звонка только читает с флеша. Клиент без работы
+     * в процессе тоже узнаётся по имени — это и была живая жалоба «клиент в CRM есть,
+     * а на карточке только номер».
+     */
+    fun callerCard(context: Context, phones: List<String>): CrmLookup? {
+        lookup(context, phones)?.let { return it }
+        for (p in phones) {
+            val n = CrmRoster.nameFor(context, p)
+            if (n.isNotBlank()) return CrmLookup(true, "", emptyList(), n)
         }
         return null
     }
