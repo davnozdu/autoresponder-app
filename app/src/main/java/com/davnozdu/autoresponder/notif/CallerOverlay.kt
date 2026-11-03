@@ -51,10 +51,13 @@ object CallerOverlay {
     // стирал post второго — карточка/кнопки второго вызова никогда не отрисовывались.
     private var autoHide: Runnable? = null
 
-    fun show(context: Context, number: String, lookup: CrmLookup?) {
+    /** @param onlyIfShown перерисовать, только если окно этого номера ещё на экране
+     *  (дополнение данными CRM не должно поднимать окно, которое владелец уже закрыл). */
+    fun show(context: Context, number: String, lookup: CrmLookup?, onlyIfShown: Boolean = false) {
         val app = context.applicationContext
         if (!AndroidSettings.canDrawOverlays(app)) return   // модуль ещё не выдал — молча живём уведомлением
         main.post {
+            if (onlyIfShown && shownFor != number) return@post
             runCatching {
                 // Разные звонки — старые кнопки Ответить/Отклонить не имеют смысла для НОВОГО
                 // номера. Тот же номер (перерисовка карточки после прихода данных CRM из

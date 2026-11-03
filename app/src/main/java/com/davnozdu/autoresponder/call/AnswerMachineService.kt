@@ -354,9 +354,16 @@ class AnswerMachineService : Service() {
             // там же — единственное окно на весь сценарий, весь порядок элементов внутри него
             // под нашим контролем.
             scope.launch {
+                fun waiting() = !idle && !accepted && !declined && !transferred
+                // Сначала — без сети: имя из справочника и работы из кеша (CrmFlow.cachedCard).
+                val quick = runCatching {
+                    com.davnozdu.autoresponder.crm.CrmFlow.cachedCard(app, listOf(normNumber))
+                }.getOrNull()
+                if (quick != null && waiting()) {
+                    com.davnozdu.autoresponder.notif.CallerOverlay.show(app, normNumber, quick)
+                }
+                // Потом — работы, которых не было в кеше: тут возможен поход в CRM.
                 val lookup = runCatching {
-                    // Только чтение: имя — из скачанного справочника, работы — из кеша.
-                    // В CRM на звонок не ходим (см. CrmFlow.callerCard).
                     com.davnozdu.autoresponder.crm.CrmFlow.callerCard(app, listOf(normNumber))
                 }.getOrNull()
                 // CRM-запрос (сеть + CrmRoster.sync) может занять до нескольких секунд — за это
@@ -364,7 +371,7 @@ class AnswerMachineService : Service() {
                 // трубку. show() тут не знает об этом и рисует обычную карточку БЕЗ рабочих
                 // кнопок (решение уже принято) поверх всего на неопределённое время — живой баг,
                 // найденный аудитом. Перепроверяем, что сессия ещё правда ждёт решения.
-                if (lookup != null && !idle && !accepted && !declined && !transferred) {
+                if (lookup != null && lookup != quick && waiting()) {
                     com.davnozdu.autoresponder.notif.CallerOverlay.show(app, normNumber, lookup)
                 }
             }

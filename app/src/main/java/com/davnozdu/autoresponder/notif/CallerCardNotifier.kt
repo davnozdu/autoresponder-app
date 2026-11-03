@@ -10,6 +10,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.text.HtmlCompat
 import com.davnozdu.autoresponder.crm.CrmFlow
 import com.davnozdu.autoresponder.crm.CrmLookup
+import com.davnozdu.autoresponder.crm.CrmRoster
+import com.davnozdu.autoresponder.crm.CrmSyncPolicy
+import com.davnozdu.autoresponder.respond.NetworkUtil
 import com.davnozdu.autoresponder.data.Settings
 import com.davnozdu.autoresponder.rules.PhoneMask
 
@@ -35,19 +38,40 @@ object CallerCardNotifier {
         val number = PhoneMask.normalize(rawNumber) ?: return
         val s = Settings(context)
         if (!s.crmReady) return
-        // Сначала заглушка с номером — она появляется мгновенно и не ждёт ничего.
-        show(context, number, null)
-        // Имя берётся из справочника, скачанного вместе с реестром, работы — из кеша ответов:
-        // на звонок в CRM не ходим. Справочник содержит ВСЕХ клиентов, поэтому узнаётся и тот,
-        // у кого нет работы в процессе, — раньше он показывался как «Звонит клиент».
-        val lookup = runCatching { CrmFlow.callerCard(context, listOf(number)) }.getOrNull()
-        if (lookup != null) show(context, number, lookup)
-        // Окно поверх экрана звонка — там же, на тех же данных. Если модуль ещё не выдал
-        // разрешение, окно молча не появится, а карточка в шторке останется.
-        CallerOverlay.show(context, number, lookup)
+        // Номера нет ни в реестре, ни в справочнике — это ещё не «не клиент»: оба
+        // обновляются раз в 15 минут, а клиента могли завести минуту назад. Именно на этом
+        // карточка не появилась в первый раз на живом звонке. Обходим порог, но не ETag:
+        // неизменившийся реестр вернётся 304. Известный номер в сеть не ходит вовсе.
+        val known = CrmRoster.contains(context, number) || CrmRoster.nameFor(context, number).isNotBlank()
+        if (!known && CrmSyncPolicy.shouldRefreshForCall(
+                online = NetworkUtil.isOnline(context),
+                inRoster = false,
+                sinceLastMs = CrmRoster.sinceConfirmed(),
+                minGapMs = 60_000L)) {
+            CrmRoster.sync(context, ignoreThrottle = true)
+        }
+        // Не клиент — никакой карточки. Без этой проверки (0.29.19) «Звонит клиент» и окно
+        // поверх экрана звонка появлялись на любой звонок: родным, спаму, кому угодно.
+        if (!CrmFlow.isCardWorthy(context, number)) return
+
+        // Сразу — то, что есть без сети: имя из справочника и работы из кеша. Нет и этого —
+        // заглушка с номером (она приходит молча, см. show()).
+        val quick = runCatching { CrmFlow.cachedCard(context, listOf(number)) }.getOrNull()
+        show(context, number, quick)
+        CallerOverlay.show(context, number, quick)
+        // Работы, которых не было в кеше, — из CRM. Карточка с именем уже на экране и не ждёт.
+        val full = runCatching { CrmFlow.callerCard(context, listOf(number)) }.getOrNull()
+        if (full != null && full != quick) {
+            // Всплывала уже карточка с именем — дополнение приходит тихо, без второго сигнала.
+            show(context, number, full, quiet = quick != null)
+            // Окно перерисовываем, только если оно ещё на экране: закрытое владельцем
+            // не должно всплывать снова через пару секунд.
+            CallerOverlay.show(context, number, full, onlyIfShown = true)
+        }
     }
 
-    fun show(context: Context, number: String, lookup: CrmLookup?, confirming: Boolean = false) {
+    fun show(context: Context, number: String, lookup: CrmLookup?, confirming: Boolean = false,
+             quiet: Boolean = false) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Карточка звонящего",
             NotificationManager.IMPORTANCE_HIGH))
@@ -55,7 +79,7 @@ object CallerCardNotifier {
         // Заглушка (данных ещё нет) приходит молча: всплывать должна карточка с именем и
         // заказом, а не строка с одним номером. Раньше было наоборот — ONLY_ALERT_ONCE
         // отдавал всплытие заглушке, а полезное приходило тихо и наверх уже не поднималось.
-        val placeholder = lookup == null && !confirming
+        val placeholder = (lookup == null && !confirming) || quiet
         val b = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.sym_action_call)
             .setContentTitle(bold(if (confirming) "Отправить статус — ${card.title}?" else card.title))

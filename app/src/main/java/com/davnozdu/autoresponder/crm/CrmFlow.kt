@@ -177,22 +177,62 @@ object CrmFlow {
     }
 
     /**
-     * Данные для карточки звонящего.
-     *
-     * Имя берётся из скачанного справочника (crm_names.txt), работы — из кеша ответов.
-     * На сам звонок в CRM не ходим вовсе: телефон раз в 15 минут забирает всё нужное
-     * одним запросом реестра и во время звонка только читает с флеша. Клиент без работы
-     * в процессе тоже узнаётся по имени — это и была живая жалоба «клиент в CRM есть,
-     * а на карточке только номер».
+     * Карточка звонящего без сети: работы — из свежего кеша ответов, имя — из справочника,
+     * скачанного вместе с реестром (crm_names.txt). Это то, что показывается сразу при
+     * звонке; [callerCard] потом дополняет карточку работами, если их не было в кеше.
+     * null — ничего про номер не знаем.
+     */
+    fun cachedCard(context: Context, phones: List<String>): CrmLookup? {
+        if (!Settings(context).crmReady) return null
+        val now = System.currentTimeMillis()
+        var named: CrmLookup? = null
+        for (p in phones) {
+            val key = p.filter { it.isDigit() }.takeLast(9)
+            if (key.length < 6) continue
+            val dirName = CrmRoster.nameFor(context, p)
+            cache[key]?.let { c ->
+                val stamp = CrmRoster.stampFor(context, p)
+                val fresh = if (stamp.isNotEmpty() && c.stamp == stamp) now - c.at < CACHE_STAMPED_MS
+                            else now - c.at < CACHE_MS
+                if (fresh && c.value.found) {
+                    val v = withName(c.value, dirName)
+                    if (v.records.isNotEmpty()) return v
+                    if (named == null && v.name.isNotBlank()) named = v
+                }
+            }
+            if (named == null && dirName.isNotBlank()) named = CrmLookup(true, "", emptyList(), dirName)
+        }
+        return named
+    }
+
+    /**
+     * Полные данные для карточки звонящего: то же, что [cachedCard], плюс работы, за
+     * которыми при пустом кеше приходится сходить в CRM ([lookup]: условный запрос реестра
+     * раз в 15 минут и запрос по номеру клиента из реестра). Поэтому вызывается ПОСЛЕ того,
+     * как карточка из [cachedCard] уже на экране, — имя не ждёт сети. Клиент без работы в
+     * процессе узнаётся по справочнику — живая жалоба «клиент в CRM есть, а на карточке
+     * только номер».
      */
     fun callerCard(context: Context, phones: List<String>): CrmLookup? {
-        lookup(context, phones)?.let { return it }
-        for (p in phones) {
-            val n = CrmRoster.nameFor(context, p)
-            if (n.isNotBlank()) return CrmLookup(true, "", emptyList(), n)
+        lookup(context, phones)?.let { found ->
+            val dirName = phones.firstNotNullOfOrNull { CrmRoster.nameFor(context, it).ifBlank { null } }.orEmpty()
+            return withName(found, dirName)
         }
-        return null
+        return cachedCard(context, phones)
     }
+
+    /** Имя из ответа CRM в приоритете; пустое (CRM старой версии) — берём из справочника. */
+    private fun withName(v: CrmLookup, dirName: String): CrmLookup =
+        if (v.name.isBlank() && dirName.isNotBlank()) v.copy(name = dirName) else v
+
+    /**
+     * Показывать ли карточку на этот номер. Клиент — номер в реестре (работа в процессе)
+     * или в справочнике имён (клиент вообще). Если реестр несвежий (синк отвалился), «не
+     * знаем» не значит «не клиент»: карточку с номером лучше показать лишний раз.
+     */
+    fun isCardWorthy(context: Context, phone: String): Boolean =
+        CrmRoster.contains(context, phone) || CrmRoster.nameFor(context, phone).isNotBlank() ||
+            !CrmRoster.isFresh(context)
 
     /** Забыть ответ по одному номеру (у него в CRM что-то изменилось). */
     fun invalidate(phoneKey: String) {

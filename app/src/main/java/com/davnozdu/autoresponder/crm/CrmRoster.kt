@@ -105,8 +105,16 @@ object CrmRoster {
 
     private fun saveNames(context: Context, names: Map<String, String>) {
         try {
-            namesFile(context).writeText(names.entries.joinToString("\n") { (k, v) -> "$k\t$v" })
-            nameCache = names
+            // Табуляция и перевод строки — разделители формата файла. В имени из CRM они
+            // разорвали бы строку, и половина справочника читалась бы мусором.
+            val clean = names.mapValues { (_, v) -> v.replace(Regex("[\\t\\r\\n]+"), " ").trim() }
+                .filter { (k, v) -> k.isNotBlank() && v.isNotEmpty() && '\t' !in k && '\n' !in k }
+            // Через временный файл: прерванная запись не оставит обрезанный справочник.
+            val f = namesFile(context)
+            val tmp = File(f.parentFile, "$NAMES.tmp")
+            tmp.writeText(clean.entries.joinToString("\n") { (k, v) -> "$k\t$v" })
+            if (!tmp.renameTo(f)) { tmp.delete(); throw java.io.IOException("rename") }
+            nameCache = clean
         } catch (e: Exception) {
             EventLog(context).add("CRM справочник: не удалось сохранить (${e.message})")
         }

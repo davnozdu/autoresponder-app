@@ -300,7 +300,9 @@ object MsgrBridge {
             fun configured(f: File) = f.parentFile?.isDirectory == true
             val retry = (r1 == null && configured(wa1)) || (r2 == null && configured(wa2)) ||
                 (r3 == null && configured(tg))
-            if (retry) {
+            // Без ожидания повтор бессмысленен: мост ещё не успел снять новую копию, и второй
+            // импорт споткнулся бы о ту же самую. Тогда просьба уйдёт со следующим проходом.
+            if (retry && wait) {
                 val before2 = resp.lastModifiedSafe()
                 val asked2 = runCatching { req.writeText(ask(emptyArray(), supportsNow(app))) }.isSuccess
                 if (asked2 && wait) waitForResponse(resp, before2, waitMs)
